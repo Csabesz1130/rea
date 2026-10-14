@@ -1,0 +1,17 @@
+{
+  "name": "release-watch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Review what changed between two releases of a desktop app before rollout, using REA Evidence.",
+  "type": "module",
+  "bin": {
+    "release-watch": "bin/release-watch.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "demo": "bash demo/run-demo.sh"
+  }
+}

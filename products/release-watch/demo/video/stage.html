@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Release Watch demo stage</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
+    <style>
+      /* A fixed 1280x720 stage. Scenes are stacked; the recorder shows one at a time. */
+      :root {
+        --ground: #0d1518;
+        --panel: #121d21;
+        --ink: #e2eaec;
+        --muted: #94a6ac;
+        --rule: #263539;
+        --accent: #5fb7cb;
+        --term: #091013;
+        --critical: #f2716a;
+        --high: #f59252;
+        --medium: #e0a53d;
+        --low: #78a9f2;
+        --ok: #6cc28f;
+        --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+        --body: "IBM Plex Sans", "Segoe UI", sans-serif;
+        --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: var(--ground);
+        color: var(--ink);
+        font: 18px/1.5 var(--body);
+      }
+      .scene {
+        position: absolute;
+        inset: 0;
+        padding: 64px 88px;
+        display: grid;
+        opacity: 0;
+        transition: opacity 0.45s ease;
+      }
+      .scene.on {
+        opacity: 1;
+      }
+      .eyebrow {
+        font: 600 14px/1 var(--mono);
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      h1 {
+        margin: 0;
+        font: 800 76px/1 var(--display);
+        letter-spacing: -0.015em;
+      }
+      h2 {
+        margin: 0;
+        font: 700 44px/1.12 var(--display);
+        letter-spacing: -0.01em;
+        text-wrap: balance;
+      }
+      p {
+        margin: 0;
+      }
+      .lead {
+        font-size: 25px;
+        line-height: 1.4;
+        color: var(--ink);
+        max-width: 30ch;
+      }
+      .muted {
+        color: var(--muted);
+      }
+
+      #title {
+        align-content: center;
+        gap: 26px;
+      }
+      #title .mark {
+        width: 54px;
+        height: 54px;
+        color: var(--accent);
+      }
+      #title .lead {
+        max-width: 34ch;
+      }
+      #title .base {
+        font: 500 15px/1.4 var(--mono);
+        color: var(--muted);
+      }
+
+      #context {
+        grid-template-columns: 1fr 1fr;
+        gap: 56px;
+        align-items: center;
+      }
+      #context .left {
+        display: grid;
+        gap: 22px;
+      }
+      .notes {
+        border-left: 3px solid var(--accent);
+        padding: 4px 0 4px 18px;
+        font-size: 21px;
+        color: var(--muted);
+      }
+      .notes b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .tree {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        padding: 26px 28px;
+        font: 16px/1.75 var(--mono);
+      }
+      .tree .dir {
+        color: var(--accent);
+      }
+      .tree .size {
+        color: var(--muted);
+        float: right;
+      }
+      .tree .note {
+        color: var(--muted);
+      }
+
+      #terminal {
+        padding: 26px 48px 86px;
+      }
+      .window {
+        background: var(--term);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        overflow: hidden;
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--rule);
+        background: var(--panel);
+      }
+      .bar i {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--rule);
+      }
+      .bar span {
+        margin-left: 12px;
+        font: 500 13px/1 var(--mono);
+        color: var(--muted);
+      }
+      .screen {
+        padding: 16px 22px;
+        font: 14px/1.45 var(--mono);
+        white-space: pre;
+        overflow: hidden;
+      }
+      .prompt {
+        color: var(--accent);
+      }
+      .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 16px;
+        background: var(--ink);
+        vertical-align: -3px;
+        animation: blink 1s steps(1) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      .a1 {
+        font-weight: 700;
+      }
+      .a2 {
+        color: var(--muted);
+      }
+      .a31 {
+        color: var(--critical);
+      }
+      .a32 {
+        color: var(--ok);
+      }
+      .a33 {
+        color: var(--medium);
+      }
+      .a34 {
+        color: var(--low);
+      }
+      .a36 {
+        color: var(--accent);
+      }
+      .a97 {
+        color: #fff;
+      }
+      .a41 {
+        background: #b3261e;
+        color: #fff;
+      }
+      .a43 {
+        background: var(--medium);
+        color: #111;
+      }
+      .a42 {
+        background: var(--ok);
+        color: #111;
+      }
+
+      #report {
+        padding: 0;
+      }
+      #frame {
+        width: 1280px;
+        height: 720px;
+        border: 0;
+        background: var(--ground);
+      }
+
+      #ci {
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: center;
+      }
+      #ci .left {
+        display: grid;
+        gap: 22px;
+      }
+      .yaml {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        padding: 24px 26px;
+        font: 15px/1.7 var(--mono);
+        white-space: pre;
+      }
+      .yaml .k {
+        color: var(--accent);
+      }
+      .yaml .c {
+        color: var(--muted);
+      }
+      .comment {
+        background: var(--panel);
+        border: 1px solid var(--rule);
+        padding: 22px 24px;
+        display: grid;
+        gap: 10px;
+        font-size: 16px;
+      }
+      .comment .who {
+        font: 600 13px/1 var(--mono);
+        color: var(--muted);
+      }
+      .comment .block {
+        font: 700 15px/1 var(--mono);
+        color: #fff;
+        background: #b3261e;
+        justify-self: start;
+        padding: 6px 9px;
+      }
+      .comment ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+
+      #close {
+        align-content: center;
+        gap: 34px;
+      }
+      .cols {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 34px;
+      }
+      .col {
+        border-top: 2px solid var(--accent);
+        padding-top: 14px;
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }
+      .col b {
+        font: 600 13px/1.2 var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      .col span {
+        font-size: 19px;
+        line-height: 1.45;
+      }
+      .foot {
+        font: 500 15px/1.4 var(--mono);
+        color: var(--muted);
+      }
+
+      .caption {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 18px 88px 22px;
+        background: rgba(9, 16, 19, 0.92);
+        border-top: 1px solid var(--rule);
+        font: 500 22px/1.35 var(--body);
+        color: var(--ink);
+        opacity: 0;
+        transition: opacity 0.35s ease;
+      }
+      .caption.on {
+        opacity: 1;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .scene,
+        .caption {
+          transition: none;
+        }
+        .cursor {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section class="scene" id="title">
+      <svg
+        class="mark"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <path d="M4 7h10M4 12h16M4 17h7" />
+        <circle cx="18" cy="7" r="2.2" />
+        <circle cx="15" cy="17" r="2.2" />
+      </svg>
+      <h1>Release Watch</h1>
+      <p class="lead">
+        See what a desktop-app update really changed before it reaches your
+        fleet.
+      </p>
+      <p class="base">
+        Prototype built on REA, the open-source reverse-engineering evidence
+        engine
+      </p>
+    </section>
+
+    <section class="scene" id="context">
+      <div class="left">
+        <span class="eyebrow">The situation</span>
+        <h2>Acme Notes 1.5.0 is ready for 5,000 laptops.</h2>
+        <p class="notes">Vendor release notes: <b>“Adds cloud sync.”</b></p>
+        <p class="lead muted">
+          Security has to decide today. There is no source code, only the
+          shipped builds.
+        </p>
+      </div>
+      <div class="tree" id="tree"></div>
+    </section>
+
+    <section class="scene" id="terminal">
+      <div class="window">
+        <div class="bar">
+          <i></i><i></i><i></i><span>~/releases — bash</span>
+        </div>
+        <div class="screen" id="screen"></div>
+      </div>
+    </section>
+
+    <section class="scene" id="report">
+      <iframe id="frame" title="Release Watch report"></iframe>
+    </section>
+
+    <section class="scene" id="ci">
+      <div class="left">
+        <span class="eyebrow">In the rollout pipeline</span>
+        <h2>Exit code 2 stops the update. The summary lands in the ticket.</h2>
+        <div class="yaml" id="yaml"></div>
+      </div>
+      <div class="comment" id="comment"></div>
+    </section>
+
+    <section class="scene" id="close">
+      <span class="eyebrow">Release Watch · prototype</span>
+      <h2>
+        Every update reviewed in seconds, with evidence an auditor can check.
+      </h2>
+      <div class="cols">
+        <div class="col">
+          <b>Who buys</b
+          ><span
+            >IT security and vendor-risk teams that approve desktop
+            software</span
+          >
+        </div>
+        <div class="col">
+          <b>Pricing to test</b
+          ><span>Per monitored app per year, with an on-premises option</span>
+        </div>
+        <div class="col">
+          <b>Next</b
+          ><span
+            >macOS and Windows builds, update-feed watching, SBOM export</span
+          >
+        </div>
+      </div>
+      <p class="foot">
+        Built on REA (MIT) · github.com/Csabesz1130/rea · products/release-watch
+      </p>
+    </section>
+
+    <div class="caption" id="caption"></div>
+
+    <script>
+      const ANSI = /\u001b\[([\d;]*)m/g;
+      const escapeHtml = (text) =>
+        text.replace(
+          /[&<>]/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
+        );
+      const ansiToHtml = (line) => {
+        let html = "";
+        let open = false;
+        let last = 0;
+        for (const match of line.matchAll(ANSI)) {
+          html += escapeHtml(line.slice(last, match.index));
+          last = match.index + match[0].length;
+          if (open) {
+            html += "</span>";
+            open = false;
+          }
+          const codes = match[1]
+            .split(";")
+            .filter((code) => code && code !== "0");
+          if (codes.length) {
+            html += `<span class="${codes.map((code) => `a${code}`).join(" ")}">`;
+            open = true;
+          }
+        }
+        html += escapeHtml(line.slice(last));
+        return open ? `${html}</span>` : html;
+      };
+
+      const screen = document.getElementById("screen");
+      let promptLine = null;
+      window.stage = {
+        show(id) {
+          for (const scene of document.querySelectorAll(".scene"))
+            scene.classList.toggle("on", scene.id === id);
+        },
+        caption(text) {
+          const caption = document.getElementById("caption");
+          if (text) caption.textContent = text;
+          caption.classList.toggle("on", Boolean(text));
+        },
+        fill(id, html) {
+          document.getElementById(id).innerHTML = html;
+        },
+        prompt() {
+          promptLine = document.createElement("div");
+          promptLine.innerHTML = `<span class="prompt">~/releases $</span> <span class="typed"></span><span class="cursor"></span>`;
+          screen.append(promptLine);
+        },
+        async type(text, duration) {
+          const target = promptLine.querySelector(".typed");
+          const step = duration / text.length;
+          for (let index = 1; index <= text.length; index += 1) {
+            target.textContent = text.slice(0, index);
+            await new Promise((resolve) => setTimeout(resolve, step));
+          }
+        },
+        endPrompt() {
+          promptLine?.querySelector(".cursor")?.remove();
+        },
+        print(line) {
+          const row = document.createElement("div");
+          row.innerHTML = ansiToHtml(line) || " ";
+          screen.append(row);
+        },
+        clear() {
+          screen.innerHTML = "";
+        },
+        loadReport(url) {
+          const frame = document.getElementById("frame");
+          return new Promise((resolve) => {
+            frame.onload = () => {
+              const style = frame.contentDocument.createElement("style");
+              style.textContent = `.spot { outline: 3px solid #5fb7cb; outline-offset: 6px; transition: outline-color .3s; } html { scroll-behavior: auto !important; } main .wrap { padding-bottom: 140px; }`;
+              frame.contentDocument.head.append(style);
+              resolve();
+            };
+            frame.src = url;
+          });
+        },
+        scrollReport(selector, offset, duration) {
+          const view = document.getElementById("frame").contentWindow;
+          const target = view.document.querySelector(selector);
+          const start = view.scrollY;
+          const end = Math.max(
+            0,
+            target.getBoundingClientRect().top + start - offset,
+          );
+          const began = performance.now();
+          return new Promise((resolve) => {
+            const tick = (now) => {
+              const progress = Math.min(1, (now - began) / duration);
+              const eased =
+                progress < 0.5
+                  ? 4 * progress ** 3
+                  : 1 - (-2 * progress + 2) ** 3 / 2;
+              view.scrollTo(0, start + (end - start) * eased);
+              if (progress < 1) requestAnimationFrame(tick);
+              else resolve();
+            };
+            requestAnimationFrame(tick);
+          });
+        },
+        spotlight(selector) {
+          const doc = document.getElementById("frame").contentDocument;
+          for (const element of doc.querySelectorAll(".spot"))
+            element.classList.remove("spot");
+          if (selector) doc.querySelector(selector)?.classList.add("spot");
+        },
+      };
+    </script>
+  </body>
+</html>
