@@ -1,14 +1,12 @@
 // AI rules: new AI providers receiving data, credentials shipped in code, new
 // AI or MCP SDKs, changed prompts and model output rendered as HTML.
-import { createHash } from "node:crypto";
-
 import {
   aiProviderOf,
   credentialOf,
   credentialsIn,
   isAiEnvironmentKey,
 } from "../catalog.mjs";
-import { scrubText } from "../redact.mjs";
+import { textPreview } from "../source-line.mjs";
 import { sdkUses } from "../surfaces.mjs";
 import { hostOf, maskTag } from "../urls.mjs";
 import {
@@ -267,21 +265,14 @@ const isProse = (value) =>
   credentialsIn(value).length === 0 &&
   credentialOf(value) === null;
 
-// Long letter-and-digit runs inside prose are masked in previews.
-const TOKEN_WORD =
-  /(?=[A-Za-z0-9_\-+/=.]*\d)(?=[A-Za-z0-9_\-+/=.]*[A-Za-z])[A-Za-z0-9_\-+/=.]{20,}/g;
-
-const digest = (value) =>
-  createHash("sha256").update(value).digest("hex").slice(0, 12);
-const preview = (value) => {
-  const flat = scrubText(value)
-    .replace(TOKEN_WORD, (word) => maskTag(word))
-    .replace(/\s+/g, " ")
-    .trim();
-  return flat.length > 90 ? `${flat.slice(0, 90)}…` : flat;
-};
+// A prompt's start on one line, masked as a source line is: URLs keep their
+// host and path, and secrets in them or in the prose become tags.
+const preview = (value) =>
+  textPreview(value.slice(0, 16384).replace(/\s+/g, " ").trim(), 90);
+// The keyed tag tells the two texts apart within this report; an unkeyed
+// digest of a short prompt could be matched against guesses.
 const describe = (label, value) =>
-  `${label}: "${preview(value)}" (${value.length} characters, sha256 ${digest(value)})`;
+  `${label}: "${preview(value)}" (${value.length} characters, ${maskTag(value)})`;
 
 const promptFindings = (context) => {
   const { right, labels } = context;

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { credentialOf, credentialsIn } from "./catalog.mjs";
+import { credentialsIn } from "./catalog.mjs";
 import { collectSide, emptyCollection } from "./collect.mjs";
 import {
   ambiguousBundles,
@@ -28,7 +28,7 @@ import {
   releaseMovesOf,
   verdictFor,
 } from "./policy.mjs";
-import { sourceLine } from "./source-line.mjs";
+import { continuesString, sourceLine } from "./source-line.mjs";
 import { openSources } from "./sources.mjs";
 import { surfaceNames, surfacesOf } from "./surfaces.mjs";
 
@@ -151,11 +151,8 @@ const reaComparison = async ({ rea, component, left, right, outDir, mode }) => {
 const sensitiveLines = (app) =>
   new Set(
     [...app.stringLiterals, ...app.endpoints]
-      .filter(
-        (fact) =>
-          credentialOf(fact.data.value) ||
-          credentialsIn(fact.data.value).length > 0,
-      )
+      // A whole-literal credential is also found inside the literal.
+      .filter((fact) => credentialsIn(fact.data.value).length > 0)
       .flatMap((fact) => {
         // A key in a multi-line literal marks every line of it.
         const first = fact.location?.line;
@@ -168,7 +165,9 @@ const sensitiveLines = (app) =>
   );
 
 // Source lines for display, attached only to evidence located in this side's
-// release and verified against REA's digest when one was recorded.
+// release and verified against REA's digest when one was recorded. A line
+// that continues a string from the line before is shown as sensitive too,
+// since what that string holds is not on it.
 const attachSources = (findings, side, sources, sideName) => {
   if (sources === null) return;
   const digests = new Set(side.app.assets.map((asset) => asset.data.sha256));
@@ -178,18 +177,20 @@ const attachSources = (findings, side, sources, sideName) => {
     for (const item of finding.evidence) {
       if (item.side !== sideName || item.snippet || !item.location?.line)
         continue;
-      const where = `${item.location.file}:${item.location.line}`;
+      const { file, line, column } = item.location;
+      const where = `${file}:${line}`;
       if (shown.has(where)) continue;
       if (item.artifact_sha256 !== null && !digests.has(item.artifact_sha256))
         continue;
-      const snippet = sources.lineAt(item.location.file, item.location.line);
+      const snippet = sources.lineAt(file, line);
       if (snippet === null) continue;
+      const before = sources.lineAt(file, line - 1)?.text ?? "";
       item.snippet = {
         line: snippet.line,
         text: sourceLine(
           snippet.text,
-          item.location.column ?? 0,
-          sensitive.has(where),
+          column ?? 0,
+          sensitive.has(where) || continuesString(before),
         ),
         verified: snippet.verified,
         release: side.label,

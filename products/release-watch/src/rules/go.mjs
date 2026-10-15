@@ -4,36 +4,40 @@
 import { displayUrl, hostOf, isUrl, urlsIn } from "../urls.mjs";
 import { GO_SOURCE, isVendorHost, packResult, reported } from "./shared.mjs";
 
-// `-X name=value` sets a string variable at link time. An operand may be
-// quoted and hold spaces. Values are shown as display URLs or by length,
-// never verbatim.
+// `-X name=value` sets a string variable at link time. The flag may be its
+// own quoted field ("-X" "name=value"), a whole field may be quoted
+// ("-X=name=value"), and an operand may be quoted and hold spaces. Values
+// are shown as display URLs or by length, never verbatim. A field never
+// starts with a space, so the spaces before it are read one way only.
 const LINKER_VALUE =
-  /(?<field>["'])-X=(?<whole>.*?)\k<field>|(?<flag>-X(?:=|\s+))(?:'(?<single>[^']*)'|"(?<double>[^"]*)"|(?<bare>\S+))/g;
+  /"-X(?<doubleSeparator>=|\s+)(?<doubleField>(?!\s)[^"]*)"|'-X(?<singleSeparator>=|\s+)(?<singleField>(?!\s)[^']*)'|(?<flag>(?:"-X"|'-X'|-X)(?:=|\s+))(?:'(?<single>[^']*)'|"(?<double>[^"]*)"|(?<bare>(?:[^\s"']+|"[^"]*"?|'[^']*'?)+))/g;
 
 const maskedValue = (value) =>
   isUrl(value) ? displayUrl(value) : `… (${value.length} characters)`;
+
+// `name=value` with the value masked; an operand without `=` is shown.
+const maskedOperand = (operand) => {
+  const split = operand.indexOf("=");
+  return split === -1
+    ? operand
+    : `${operand.slice(0, split)}=${maskedValue(operand.slice(split + 1))}`;
+};
+
+const maskedFlag = (groups) => {
+  const { doubleField, singleField, flag, single, double, bare } = groups;
+  if (doubleField !== undefined)
+    return `"-X${groups.doubleSeparator}${maskedOperand(doubleField)}"`;
+  if (singleField !== undefined)
+    return `'-X${groups.singleSeparator}${maskedOperand(singleField)}'`;
+  const quote = single !== undefined ? "'" : double !== undefined ? '"' : "";
+  return `${flag}${quote}${maskedOperand(single ?? double ?? bare)}${quote}`;
+};
 
 /** -ldflags for display, with every -X value masked. */
 export const displayLdflags = (flags) =>
   flags === null
     ? "not set"
-    : flags.replace(LINKER_VALUE, (...match) => {
-        const { field, whole, flag, single, double, bare } = match.at(-1);
-        // A quoted whole field: "-X=name=value with spaces".
-        if (field !== undefined) {
-          const split = whole.indexOf("=");
-          return `${field}-X=${split === -1 ? whole : `${whole.slice(0, split)}=${maskedValue(whole.slice(split + 1))}`}${field}`;
-        }
-        const operand = single ?? double ?? bare;
-        const quote =
-          single !== undefined ? "'" : double !== undefined ? '"' : "";
-        const split = operand.indexOf("=");
-        const shown =
-          split === -1
-            ? operand
-            : `${operand.slice(0, split)}=${maskedValue(operand.slice(split + 1))}`;
-        return `${flag}${quote}${shown}${quote}`;
-      });
+    : flags.replace(LINKER_VALUE, (...match) => maskedFlag(match.at(-1)));
 
 // Build settings that describe the toolchain rather than carry values.
 const TOOLCHAIN_SETTINGS = new Set([

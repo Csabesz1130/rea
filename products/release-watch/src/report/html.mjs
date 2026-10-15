@@ -1,9 +1,12 @@
 // Self-contained HTML report: verdict first, then one ledger row per finding,
 // then the inventory, coverage, provenance and run cost. Renders the
 // redacted report.json model only, and loads nothing from the network.
+import { printable } from "../redact.mjs";
 
+// Controls, line separators and bidirectional overrides become spaces, as
+// in terminal output, so release text cannot reorder what a reader sees.
 const escape = (value) =>
-  String(value ?? "")
+  printable(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")

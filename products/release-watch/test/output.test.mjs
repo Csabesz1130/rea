@@ -155,10 +155,13 @@ describe("source line scrubbing", () => {
     );
   });
 
-  it("keeps commit SHAs and tells masked values apart", () => {
+  it("keeps a commit SHA only before a static asset file and tells masked values apart", () => {
     const sha = "0123456789abcdef0123456789abcdef01234567";
     assert.ok(
-      displayUrl(`https://raw.example.com/acme/w/${sha}/dist/w.js`).includes(
+      displayUrl(`https://raw.example.com/acme/w/${sha}/w.js`).includes(sha),
+    );
+    assert.ok(
+      !displayUrl(`https://raw.example.com/acme/w/${sha}/dist/w.js`).includes(
         sha,
       ),
     );
