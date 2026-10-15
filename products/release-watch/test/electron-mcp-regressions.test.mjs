@@ -155,94 +155,65 @@ describe("MCP servers", () => {
   });
 });
 
-describe("BrowserWindow pairing", () => {
-  const window = (file, preferences, line = 4) =>
-    fact(
-      `${file}@${line}`,
-      { source_path: file, web_preferences: preferences },
-      at(file, line),
-    );
-  const sandbox = (value) => ({ sandbox: { known: true, value } });
-
-  it("grades a window that loses its sandbox although another window was already unsafe", () => {
-    const legacy = window("legacy.js", sandbox(false));
-    const findings = evaluate(
-      side("v1", app({ windows: [window("main.js", sandbox(true)), legacy] })),
-      side("v2", app({ windows: [window("main.js", sandbox(false)), legacy] })),
-    );
-    assert.deepEqual(
-      findings.map((finding) => [finding.rule, finding.severity]),
-      [["RW-E02", "high"]],
-    );
-  });
-
-  it("grades a dynamic sandbox that becomes false at medium, noting the old state is not established", () => {
-    const [finding] = evaluate(
-      side(
-        "v1",
-        app({
-          windows: [
-            window("main.js", { sandbox: { known: false, value: "strict" } }),
-          ],
-        }),
+// One MCP server module with a registerTool call at lines 10-20.
+const server = "src/server.js";
+const mcpApp = ({ execs, functions = [], reads = [] }) =>
+  app({
+    imports: [
+      fact(
+        "@modelcontextprotocol/sdk/server/mcp.js",
+        {
+          specifier: "@modelcontextprotocol/sdk/server/mcp.js",
+          module: server,
+        },
+        at(server, 1),
       ),
-      side("v2", app({ windows: [window("main.js", sandbox(false))] })),
-    );
-    assert.equal(finding.severity, "medium");
-    assert.ok(
-      finding.unknowns.some((unknown) =>
-        /old state is not established/.test(unknown),
+    ],
+    memberCalls: [
+      fact(
+        `${server}#read:/registerTool`,
+        {
+          module: server,
+          member: "registerTool",
+          range: range(10, 0, 20, 2),
+        },
+        at(server, 10),
       ),
-    );
+    ],
+    childProcesses: execs,
+    functions,
+    bindingReads: reads,
   });
-});
+const exec = (module, line, command = null) =>
+  fact(
+    `${module}#exec`,
+    { module, method: "exec", command, range: range(line, 2, line, 30) },
+    at(module, line),
+  );
 
 describe("MCP tool reachability", () => {
-  const server = "src/server.js";
-  const mcpApp = ({ execs, callables = [], reads = [] }) =>
-    app({
-      imports: [
-        fact(
-          "@modelcontextprotocol/sdk/server/mcp.js",
-          {
-            specifier: "@modelcontextprotocol/sdk/server/mcp.js",
-            module: server,
-          },
-          at(server, 1),
-        ),
-      ],
-      memberCalls: [
-        fact(
-          `${server}#read:/registerTool`,
-          {
-            module: server,
-            member: "registerTool",
-            range: range(10, 0, 20, 2),
-          },
-          at(server, 10),
-        ),
-      ],
-      childProcesses: execs,
-      callables,
-      bindingReads: reads,
-    });
-  const exec = (module, line, command = null) =>
-    fact(
-      `${module}#exec`,
-      { module, method: "exec", command, range: range(line, 2, line, 30) },
-      at(module, line),
-    );
-
   it("follows a tool handler into a function defined in the same module", () => {
     const helper = mcpApp({
       execs: [exec(server, 40)],
-      callables: [
-        { module: server, name: "runCommand", range: range(38, 0, 42, 1) },
+      functions: [
+        {
+          id: "fn-run",
+          module: server,
+          name: "runCommand",
+          range: range(38, 0, 42, 1),
+        },
       ],
+      // REA gives a declaration's binding the declared function as owner.
       reads: [
         fact(
           `${server}#runCommand`,
-          { module: server, name: "runCommand", range: range(15, 6, 15, 16) },
+          {
+            module: server,
+            name: "runCommand",
+            range: range(15, 6, 15, 16),
+            binding_range: range(38, 9, 38, 19),
+            binding_owner: "fn-run",
+          },
           at(server, 15),
         ),
       ],
@@ -254,7 +225,7 @@ describe("MCP tool reachability", () => {
     assert.deepEqual(rules(findings), ["RW-M01"]);
     assert.match(
       findings[0].evidence[2].claim,
-      /a function in the same module whose body holds/,
+      /reads runCommand, a function in the same module; its body holds exec\(\)/,
     );
   });
 
@@ -262,8 +233,9 @@ describe("MCP tool reachability", () => {
     const inline = mcpApp({ execs: [exec(server, 15, "git gc --auto")] });
     const moved = mcpApp({
       execs: [exec("src/shell.js", 3, "git gc --auto")],
-      callables: [
+      functions: [
         {
+          id: "fn-run",
           module: "src/shell.js",
           name: "runCommand",
           range: range(1, 0, 5, 1),
@@ -276,14 +248,24 @@ describe("MCP tool reachability", () => {
         {
           externalImports: new Set(),
           local: new Set(["src/shell.js"]),
-          imported: new Map([["runCommand", "src/shell.js"]]),
+          imported: new Map([
+            ["runCommand", { module: "src/shell.js", name: "runCommand" }],
+          ]),
+          exports: new Map(),
+          reexports: new Map(),
         },
       ],
     ]);
     moved.bindingReads = [
       fact(
         `${server}#runCommand`,
-        { module: server, name: "runCommand", range: range(15, 6, 15, 16) },
+        {
+          module: server,
+          name: "runCommand",
+          range: range(15, 6, 15, 16),
+          binding_range: range(2, 9, 2, 19),
+          binding_owner: null,
+        },
         at(server, 15),
       ),
     ];

@@ -1,6 +1,7 @@
 // Electron boundary rules: renderer-reachable process execution, new bridge
 // APIs, webPreferences regressions and fuse regressions.
-import { reachClaim, reachOf } from "./reach.mjs";
+import { reachClaim, reachOf, reachUnknowns } from "./reach.mjs";
+import { webPreferenceRegressions } from "./windows.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
@@ -109,6 +110,7 @@ const rendererProcessExecution = (context) => {
         evidence,
         unknowns: [
           "REA did not establish that the IPC argument reaches the exec command; the path is a correlation of REA facts by location.",
+          ...reachUnknowns([path]),
         ],
       });
     }
@@ -116,230 +118,55 @@ const rendererProcessExecution = (context) => {
   return { findings, coveredExec, coveredMembers };
 };
 
-const newBridgeMembers = (context, coveredMembers) =>
-  newFacts(context.diff.app.bridgeMembers)
-    .filter(({ fact }) => !coveredMembers.has(fact.key))
-    .map(({ fact, status }) => ({
+const MAX_LISTED = 25;
+
+// RW-E04: one finding per component for the renderer APIs it adds, so a
+// release that adds many does not bury the rest of the report.
+const newBridgeMembers = (context, coveredMembers) => {
+  const added = newFacts(context.diff.app.bridgeMembers).filter(
+    ({ fact }) => !coveredMembers.has(fact.key),
+  );
+  if (added.length === 0) return [];
+  const names = added.map(({ fact }) => `${fact.data.member}()`);
+  const shown = names.slice(0, 3).join(", ");
+  return [
+    {
       rule: "RW-E04",
       severity: "low",
-      title: `New renderer API: ${fact.data.member}()`,
-      summary: `Web content can now call ${fact.data.member}() over IPC channel "${fact.data.channel}".`,
+      title:
+        added.length === 1
+          ? `New renderer API: ${names[0]}`
+          : `New renderer APIs (${added.length}): ${shown}${added.length > 3 ? ` and ${added.length - 3} more` : ""}`,
+      summary:
+        added.length === 1
+          ? `Web content can now call ${names[0]} over IPC channel "${added[0].fact.data.channel}".`
+          : `Web content can now call ${added.length} more functions over IPC.`,
       why: "Each bridge member is attack surface for script running in the window.",
       recommendation:
-        "Expected for new features; review the handler if the feature is unfamiliar.",
+        "Expected for new features; review the handlers if a feature is unfamiliar.",
       evidence: [
-        cite(
-          `${fact.data.member} invokes "${fact.data.channel}" (${absencePhrase(status, context.labels.left)})`,
-          fact,
-          APP_SOURCE,
-        ),
-      ],
-      unknowns: [],
-    }));
-
-// Values Electron uses when the option is omitted (Electron 20 and later).
-const WEB_PREFERENCES = {
-  sandbox: { safe: true, label: "Renderer sandbox" },
-  contextIsolation: { safe: true, label: "Context isolation" },
-  nodeIntegration: {
-    safe: false,
-    label: "Node.js integration in the renderer",
-  },
-  nodeIntegrationInWorker: {
-    safe: false,
-    label: "Node.js integration in workers",
-  },
-  webSecurity: { safe: true, label: "Web security (same-origin policy)" },
-  allowRunningInsecureContent: { safe: false, label: "Mixed-content blocking" },
-};
-
-// One window's setting of one preference: "default" when omitted.
-const stateOf = (setting, rule) =>
-  setting === null
-    ? "default"
-    : !setting.known
-      ? "dynamic"
-      : setting.value === rule.safe
-        ? "safe"
-        : "unsafe";
-
-const settingText = (name, setting) =>
-  setting === null
-    ? `${name} omitted`
-    : `${name} = ${setting.known ? JSON.stringify(setting.value) : `dynamic value ${setting.value ?? ""}`.trim()}`;
-
-const windowFile = (window) => window.data.source_path ?? window.key;
-
-// Windows by file, old files renamed to their new path.
-const byFile = (windows, aliases = new Map()) => {
-  const files = new Map();
-  for (const window of windows) {
-    const file = aliases.get(windowFile(window))?.path ?? windowFile(window);
-    if (!files.has(file)) files.set(file, []);
-    files.get(file).push(window);
-  }
-  return files;
-};
-
-const count = (windows, name, rule, state) =>
-  windows.filter(
-    (window) =>
-      stateOf(window.data.web_preferences[name] ?? null, rule) === state,
-  ).length;
-
-// How the old release set the preference in this file: explicit values are
-// REA facts, omitted values rely on Electron's documented default.
-const beforeLines = (context, { name, rule, windows, file }) =>
-  windows.length === 0
-    ? [
-        reported(
-          `${context.labels.left}: REA reported no BrowserWindow in ${file}`,
-          "derived",
-          APP_SOURCE,
-        ),
-      ]
-    : windows.map((window) => {
-        const setting = window.data.web_preferences[name] ?? null;
-        return setting === null
-          ? heuristic(
-              `${context.labels.left}: BrowserWindow in ${windowFile(window)} omits ${name}; Electron 20+ defaults it to ${JSON.stringify(rule.safe)}`,
-              window.location,
-              { side: "left" },
-            )
-          : cite(
-              `${context.labels.left}: BrowserWindow in ${windowFile(window)}: ${settingText(name, setting)}`,
-              window,
+        ...added
+          .slice(0, MAX_LISTED)
+          .map(({ fact, status }) =>
+            cite(
+              `${fact.data.member} invokes "${fact.data.channel}" (${absencePhrase(status, context.labels.left)})`,
+              fact,
               APP_SOURCE,
-              {
-                side: "left",
-              },
-            );
-      });
-
-/**
- * Windows are paired by file (through module renames). A file whose windows
- * set the unsafe or a dynamic value more often than before is a regression;
- * a file that is new counts only when the component as a whole has more
- * such windows, so a window that moved file with its options is not new.
- */
-const byLine = (windows) =>
-  [...windows].sort(
-    (a, b) => (a.location?.line ?? 0) - (b.location?.line ?? 0),
-  );
-
-/**
- * Regressing windows in one file. With as many windows as before, windows
- * pair by position, so a swap (one window made unsafe, another made safe)
- * is still seen. Otherwise windows are counted, and a file that gained
- * windows counts only when the component as a whole has more such windows,
- * so a window that moved in with its options is not new.
- */
-const fileRegressions = (context, { name, rule, old, windows }) => {
-  const { left, right } = context;
-  const state = (window) =>
-    stateOf(window.data.web_preferences[name] ?? null, rule);
-  if (old.length === windows.length && old.length > 0) {
-    const pairs = byLine(old).map((was, index) => [
-      was,
-      byLine(windows)[index],
-    ]);
-    const unsafe = pairs.filter(
-      ([was, now]) => state(now) === "unsafe" && state(was) !== "unsafe",
-    );
-    if (unsafe.length > 0)
-      return {
-        known: true,
-        offending: unsafe.map(([, now]) => now),
-        oldDynamic: unsafe.some(([was]) => state(was) === "dynamic"),
-      };
-    const dynamic = pairs.filter(
-      ([was, now]) =>
-        state(now) === "dynamic" && !["dynamic", "unsafe"].includes(state(was)),
-    );
-    return dynamic.length > 0
-      ? {
-          known: false,
-          offending: dynamic.map(([, now]) => now),
-          oldDynamic: false,
-        }
-      : null;
-  }
-  const gained = windows.length > old.length;
-  const grew = (target) =>
-    count(windows, name, rule, target) > count(old, name, rule, target) &&
-    (!gained ||
-      count(right.app.windows, name, rule, target) >
-        count(left.app.windows, name, rule, target));
-  const known = grew("unsafe");
-  if (!known && !grew("dynamic")) return null;
-  return {
-    known,
-    offending: windows.filter(
-      (window) => state(window) === (known ? "unsafe" : "dynamic"),
-    ),
-    oldDynamic: known && count(old, name, rule, "dynamic") > 0,
-  };
-};
-
-const webPreferenceRegressions = (context) => {
-  const { left, right } = context;
-  if (!left.app || !right.app) return [];
-  const before = byFile(left.app.windows, context.aliases);
-  const after = byFile(right.app.windows);
-  return Object.entries(WEB_PREFERENCES).flatMap(([name, rule]) =>
-    [...after].flatMap(([file, windows]) => {
-      const old = before.get(file) ?? [];
-      const regression = fileRegressions(context, { name, rule, old, windows });
-      if (regression === null) return [];
-      const { known, offending, oldDynamic } = regression;
-      const shown = offending[0].data.web_preferences[name];
-      const verb = rule.safe === true ? "turned off" : "turned on";
-      return [
-        {
-          rule: "RW-E02",
-          severity: known && !oldDynamic ? "high" : "medium",
-          title: known
-            ? `${rule.label} ${verb} (${name}: ${JSON.stringify(shown.value)})`
-            : `${rule.label} no longer statically known (${name})`,
-          summary: `${offending.length} BrowserWindow${offending.length === 1 ? "" : "s"} in ${file} set ${name} to ${known ? "the unsafe value" : "a dynamic value"} in ${context.labels.right}, where ${context.labels.left} did not.`,
-          why: "This removes a layer that contains compromised or untrusted web content.",
-          recommendation:
-            "Ask the vendor to restore the setting or document the compensating control.",
-          evidence: [
-            // A file new in this release is compared with the whole old release.
-            ...beforeLines(context, {
-              name,
-              rule,
-              windows: old.length > 0 ? old : left.app.windows,
-              file,
-            }),
-            ...offending.map((window) =>
-              cite(
-                `${context.labels.right}: BrowserWindow in ${file}: ${settingText(name, window.data.web_preferences[name] ?? null)}`,
-                window,
+            ),
+          ),
+        ...(added.length > MAX_LISTED
+          ? [
+              reported(
+                `${added.length - MAX_LISTED} more renderer APIs are listed in the inventory`,
+                "derived",
                 APP_SOURCE,
               ),
-            ),
-          ],
-          unknowns: [
-            "Static webPreferences do not prove runtime enforcement; code can still change them before window creation.",
-            ...(oldDynamic
-              ? [
-                  `${context.labels.left} set ${name} to a dynamic value REA did not resolve, so the old state is not established.`,
-                ]
-              : []),
-            ...(old.some(
-              (window) => (window.data.web_preferences[name] ?? null) === null,
-            )
-              ? [
-                  "Release Watch assumes Electron 20 or later defaults for omitted options; REA did not report the Electron version.",
-                ]
-              : []),
-          ],
-        },
-      ];
-    }),
-  );
+            ]
+          : []),
+      ],
+      unknowns: [],
+    },
+  ];
 };
 
 const FUSES = {
@@ -404,13 +231,24 @@ const fuseSeverity = (name, fuses, unknowns) => {
  * A fuse whose old state REA did not establish (several wires, no wire for
  * that fuse) is still reported when the new state is unsafe, at medium.
  */
+const oldFuseGap = (status) =>
+  (status?.candidates ?? 0) === 0
+    ? "no executable to inspect"
+    : status.failures.length > 0
+      ? "the inspection failed"
+      : "no fuse wire found";
+
 const fuseRegressions = (context) =>
   context.diff.runtimes.flatMap((pair) => {
     const after = pair.after?.fuses;
     if (!after || after.ambiguous) return [];
     const before = pair.before?.fuses ?? null;
-    // The old release had executables REA tried to read, without a result.
-    const oldInspected = (context.left.runtimeStatus?.candidates ?? 0) > 0;
+    // The old release had executables REA tried to read without a result,
+    // or is an Electron distribution with none REA could inspect: its fuse
+    // state is unknown, not safe.
+    const oldUnknown =
+      (context.left.runtimeStatus?.candidates ?? 0) > 0 ||
+      context.left.target?.kind === "electron-dist";
     const unknowns = new Set();
     const rows = Object.entries(FUSES).flatMap(([name, fuse]) => {
       const now = after.fuses[name];
@@ -420,7 +258,7 @@ const fuseRegressions = (context) =>
           ? (before.fuses[name] ?? "unknown")
           : "unknown";
       if (was !== fuse.safe && was !== "unknown") return [];
-      if (before === null && !oldInspected) return [];
+      if (before === null && !oldUnknown) return [];
       const established = was === fuse.safe;
       return [
         {
@@ -438,7 +276,7 @@ const fuseRegressions = (context) =>
     if (rows.some((row) => !row.established))
       unknowns.add(
         before === null
-          ? `REA could not read ${context.labels.left}'s fuses (${context.left.runtimeStatus.failures.length > 0 ? "the inspection failed" : "no fuse wire found"}), so the old state is not established.`
+          ? `REA could not read ${context.labels.left}'s fuses (${oldFuseGap(context.left.runtimeStatus)}), so the old state is not established.`
           : `REA did not establish the old state of every fuse in ${pair.before.name} (${before.ambiguous ? "several fuse wires" : "fuse missing"}).`,
       );
     const established = rows.every((row) => row.established);

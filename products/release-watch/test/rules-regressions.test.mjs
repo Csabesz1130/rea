@@ -59,7 +59,7 @@ describe("counted sites", () => {
       side("v2", app({ childProcesses: [exec(3), exec(9)] })),
     );
     assert.deepEqual(rules(findings), ["RW-P01"]);
-    assert.match(findings[0].summary, /2 such sites here, 1 in v1/);
+    assert.match(findings[0].summary, /2 sites of this kind here, 1 in v1/);
     assert.equal(findings[0].evidence.length, 2);
   });
 });
@@ -295,7 +295,11 @@ describe("moved process execution", () => {
       findings.map((finding) => [finding.rule, finding.severity]),
       [["RW-P01", "low"]],
     );
-    assert.equal(findings[0].evidence.at(-1).side, "left");
+    const old = findings[0].evidence.filter((item) => item.side === "left");
+    assert.deepEqual(
+      old.map((item) => item.location.file),
+      ["dist/index.js"],
+    );
   });
 });
 

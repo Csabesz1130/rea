@@ -230,6 +230,50 @@ describe("compare: a renamed component", { skip }, () => {
   });
 });
 
+describe("compare: MCP tools that reach process execution", { skip }, () => {
+  const local = path.join(here, "fixtures");
+  let reach;
+  before(() => {
+    reach = run(
+      path.join(local, "reach-forms-1.0.0"),
+      path.join(local, "reach-forms-1.1.0"),
+    );
+  });
+  after(() => rmSync(reach.out, { recursive: true, force: true }));
+
+  const cited = (report) =>
+    report.findings
+      .filter((finding) => finding.rule === "RW-M01")
+      .flatMap((finding) => finding.evidence)
+      .filter((item) => item.claim === "registerTool() call")
+      .map((item) => `${item.location.file}:${item.location.line}`)
+      .sort();
+
+  it("follows aliased, namespace, two-hop and CommonJS imports", () => {
+    assert.equal(reach.result.status, 2, reach.result.stderr);
+    assert.deepEqual(cited(reach.report), [
+      "src/index.js:15",
+      "src/index.js:19",
+      "src/index.js:23",
+      "src/legacy-tool.cjs:3",
+    ]);
+  });
+
+  it("does not take a local variable or a nested namesake for the function", () => {
+    // src/index.js:8 calls util.js's exported log(), not compactStore's
+    // nested log(); src/index.js:11 declares its own `result`, not rotate.js's.
+    const lines = cited(reach.report);
+    assert.ok(!lines.includes("src/index.js:8"));
+    assert.ok(!lines.includes("src/index.js:11"));
+    assert.ok(
+      reach.report.findings
+        .flatMap((finding) => finding.evidence)
+        .every((item) => !/^[A-Z][a-z]+File\(\)/.test(item.claim)),
+      "claims keep the method's own name",
+    );
+  });
+});
+
 describe("compare: captures only and nothing to analyze", { skip }, () => {
   const outs = [];
   after(() =>

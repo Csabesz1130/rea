@@ -16,17 +16,17 @@ export const maxSeverity = (severities) =>
   );
 
 /**
- * Facts that are new on the right side, with the status that made them new
- * and, for keys seen on both sides, how many facts each side has.
+ * Keys that are new on the right side, once each: the first new-side fact,
+ * all of them, the status that made the key new and how many facts each
+ * side has.
  */
 export const newFacts = (items) =>
-  items.filter(isNew).flatMap((item) =>
-    item.right.map((fact) => ({
-      fact,
-      status: item.status,
-      counts: { before: item.left.length, after: item.right.length },
-    })),
-  );
+  items.filter(isNew).map((item) => ({
+    fact: item.right[0],
+    facts: item.right,
+    status: item.status,
+    counts: { before: item.left.length, after: item.right.length },
+  }));
 
 /**
  * New or increased keys, one entry per key with all of its new-side facts,
@@ -60,15 +60,17 @@ export const newGroups = (items, { field = null } = {}) =>
       : [];
   });
 
+const sites = (count) => `${count} site${count === 1 ? "" : "s"}`;
+
 /** How a claim's absence on the left side is known. */
 export const absencePhrase = (status, leftLabel, counts = null) => {
   if (status === "added") return `absent from ${leftLabel}`;
   if (status === "changed")
     return counts && counts.before !== counts.after
-      ? `${counts.after} sites here, ${counts.before} in ${leftLabel}, with a value ${leftLabel} did not have`
+      ? `${sites(counts.after)} here, ${counts.before} in ${leftLabel}, with a value ${leftLabel} did not have`
       : `as many sites as ${leftLabel}, with a value ${leftLabel} did not have`;
   if (status === "increased" && counts)
-    return `${counts.after} such sites here, ${counts.before} in ${leftLabel}; Release Watch cannot tell which is new`;
+    return `${sites(counts.after)} of this kind here, ${counts.before} in ${leftLabel}; Release Watch cannot tell which is new`;
   return `not observed in ${leftLabel}; REA coverage does not establish absence`;
 };
 
@@ -100,14 +102,14 @@ export const heuristic = (claim, location = null, { side = "right" } = {}) => ({
 });
 
 /** One evidence line for a value REA reported outside a source location. */
-export const reported = (claim, basis, source) => ({
+export const reported = (claim, basis, source, { side = "right" } = {}) => ({
   claim,
   basis,
   source,
   location: null,
   artifact_sha256: null,
   rea_authority: null,
-  side: "right",
+  side,
 });
 
 const before = (a, b) =>

@@ -1,5 +1,6 @@
 // Network destinations, keyed by host so renamed bundles and refactored
 // modules do not hide or invent a destination.
+import { movedFrom } from "../moves.mjs";
 import { isNamespaceHost } from "../catalog.mjs";
 import {
   displayUrl,
@@ -346,7 +347,7 @@ const destinationFinding = (host, sources, context) => {
   const runtime = sources.some((source) => source.kind === "capture");
   return {
     rule: "RW-N01",
-    severity: firstParty ? "low" : named ? "medium" : "high",
+    severity: firstParty ? "low" : "high",
     title: `New ${firstParty ? "first-party" : "third-party"} destination: ${host}`,
     summary: isGuess(sources)
       ? `${labels.right} has a request with an unresolved destination in a module that also holds a URL for ${host}; the host was ${hostAbsence(context)}.`
@@ -373,18 +374,6 @@ const destinationFinding = (host, sources, context) => {
   };
 };
 
-const unresolvedPerMethod = (app) =>
-  (app?.requests ?? [])
-    .filter((request) => !request.data.endpoint)
-    .reduce(
-      (counts, request) =>
-        counts.set(
-          request.data.method,
-          (counts.get(request.data.method) ?? 0) + 1,
-        ),
-      new Map(),
-    );
-
 // URL literals in a request's module, shown as candidates, never as the
 // request's established destination.
 const candidateLines = (app, request) =>
@@ -399,20 +388,11 @@ const candidateLines = (app, request) =>
     );
 
 // Requests with no destination REA resolved and no new destination finding
-// explains. A site counts only when the component has more unresolved sites
-// of that method than before, so code that moved between modules is not
-// reported as new.
-const unresolvedRequests = (context, explained) => {
-  // Across the release when known, so a request that moved between
-  // components is not new.
-  const release = context.release?.counts.requests;
-  const before = release
-    ? new Map([...release].map(([method, entry]) => [method, entry.before]))
-    : unresolvedPerMethod(context.left.app);
-  const after = release
-    ? new Map([...release].map(([method, entry]) => [method, entry.after]))
-    : unresolvedPerMethod(context.right.app);
-  return newGroups(context.diff.app.requests)
+// explains. A group counts unless each of its new sites takes an unresolved
+// site of the same method that the release lost, so code that moved between
+// modules or components is not reported as new.
+const unresolvedRequests = (context, explained) =>
+  newGroups(context.diff.app.requests)
     .map((group) => ({
       ...group,
       facts: group.facts.filter(
@@ -423,18 +403,14 @@ const unresolvedRequests = (context, explained) => {
       ),
     }))
     .filter((group) => group.facts.length > 0)
-    .filter(
-      (group) =>
-        (after.get(group.facts[0].data.method) ?? 0) >
-        (before.get(group.facts[0].data.method) ?? 0),
-    )
+    .filter((group) => movedFrom(context.moves.requests, group.facts) === null)
     .map((group) => {
       const [fact] = group.facts;
       return {
         rule: "RW-N02",
         severity: "medium",
         title: `New request with an unresolved destination in ${fact.data.module}`,
-        summary: `${context.labels.right} has more ${fact.data.method}() sites without a resolved destination than ${context.labels.left} (${before.get(fact.data.method) ?? 0} → ${after.get(fact.data.method)}).`,
+        summary: `${context.labels.right} has ${fact.data.method}() sites in ${fact.data.module} without a resolved destination that no removed site of ${context.labels.left} accounts for (${group.counts.before} → ${group.counts.after} in this module).`,
         why: "Unexplained outbound traffic is the main exfiltration path for compromised updates.",
         recommendation:
           "Capture the release's traffic or ask the vendor for the destination.",
@@ -453,7 +429,6 @@ const unresolvedRequests = (context, explained) => {
         ],
       };
     });
-};
 
 const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1)$/;
 const CLEARTEXT = new Set(["http", "ws"]);

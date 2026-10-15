@@ -119,6 +119,19 @@ const tokensOf = (carriers, keep = () => true) =>
       ),
   );
 
+/** Credential tokens one app ships: `{ all, browser }`, each a Set of values. */
+export const shippedTokens = (app) => {
+  const carriers = keyCarriers(app);
+  return {
+    all: tokensOf(carriers),
+    browser: tokensOf(carriers, (carrier) =>
+      app?.browserModules.has(carrier.module),
+    ),
+  };
+};
+
+const union = (...sets) => new Set(sets.flatMap((set) => [...(set ?? [])]));
+
 /**
  * RW-A02. Every new-side string is checked, not only new or changed keys, so
  * a key added to an existing variable or embedded in a longer string is
@@ -128,10 +141,13 @@ const tokensOf = (carriers, keep = () => true) =>
 const credentialFindings = (context) => {
   const { left, right, labels } = context;
   if (!right.app) return [];
-  const oldCarriers = keyCarriers(left.app);
-  const before = tokensOf(oldCarriers);
-  const beforeInBrowser = tokensOf(oldCarriers, (carrier) =>
-    left.app?.browserModules.has(carrier.module),
+  // What this component and every component of the old release shipped, so
+  // a key that moved between components is not new.
+  const shipped = shippedTokens(left.app);
+  const before = union(shipped.all, context.baseline.tokens);
+  const beforeInBrowser = union(
+    shipped.browser,
+    context.baseline.browserTokens,
   );
   const seen = new Set();
   return keyCarriers(right.app).flatMap((carrier) => {

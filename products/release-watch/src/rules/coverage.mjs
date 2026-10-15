@@ -19,8 +19,10 @@ const listed = (files) =>
   `${files.slice(0, MAX_FILES).join(", ")}${files.length > MAX_FILES ? ` and ${files.length - MAX_FILES} more` : ""}`;
 
 // Files whose content differs from the old release, or that are new there.
-// Unknown without an analyzed old side: nothing is called changed then.
+// Every file of a component new in this release is new. Unknown when REA
+// could not analyze the old side: nothing is called changed then.
 const changedFiles = (context) => {
+  if (context.left.target === null) return () => true;
   if (!context.left.app) return () => false;
   const before = new Map(
     (context.left.app?.assets ?? []).map((asset) => [
@@ -100,6 +102,85 @@ const applicationGaps = (app) => {
  * unexamined files changed since the old release, since a change there is
  * exactly what this report cannot see; medium otherwise.
  */
+// What a bundle's source map says changed: `{ known, changed }`, with the
+// original sources added, changed or removed since the old bundle's map.
+const originalChanges = (context, file) => {
+  const oldFile =
+    [...context.aliases].find(([, alias]) => alias.path === file)?.[0] ?? file;
+  const sourcesOf = (app, bundle) =>
+    new Map(
+      (app?.embeddedSources ?? [])
+        .filter((fact) => fact.data.bundle === bundle)
+        .map((fact) => [fact.data.original, fact.data.content_sha256]),
+    );
+  const before = sourcesOf(context.left.app, oldFile);
+  const after = sourcesOf(context.right.app, file);
+  if (before.size === 0 || after.size === 0)
+    return { known: false, changed: [] };
+  const changed = [
+    ...[...after]
+      .filter(([original, digest]) => before.get(original) !== digest)
+      .map(([original]) => original),
+    ...[...before.keys()].filter((original) => !after.has(original)),
+  ];
+  return { known: true, changed };
+};
+
+// Changed unexamined files, split by what their source maps say.
+const unexaminedChanges = (context, files) => {
+  const changes = files.map((file) => ({
+    file,
+    ...originalChanges(context, file),
+  }));
+  return {
+    changes,
+    substantive: changes.filter(
+      (change) => !change.known || change.changed.length > 0,
+    ),
+  };
+};
+
+const sourceMapLines = (changes) =>
+  changes
+    .filter((change) => change.known)
+    .map((change) =>
+      reported(
+        change.changed.length > 0
+          ? `The source map of ${change.file} names ${change.changed.length} original source${change.changed.length === 1 ? "" : "s"} that changed: ${listed(change.changed)}`
+          : `The source map of ${change.file} lists the same original sources with the same content as before`,
+        "derived",
+        COMPONENT,
+      ),
+    );
+
+// The same file failed in the old release too, so higher limits may not help.
+const failedBefore = (context, files) => {
+  const old = new Set(
+    (context.left.app?.analysisFailures ?? [])
+      .map((failure) => failure.location?.file)
+      .filter(Boolean),
+  );
+  return files.some((file) => old.has(file));
+};
+
+const recommendationFor = (context, { limited, changes }) => {
+  const named = changes.filter((change) => change.changed.length > 0);
+  const review =
+    named.length > 0
+      ? ` Start with the original sources the source map names as changed.`
+      : "";
+  if (
+    failedBefore(
+      context,
+      changes.map((change) => change.file),
+    )
+  )
+    return `REA could not examine these files in ${context.labels.left} either, so higher limits may not help; review them by other means.${review}`;
+  return limited
+    ? `Re-run with higher REA limits (--max-semantic-nodes-per-file, --max-heap-mb), or review the listed files by other means.${review}`
+    : `Review the listed files or captures by other means.${review}`;
+};
+
 const incompleteAnalysis = (context) => {
   const app = context.right.app;
   const captureGaps = context.right.capture?.gaps ?? [];
@@ -118,15 +199,17 @@ const incompleteAnalysis = (context) => {
       ]
     : [];
   const changed = app ? [...new Set(files.filter(changedFiles(context)))] : [];
+  const { changes, substantive } = unexaminedChanges(context, changed);
   const limited =
     app &&
     (app.coverage.semantic_truncated ||
       app.coverage.semantic_ceiling_modules.length > 0);
+  const mapsOnly = changed.length > 0 && substantive.length === 0;
   return [
     {
       rule: "RW-C01",
       severity:
-        changed.length > 0 ||
+        substantive.length > 0 ||
         (app?.coverage.semantic === "unavailable" && context.left.app)
           ? "high"
           : "medium",
@@ -139,11 +222,16 @@ const incompleteAnalysis = (context) => {
           ? `REA could not fully examine ${listed(changed)}, which changed since ${context.labels.left}; findings in the unexamined part are missing.`
           : `REA examined only part of ${context.labels.right}; findings in the unexamined part are missing from this report.`,
       why: "A pass is meaningful only for code that was examined. Large bundles are where injected code hides most easily.",
-      recommendation: limited
-        ? "Re-run with higher REA limits (--max-semantic-nodes-per-file, --max-heap-mb), or review the listed files by other means."
-        : "Review the listed files or captures by other means.",
-      evidence,
-      unknowns: ["Release Watch cannot tell what the unexamined code does."],
+      recommendation: recommendationFor(context, { limited, changes }),
+      evidence: [...evidence, ...sourceMapLines(changes)],
+      unknowns: [
+        "Release Watch cannot tell what the unexamined code does.",
+        ...(mapsOnly
+          ? [
+              "The source maps say no original source changed, but REA does not establish that a map matches its bundle.",
+            ]
+          : []),
+      ],
     },
   ];
 };
@@ -179,7 +267,7 @@ const oneSided = (context) => {
   const lines = [];
   if (left.target === null)
     lines.push(
-      `Component ${name} is new in ${release.right}; it was compared with every component of ${release.left} together.`,
+      `Component ${name} is new in ${release.right}; its hosts, packages, SDKs, keys, windows and moved code were compared with all of ${release.left}, and everything else in it is reported as new.`,
     );
   if (right.target === null)
     lines.push(
@@ -337,8 +425,10 @@ const helperCoverage = (context) =>
     }));
 
 /**
- * RW-C05: modules that import an HTTP client library and have no request
- * site REA recognised. Their requests are not examined by the network rules.
+ * RW-C05: new or changed modules that import an HTTP client library, or a
+ * local module that does, and have no request site REA recognised. Their
+ * requests are not examined by the network or AI rules. Medium unless a
+ * runtime capture of the new release covers what they send.
  */
 const unmodeledClients = (context) => {
   const app = context.right.app;
@@ -346,10 +436,11 @@ const unmodeledClients = (context) => {
   const requesting = new Set(
     app.requests.map((request) => request.data.module),
   );
-  const sites = app.imports.filter(
-    (fact) =>
-      isHttpClient(packageNameOf(fact.key)) &&
-      !requesting.has(fact.data.module),
+  const direct = app.imports.filter((fact) =>
+    isHttpClient(packageNameOf(fact.key)),
+  );
+  const clientModules = new Map(
+    direct.map((fact) => [fact.data.module, packageNameOf(fact.key)]),
   );
   const before = new Set(
     (context.left.app?.imports ?? [])
@@ -357,31 +448,54 @@ const unmodeledClients = (context) => {
       .map((fact) => `${fact.data.module}#${fact.key}`),
   );
   // New imports, and modules that changed although they imported the
-  // client before: their requests may be new too.
+  // client before: their requests may be new too. Without an analyzed old
+  // side, every module counts.
   const changed = context.left.app ? changedFiles(context) : () => true;
-  const fresh = sites.filter(
-    (fact) =>
-      !before.has(`${fact.data.module}#${fact.key}`) ||
-      changed(fact.data.module),
-  );
+  const fresh = [
+    ...direct
+      .filter(
+        (fact) =>
+          !before.has(`${fact.data.module}#${fact.key}`) ||
+          changed(fact.data.module),
+      )
+      .map((fact) => ({
+        module: fact.data.module,
+        client: packageNameOf(fact.key),
+        line: cite(`${fact.data.module} imports ${fact.key}`, fact, APP_SOURCE),
+      })),
+    // A changed module that calls through a client another module set up.
+    ...[...app.modules]
+      .filter(([module]) => !clientModules.has(module) && changed(module))
+      .flatMap(([module, entry]) =>
+        [...entry.local]
+          .filter((target) => clientModules.has(target))
+          .slice(0, 1)
+          .map((target) => ({
+            module,
+            client: clientModules.get(target),
+            line: heuristic(
+              `${module} changed and imports ${target}, which imports ${clientModules.get(target)}`,
+              { file: module, line: null, column: null },
+            ),
+          })),
+      ),
+  ].filter((site) => !requesting.has(site.module));
   if (fresh.length === 0) return [];
-  const clients = [...new Set(fresh.map((fact) => packageNameOf(fact.key)))];
-  const moduleCount = new Set(fresh.map((fact) => fact.data.module)).size;
+  const clients = [...new Set(fresh.map((site) => site.client))];
+  const moduleCount = new Set(fresh.map((site) => site.module)).size;
+  const captured = context.right.capture !== null;
   return [
     {
       rule: "RW-C05",
-      severity: "low",
+      severity: captured ? "low" : "medium",
       title: `Requests through ${clients.join(", ")} in new or changed code are not examined`,
-      summary: `${moduleCount} module${moduleCount === 1 ? "" : "s"} of ${context.labels.right} import${moduleCount === 1 ? "s" : ""} an HTTP client library and REA recognised no request site in ${moduleCount === 1 ? "it" : "them"}.`,
-      why: "Destinations reached through these libraries are invisible to the network rules, so a new third-party host there would not be reported.",
-      recommendation:
-        "Capture the release's traffic with release-watch record, or review these modules' requests.",
+      summary: `${moduleCount} new or changed module${moduleCount === 1 ? "" : "s"} of ${context.labels.right} reach${moduleCount === 1 ? "es" : ""} an HTTP client library and REA recognised no request site in ${moduleCount === 1 ? "it" : "them"}.`,
+      why: "Destinations reached through these libraries, AI provider APIs among them, are invisible to the network and AI rules, so a new third-party host there would not be reported.",
+      recommendation: captured
+        ? "The runtime capture covers what the release sent while it was recorded; review these modules' requests for paths the capture did not exercise."
+        : "Capture the release's traffic with release-watch record, or review these modules' requests.",
       evidence: [
-        ...fresh
-          .slice(0, MAX_FILES)
-          .map((fact) =>
-            cite(`${fact.data.module} imports ${fact.key}`, fact, APP_SOURCE),
-          ),
+        ...fresh.slice(0, MAX_FILES).map((site) => site.line),
         heuristic(
           "Release Watch lists HTTP client packages whose calls REA's request extraction may not model",
         ),

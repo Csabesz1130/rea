@@ -1,5 +1,5 @@
 // Synthetic REA facts and a one-component policy run for rule tests.
-import { pairHelpers, pairRuntimes } from "../src/compare.mjs";
+import { pairHelpers, pairRuntimes } from "../src/pairing.mjs";
 import { diffApplications, diffCaptures } from "../src/diff.mjs";
 import { evaluateComponent } from "../src/policy.mjs";
 
@@ -54,8 +54,9 @@ export const app = (overrides = {}) => ({
   stringLiterals: [],
   urlLiterals: [],
   bindingReads: [],
-  callables: [],
-  callEdges: [],
+  functions: [],
+  calls: [],
+  members: [],
   htmlSinks: [],
   memberCalls: [],
   dynamicEvaluation: [],

@@ -1,47 +1,68 @@
-// The call graph REA resolved within modules: which functions bindings hold
-// and which call sites call which functions. Ranges only; no source is read.
+// The parts of REA's semantic graph that say which code can run which code:
+// functions with their own ranges, the calls REA resolved within a module,
+// and member reads (`shell.run`).
+// Ranges and node ids only; no source is read.
 
 const rangeOf = (node) => node?.identity?.source_range ?? null;
 const moduleOf = (node) => node?.identity?.module_path ?? null;
+const MEMBER_READ = /^read:\/(.+)$/;
+
+const functionsOf = (semantic) =>
+  semantic.nodes
+    .filter((node) => node.kind === "function" && rangeOf(node))
+    .map((node) => ({
+      id: node.node_id,
+      module: moduleOf(node),
+      name: node.properties?.name ?? null,
+      range: rangeOf(node),
+    }));
+
+// Call sites REA resolved to functions of the same module.
+const callsOf = (semantic, byId) => {
+  const callees = new Map();
+  for (const relation of semantic.relations) {
+    if (relation.relation !== "calls") continue;
+    if (byId.get(relation.target_node_id)?.kind !== "function") continue;
+    const list = callees.get(relation.source_node_id) ?? [];
+    list.push(relation.target_node_id);
+    callees.set(relation.source_node_id, list);
+  }
+  return [...callees].flatMap(([id, targets]) => {
+    const site = byId.get(id);
+    return site?.kind === "call-site" && rangeOf(site)
+      ? [
+          {
+            module: moduleOf(site),
+            range: rangeOf(site),
+            callees: targets,
+          },
+        ]
+      : [];
+  });
+};
+
+// Property reads (`shell.run`), with REA's read path below the object.
+const membersOf = (semantic) =>
+  semantic.nodes.flatMap((node) => {
+    const path =
+      node.kind === "expression"
+        ? MEMBER_READ.exec(node.label ?? "")?.[1].split("/")
+        : null;
+    return path && rangeOf(node)
+      ? [{ module: moduleOf(node), range: rangeOf(node), path }]
+      : [];
+  });
 
 /**
- * `{ callables, callEdges }` from one semantic graph. A callable is a
- * binding REA links to the function it holds (a declaration or an assigned
- * arrow function), with that function's whole range. A call edge is a call
- * site REA resolved to a function.
+ * `{ functions, calls, members }` from one semantic graph. Binding reads are
+ * projected with the other semantic facts, in application.mjs.
  */
 export const callGraph = (semantic) => {
-  if (!semantic) return { callables: [], callEdges: [] };
+  if (!semantic) return { functions: [], calls: [], members: [] };
   const byId = new Map(semantic.nodes.map((node) => [node.node_id, node]));
-  const callables = semantic.nodes
-    .filter(
-      (node) =>
-        node.kind === "binding" &&
-        node.label &&
-        rangeOf(byId.get(node.function_node_id)),
-    )
-    .map((node) => ({
-      module: moduleOf(node),
-      name: node.label,
-      range: rangeOf(byId.get(node.function_node_id)),
-    }));
-  const callEdges = semantic.relations
-    .filter((relation) => relation.relation === "calls")
-    .map((relation) => [
-      byId.get(relation.source_node_id),
-      byId.get(relation.target_node_id),
-    ])
-    .filter(
-      ([source, target]) =>
-        source?.kind === "call-site" &&
-        target?.kind === "function" &&
-        rangeOf(source) &&
-        rangeOf(target),
-    )
-    .map(([source, target]) => ({
-      module: moduleOf(source),
-      range: rangeOf(source),
-      target: { module: moduleOf(target), range: rangeOf(target) },
-    }));
-  return { callables, callEdges };
+  return {
+    functions: functionsOf(semantic),
+    calls: callsOf(semantic, byId),
+    members: membersOf(semantic),
+  };
 };

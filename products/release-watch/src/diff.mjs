@@ -271,10 +271,26 @@ const rekey = (facts, aliases) =>
       });
 
 /** Compare the application facts of two releases, family by family. */
-export const diffApplications = (leftApp, rightApp, aliases = new Map()) => {
+export const diffApplications = (
+  leftApp,
+  rightApp,
+  aliases = new Map(),
+  { leftKnown = true } = {},
+) => {
   const left = leftApp ?? EMPTY_APP;
   const right = rightApp ?? EMPTY_APP;
   const complete = (app, coverage) => app.coverage[coverage] === "complete";
+  // An old side REA could not analyze is not an empty one: nothing is compared.
+  if (!leftKnown)
+    return Object.fromEntries(
+      FAMILIES.map(({ family }) => [
+        family,
+        diffKeyed([], right[family], {}).map((item) => ({
+          ...item,
+          status: "not-compared",
+        })),
+      ]),
+    );
   return Object.fromEntries(
     FAMILIES.map(
       ({ family, coverage, moduleKeyed, equal, unique, countable }) => [

@@ -3,109 +3,33 @@
 import { HTML_SINKS } from "../catalog.mjs";
 import { isUrl, scriptKey } from "../urls.mjs";
 import { callGraph } from "./calls.mjs";
+import { browserModules, importIndex } from "./modules.mjs";
+import { withLoads } from "./windows.mjs";
 import {
-  edgeFact,
   firstObservation,
   graphFact,
   observationFact,
   semanticFact,
 } from "./provenance.mjs";
 
-// Property reads Release Watch pairs with their calls: MCP tool registrations.
+// Property reads Release Watch pairs with their calls: MCP tool registrations,
+// by the last name of REA's read path (`server.experimental.tasks.registerToolTask`).
 // The low-level MCP Server API dispatches tools through setRequestHandler.
-const TRACKED_READS = new Set([
-  "read:/registerTool",
-  "read:/tool",
-  "read:/setRequestHandler",
+const TRACKED_MEMBERS = new Set([
+  "registerTool",
+  "registerToolTask",
+  "tool",
+  "setRequestHandler",
 ]);
+const trackedMember = (label) => {
+  const member = /^read:\/(?:.+\/)?([^/]+)$/.exec(label)?.[1] ?? null;
+  return TRACKED_MEMBERS.has(member) ? member : null;
+};
 
 const webPreferenceValue = (entry) =>
   entry.value?.status === "literal"
     ? { known: true, value: entry.value.value }
     : { known: false, value: entry.value?.expression ?? null };
-
-const modulePathOf = (node) => {
-  const properties = firstObservation(node)?.properties ?? {};
-  if (node.kind === "javascript-asset") return properties.path ?? null;
-  if (node.identity?.namespace === "source-module")
-    return properties.path ?? null;
-  return null;
-};
-
-const externalSpecifierOf = (edge, target) => {
-  const properties = firstObservation(target)?.properties ?? {};
-  if (properties.resolution_status !== "external") return null;
-  return (
-    edge.properties?.specifier ??
-    properties.specifier ??
-    properties.declared_specifier ??
-    null
-  );
-};
-
-/**
- * Per-module import index: local modules each module imports, external
- * specifiers (Node built-ins and npm packages), and the local name each
- * import binds. Also returns one fact per external import edge.
- */
-const importIndex = (graph) => {
-  const byId = new Map(graph.nodes.map((node) => [node.node_id, node]));
-  const modules = new Map();
-  const imports = [];
-  const entry = (modulePath) => {
-    if (!modules.has(modulePath))
-      modules.set(modulePath, {
-        externalImports: new Set(),
-        local: new Set(),
-        imported: new Map(),
-      });
-    return modules.get(modulePath);
-  };
-  for (const edge of graph.edges) {
-    if (edge.relation !== "imports") continue;
-    const source = byId.get(edge.source_node_id);
-    const target = byId.get(edge.target_node_id);
-    const sourcePath = source ? modulePathOf(source) : null;
-    if (sourcePath === null || target === undefined) continue;
-    const targetPath = modulePathOf(target);
-    const localName = edge.properties?.local_name ?? null;
-    if (targetPath !== null) {
-      entry(sourcePath).local.add(targetPath);
-      if (localName !== null)
-        entry(sourcePath).imported.set(localName, targetPath);
-      continue;
-    }
-    const specifier = externalSpecifierOf(edge, target);
-    if (specifier === null || entry(sourcePath).externalImports.has(specifier))
-      continue;
-    entry(sourcePath).externalImports.add(specifier);
-    imports.push(edgeFact(edge, specifier, { specifier, module: sourcePath }));
-  }
-  return { modules, imports };
-};
-
-/** Modules that run in a browser page: HTML-loaded scripts, service workers and everything they import. */
-const browserModules = (graph, modules) => {
-  const byId = new Map(graph.nodes.map((node) => [node.node_id, node]));
-  const roots = [];
-  for (const edge of graph.edges) {
-    if (edge.relation !== "loads") continue;
-    const source = byId.get(edge.source_node_id);
-    const target = byId.get(edge.target_node_id);
-    const loader =
-      source?.kind === "electron-renderer" || source?.kind === "service-worker";
-    const targetPath = target ? modulePathOf(target) : null;
-    if (loader && targetPath !== null) roots.push(targetPath);
-  }
-  const reached = new Set();
-  const visit = (modulePath) => {
-    if (reached.has(modulePath)) return;
-    reached.add(modulePath);
-    for (const next of modules.get(modulePath)?.local ?? []) visit(next);
-  };
-  roots.forEach(visit);
-  return reached;
-};
 
 const assetFact = (node, properties, facts) => {
   if (properties.path)
@@ -238,6 +162,21 @@ const GRAPH_PROJECTIONS = {
           message: failure.message ?? null,
         }),
       );
+    // A file REA could not parse is unexamined like a failed analysis.
+    if (properties.operation === "parse-javascript" && properties.path) {
+      const fact = graphFact(node, `failure:${node.node_id}`, {
+        code: "parse-failed",
+        message: properties.limitation ?? null,
+      });
+      facts.analysisFailures.push({
+        ...fact,
+        location: fact.location ?? {
+          file: properties.path,
+          line: null,
+          column: null,
+        },
+      });
+    }
   },
 };
 
@@ -283,6 +222,7 @@ const SEMANTIC_PROJECTIONS = {
       scope.fact(node, {
         command: node.properties?.command ?? null,
         range: rangeOf(node),
+        function: node.function_node_id ?? null,
       }),
     ),
   timer: (node, scope) => scope.facts.timers.push(scope.fact(node, {})),
@@ -330,7 +270,7 @@ const SEMANTIC_PROJECTIONS = {
           range,
         }),
       );
-    if (TRACKED_READS.has(label)) scope.trackedReads.push(node);
+    if (trackedMember(label)) scope.trackedReads.push(node);
   },
   "call-site": (node, scope) => {
     if (rangeOf(node) !== null) scope.callSites.push(node);
@@ -354,6 +294,8 @@ const bindingRelations = (semantic, facts, contexts) => {
         module: modulePath,
         name: source.label,
         range: rangeOf(target),
+        binding_range: rangeOf(source),
+        binding_owner: source.function_node_id ?? null,
       }),
     );
   }
@@ -377,7 +319,7 @@ const memberCalls = (scope) => {
     scope.facts.memberCalls.push(
       semanticFact(call, scope.contexts, `${modulePath}#${read.label}`, {
         module: modulePath,
-        member: read.label.replace(/^read:\//, ""),
+        member: trackedMember(read.label),
         range: rangeOf(call),
       }),
     );
@@ -501,6 +443,32 @@ const unreachedModules = (semantic, assets) => {
     .sort();
 };
 
+// The bundle each source-map original belongs to: the asset whose source map
+// (asset —maps_to→ source map —contains→ original) lists it.
+const withBundles = (sources, graph) => {
+  const byId = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const mapOwner = new Map();
+  for (const edge of graph.edges)
+    if (
+      edge.relation === "maps_to" &&
+      byId.get(edge.source_node_id)?.kind === "javascript-asset" &&
+      byId.get(edge.target_node_id)?.kind === "source-map"
+    )
+      mapOwner.set(
+        edge.target_node_id,
+        firstObservation(byId.get(edge.source_node_id))?.properties?.path ??
+          null,
+      );
+  const bundle = new Map();
+  for (const edge of graph.edges)
+    if (edge.relation === "contains" && mapOwner.has(edge.source_node_id))
+      bundle.set(edge.target_node_id, mapOwner.get(edge.source_node_id));
+  return sources.map((fact) => ({
+    ...fact,
+    data: { ...fact.data, bundle: bundle.get(fact.node_id) ?? null },
+  }));
+};
+
 /** Capability facts from one `analyze_javascript_application` Evidence record. */
 export const applicationFacts = (evidence) => {
   const result = evidence.normalized_result;
@@ -525,6 +493,8 @@ export const applicationFacts = (evidence) => {
     imports,
     browserModules: browserModules(graph, modules),
     ...graphPart,
+    windows: withLoads(graphPart.windows, graph, semantic),
+    embeddedSources: withBundles(graphPart.embeddedSources, graph),
     ...semanticFacts(semantic),
     ...callGraph(semantic),
   };

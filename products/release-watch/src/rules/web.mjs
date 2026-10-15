@@ -76,7 +76,7 @@ const serviceWorkerFindings = (context) =>
 // Bundler runtime and external-module stubs a source map lists, which are
 // not the product's own source files.
 const isStub = (original) =>
-  /external (commonjs|commonjs2|module|amd|var|root|umd|node-commonjs|import)/.test(
+  /(^|\/)external (?:(?:commonjs2?|module|amd|var|root|umd|node-commonjs|import) )?"/.test(
     original,
   ) ||
   /(^|\/)\(webpack\)|webpack\/(bootstrap|runtime)|^webpack\//.test(original);

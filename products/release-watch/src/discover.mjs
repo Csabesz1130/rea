@@ -111,6 +111,38 @@ export const discoverTarget = (input, { capture = null } = {}) => {
   return withCapture(found);
 };
 
+const MAX_SIGNATURE_FILES = 5000;
+
+/**
+ * The relative path and size of each file a component's app holds, up to a
+ * bound: enough to tell which old component a renamed one continues.
+ */
+const signatures = new WeakMap();
+
+export const contentSignature = (component) => {
+  if (!signatures.has(component))
+    signatures.set(component, signatureOf(component.target));
+  return signatures.get(component);
+};
+
+const signatureOf = (target) => {
+  const root = target.app ?? target.capture;
+  const files = new Set();
+  const walk = (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (files.size >= MAX_SIGNATURE_FILES) return;
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(full, `${prefix}${entry.name}/`);
+      else if (entry.isFile())
+        files.add(`${prefix}${entry.name}\u0000${statSync(full).size}`);
+    }
+  };
+  const stats = root ? statSync(root, { throwIfNoEntry: false }) : null;
+  if (stats?.isDirectory()) walk(root, "");
+  else if (stats?.isFile()) files.add(`\u0000${stats.size}`);
+  return files;
+};
+
 const COMPONENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 // A manifest path, which must stay inside the release directory.

@@ -15,16 +15,17 @@ import {
   ambiguousBundles,
   diffApplications,
   diffCaptures,
-  diffFuses,
-  diffGo,
   isScriptPath,
   moduleAliases,
 } from "./diff.mjs";
 import { discoverRelease } from "./discover.mjs";
+import { pairComponents, pairHelpers, pairRuntimes } from "./pairing.mjs";
+import { connectionTotals, registrationTotals } from "./rules/mcp.mjs";
 import {
   evaluateComponent,
   numberFindings,
   releaseBaseline,
+  releaseMovesOf,
   verdictFor,
 } from "./policy.mjs";
 import { sourceLine } from "./source-line.mjs";
@@ -145,82 +146,6 @@ const reaComparison = async ({ rea, component, left, right, outDir, mode }) => {
     pairs,
   };
 };
-
-// Pair items by a key, then pair what is left by a fallback key when it is
-// unique on both sides.
-const pairBy = (before, after, key, fallback) => {
-  const pairs = [];
-  const unmatchedAfter = new Set(after);
-  const unmatchedBefore = [];
-  for (const item of before) {
-    const match = after.find(
-      (candidate) =>
-        unmatchedAfter.has(candidate) && key(candidate) === key(item),
-    );
-    if (match) {
-      unmatchedAfter.delete(match);
-      pairs.push([item, match]);
-    } else unmatchedBefore.push(item);
-  }
-  for (const item of unmatchedBefore) {
-    const sameBefore = unmatchedBefore.filter(
-      (other) => fallback(other) === fallback(item),
-    );
-    const candidates = [...unmatchedAfter].filter(
-      (candidate) => fallback(candidate) === fallback(item),
-    );
-    if (
-      fallback(item) !== null &&
-      sameBefore.length === 1 &&
-      candidates.length === 1
-    ) {
-      unmatchedAfter.delete(candidates[0]);
-      pairs.push([item, candidates[0]]);
-    } else pairs.push([item, null]);
-  }
-  return [...pairs, ...[...unmatchedAfter].map((item) => [null, item])];
-};
-
-// Helpers pair by relative path, then by file name when it is unique, so a
-// helper that moved directory is compared with its old build.
-export const pairHelpers = (left, right) =>
-  pairBy(
-    left.helpers,
-    right.helpers,
-    (helper) => helper.relative,
-    (helper) => helper.name,
-  )
-    .map(([before, after]) => ({
-      relative: (after ?? before).relative,
-      name: (after ?? before).name,
-      before,
-      after,
-      go: before?.go && after?.go ? diffGo(before.go, after.go) : null,
-    }))
-    .sort((a, b) => a.relative.localeCompare(b.relative));
-
-// Executables pair by name. A new executable is compared with the old
-// release's first one, so an unhardened executable added next to a hardened
-// one is still graded.
-export const pairRuntimes = (left, right) =>
-  pairBy(
-    left.runtimes,
-    right.runtimes,
-    (runtime) => runtime.name,
-    () => null,
-  ).map(([before, after]) => {
-    const baseline = before ?? (after ? (left.runtimes[0] ?? null) : null);
-    return {
-      name: (after ?? before).name,
-      before: baseline,
-      after,
-      matched: before !== null && after !== null,
-      changes:
-        baseline?.fuses && after?.fuses
-          ? diffFuses(baseline.fuses, after.fuses)
-          : [],
-    };
-  });
 
 // Lines where REA reported a string or resolved URL holding a key.
 const sensitiveLines = (app) =>
@@ -349,7 +274,9 @@ const prepareComponent = async ({
   });
   const aliases = moduleAliases(left.app, right.app, comparison?.pairs ?? []);
   const diff = {
-    app: diffApplications(left.app, right.app, aliases),
+    app: diffApplications(left.app, right.app, aliases, {
+      leftKnown: !failed(left),
+    }),
     runtimes: pairRuntimes(left, right),
     helpers: pairHelpers(left, right),
     capture: diffCaptures(left.capture, right.capture),
@@ -366,43 +293,29 @@ const prepareComponent = async ({
   };
 };
 
-const unresolved = (facts) => facts.filter((fact) => !fact.data.endpoint);
-
-const tally = (prepared, family, keep = (facts) => facts) => {
-  const totals = new Map();
-  for (const component of prepared)
-    for (const [side, facts] of [
-      ["before", keep(component.left.app?.[family] ?? [])],
-      ["after", keep(component.right.app?.[family] ?? [])],
-    ])
-      for (const fact of facts) {
-        const entry = totals.get(fact.data.method) ?? { before: 0, after: 0 };
-        entry[side] += 1;
-        totals.set(fact.data.method, entry);
-      }
-  return totals;
-};
-
 /**
- * What the whole release lost and how many sites of each kind it has, so a
- * site that moved between components is recognised as a move.
+ * What the whole release gained and lost, so a site that moved between
+ * components is recognised as a move, and how many tool-to-process
+ * connections each capability has on each side.
  */
 const releaseContext = (prepared) => ({
-  vacated: {
-    childProcesses: prepared.flatMap((component) =>
-      component.diff.app.childProcesses
-        .filter((item) => item.left.length > item.right.length)
-        .flatMap((item) =>
-          item.left
-            .slice(item.right.length)
-            .map((fact) => ({ component: component.name, fact })),
-        ),
-    ),
-  },
-  counts: {
-    childProcesses: tally(prepared, "childProcesses"),
-    requests: tally(prepared, "requests", unresolved),
-  },
+  moves: releaseMovesOf(
+    prepared.map((component) => ({
+      name: component.name,
+      diff: component.diff,
+      comparable: !failed(component.right),
+      left: component.left,
+      right: component.right,
+    })),
+  ),
+  connections: connectionTotals(
+    prepared.map((component) => component.left.app),
+    prepared.map((component) => component.right.app),
+  ),
+  registrations: registrationTotals(
+    prepared.map((component) => component.left.app),
+    prepared.map((component) => component.right.app),
+  ),
 });
 
 // Grade one prepared component and attach source lines.
@@ -453,37 +366,6 @@ const gradeComponent = async ({
     findings,
   };
 };
-
-/**
- * Components pair by manifest name. A component left unpaired on each side
- * with the same kind of target is taken as renamed when it is the only such
- * pair, so its captures are still compared.
- */
-const pairComponents = (leftRelease, rightRelease) =>
-  pairBy(
-    leftRelease.components,
-    rightRelease.components,
-    (component) => component.name,
-    (component) => component.target.kind,
-  )
-    // In the new release's manifest order, removed components last.
-    .sort(
-      ([, a], [, b]) =>
-        (a === null ? Infinity : rightRelease.components.indexOf(a)) -
-        (b === null ? Infinity : rightRelease.components.indexOf(b)),
-    )
-    .map(([before, after]) => ({
-      name:
-        before && after && before.name !== after.name
-          ? `${before.name}-to-${after.name}`
-          : (after ?? before).name,
-      renamed:
-        before && after && before.name !== after.name
-          ? { from: before.name, to: after.name }
-          : null,
-      leftTarget: before?.target ?? null,
-      rightTarget: after?.target ?? null,
-    }));
 
 /** Compare two releases and return the complete report model. */
 export const compareReleases = async ({

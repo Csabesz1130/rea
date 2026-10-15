@@ -71,6 +71,16 @@ const hostsIn = (flags) =>
       .filter(Boolean),
   );
 
+const oldFailed = (helper) => helper.before?.identified === "failed";
+
+// The old helper existed but REA could not read its build information.
+const oldBuildUnknown = (helper) =>
+  oldFailed(helper)
+    ? [
+        "REA could not inspect the old helper, so its build information is not established and this may predate the release.",
+      ]
+    : [];
+
 const ldflagsFindings = (helper, change, context) => {
   const before = hostsIn(change.before);
   const fresh = [...hostsIn(change.after)].filter(
@@ -85,9 +95,10 @@ const ldflagsFindings = (helper, change, context) => {
         GO_SOURCE,
       )
     : reported(
-        `${context.labels.left}: ${!helper.before ? "no such helper" : helper.before.identified === "failed" ? "REA could not inspect the helper" : "REA found no Go build information"}`,
-        helper.before?.identified === "failed" ? "unknown" : "observed",
+        `${context.labels.left}: ${!helper.before ? "no such helper" : oldFailed(helper) ? "REA could not inspect the helper" : "REA found no Go build information"}`,
+        oldFailed(helper) ? "unknown" : "observed",
         GO_SOURCE,
+        { side: "left" },
       );
   return [
     {
@@ -109,6 +120,7 @@ const ldflagsFindings = (helper, change, context) => {
       ],
       unknowns: [
         "Build settings record the linker flag; REA does not establish that the helper contacts the endpoint at runtime.",
+        ...oldBuildUnknown(helper),
       ],
     },
   ];
@@ -122,7 +134,7 @@ const dependencyFindings = (helper, item) =>
       rule: "RW-G02",
       severity: "medium",
       title: `New dependency compiled into ${helper.name}: ${dependency.path} ${dependency.version}`,
-      summary: `${helper.relative} now embeds ${dependency.path}${unpinned ? " with no module checksum" : ""}.`,
+      summary: `${helper.relative} ${oldFailed(helper) ? "embeds" : "now embeds"} ${dependency.path}${unpinned ? " with no module checksum" : ""}.`,
       why: unpinned
         ? "Without a recorded checksum the binary does not tie this code to a published module version, which is how vendored or patched code hides."
         : "New third-party code in a privileged helper should be reviewed like any dependency change.",
@@ -135,7 +147,7 @@ const dependencyFindings = (helper, item) =>
           GO_SOURCE,
         ),
       ],
-      unknowns: [],
+      unknowns: oldBuildUnknown(helper),
     };
   });
 

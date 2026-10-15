@@ -1,5 +1,5 @@
 // Turns a component diff into graded findings, and findings into a verdict.
-import { aiPack } from "./rules/ai.mjs";
+import { aiPack, shippedTokens } from "./rules/ai.mjs";
 import { coveragePack } from "./rules/coverage.mjs";
 import { dependencyPack, packagesOf } from "./rules/dependencies.mjs";
 import { electronPack } from "./rules/electron.mjs";
@@ -10,6 +10,7 @@ import { processPack } from "./rules/process.mjs";
 import { runtimePack } from "./rules/runtime.mjs";
 import { maxSeverity, severityRank } from "./rules/shared.mjs";
 import { webPack } from "./rules/web.mjs";
+import { releaseMoves } from "./moves.mjs";
 import { sdkUses } from "./surfaces.mjs";
 
 // Specific packs run first and claim the hosts and process sites they
@@ -33,6 +34,41 @@ const PACKS = [
  * that is new, renamed or split off is graded against this, not against an
  * empty side.
  */
+/**
+ * Sites the release gained and lost, paired one to one across components.
+ * `components` is `[{ name, diff, comparable, left, right }]`; a component
+ * is not comparable when REA could not analyze its new side.
+ */
+export const releaseMovesOf = (components) => ({
+  childProcesses: releaseMoves(
+    components.map(({ name, diff, comparable }) => ({
+      name,
+      items: diff.app.childProcesses,
+      comparable,
+    })),
+    { field: "command" },
+  ),
+  requests: releaseMoves(
+    components.map(({ name, diff, comparable, left, right }) => ({
+      name,
+      items: diff.app.requests,
+      comparable,
+      digests: { left: digestsOf(left), right: digestsOf(right) },
+    })),
+    {
+      field: "endpoint",
+      keep: (fact) => !fact.data.endpoint,
+      unresolvedPairs: true,
+      acrossComponents: "same-file",
+    },
+  ),
+});
+
+const digestsOf = (side) =>
+  new Map(
+    (side?.app?.assets ?? []).map((asset) => [asset.key, asset.data.sha256]),
+  );
+
 export const releaseBaseline = (leftSides) => ({
   apps: leftSides.filter((side) => side.app).length,
   hosts: new Set(leftSides.flatMap((side) => [...knownHosts(side)])),
@@ -45,7 +81,18 @@ export const releaseBaseline = (leftSides) => ({
       (side.capture?.credentials ?? []).map((fact) => fact.key),
     ),
   ),
+  ...shippedTokensOf(leftSides),
+  windows: leftSides.flatMap((side) => side.app?.windows ?? []),
 });
+
+// Credential tokens the old release shipped anywhere, and in browser code.
+const shippedTokensOf = (leftSides) => {
+  const shipped = leftSides.map((side) => shippedTokens(side.app));
+  return {
+    tokens: new Set(shipped.flatMap((entry) => [...entry.all])),
+    browserTokens: new Set(shipped.flatMap((entry) => [...entry.browser])),
+  };
+};
 
 // What limits a finding located in a given file: a bundle Release Watch
 // could not pair with its old version, or an old file REA could not fully
@@ -84,6 +131,9 @@ export const evaluateComponent = (component) => {
   const context = {
     ...component,
     baseline,
+    moves:
+      component.release?.moves ??
+      releaseMovesOf([{ ...component, comparable: true }]),
     aliases: component.aliases ?? new Map(),
     network: networkView(component.left, component.right, baseline, {
       ignoreCapture: component.captureBaselineFailed === true,

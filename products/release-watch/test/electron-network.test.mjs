@@ -14,8 +14,11 @@ const exposed = () =>
           externalImports: new Set(),
           local: new Set(["lib/diagnostics.js", "lib/sync.js"]),
           imported: new Map([
-            ["runDiagnostics", "lib/diagnostics.js"],
-            ["syncNotes", "lib/sync.js"],
+            [
+              "runDiagnostics",
+              { module: "lib/diagnostics.js", name: "runDiagnostics" },
+            ],
+            ["syncNotes", { module: "lib/sync.js", name: "syncNotes" }],
           ]),
         },
       ],
@@ -53,6 +56,8 @@ const exposed = () =>
           module: "main.js",
           name: "runDiagnostics",
           range: range(21, 55, 21, 69),
+          binding_range: range(5, 8, 5, 22),
+          binding_owner: null,
         },
         at("main.js", 21),
       ),
@@ -62,13 +67,16 @@ const exposed = () =>
           module: "main.js",
           name: "syncNotes",
           range: range(19, 35, 19, 44),
+          binding_range: range(6, 8, 6, 17),
+          binding_owner: null,
         },
         at("main.js", 19),
       ),
     ],
-    // REA links runDiagnostics to the function whose body holds exec().
-    callables: [
+    // The function REA reports in lib/diagnostics.js, whose body holds exec().
+    functions: [
       {
+        id: "fn-run",
         module: "lib/diagnostics.js",
         name: "runDiagnostics",
         range: range(3, 0, 9, 1),
@@ -89,7 +97,7 @@ const exposed = () =>
   });
 
 describe("Electron renderer process execution", () => {
-  it("flags only the channel whose handler reads the binding imported from the exec module", () => {
+  it("flags only the channel whose handler reads a function imported from the exec module", () => {
     const findings = evaluate(side("v1", app()), side("v2", exposed()));
     const critical = findings.filter((finding) => finding.rule === "RW-E01");
     assert.equal(critical.length, 1);

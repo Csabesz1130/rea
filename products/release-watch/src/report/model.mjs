@@ -26,6 +26,7 @@ const STATUS = {
   increased: "more",
   "not-previously-observed": "new",
   "no-longer-observed": "gone",
+  "not-compared": "not compared",
 };
 const statusOf = (status) => STATUS[status] ?? status;
 const visible = (items) => items.filter((item) => item.status !== "unchanged");
