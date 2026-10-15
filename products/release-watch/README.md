@@ -240,22 +240,51 @@ passed.
 
 Reports never contain credential values in the formats Release Watch knows.
 Every report passes through one boundary (`src/redact.mjs`) that masks
-documented credential formats wherever they appear, replaces URL query values,
-fragments, user info and token-like path segments with a short tag such as
-`‹3f9c›`, and strips control and bidirectional characters. Tags are keyed per
-run, and equal values share a tag within a report. Source lines shown next
-to evidence are masked by span on a bounded window of the line, whatever the
-code's syntax: long token-like runs, JWTs, Bearer values, values after a
-credential-like name in code, JSON, form bodies, headers and call arguments,
-URL query and fragment values and token-like path segments, and escaped
-character runs; code that only reads a secret stays readable. On a line where
-REA reported a key, and on the line that continues it, every string is
-masked. A 40 or 64 hex path segment is kept only before a static asset file,
-and content-hashed file names keep their name. Markdown output is escaped so
-release content cannot add headings, links or HTML to a pull-request comment. REA
-redacts transport credentials in captures itself. The saved Evidence under
-`evidence/` is REA's output verbatim and can hold the raw values a release
-ships; treat that directory as sensitive.
+documented credential formats and JWTs wherever they appear, replaces URL
+query values, fragments, user info, path parameter values (`;jsessionid=`)
+and token-like path segments with a tag such as `‹3f9c2a›`, and writes
+control and bidirectional characters as `\uXXXX` in `report.json` (spaces in
+rendered output). Tags are keyed per run, equal values share a tag within a
+report, a claim and a source line give a URL part the same tag, and
+scrubbing a tagged text again keeps its tags. A query with more than 64
+pairs shows its first 64 values as tags and the rest as one tag. A field
+that cannot be scrubbed is withheld rather than written. Header values are
+read as prose: relative URLs such as `report-uri csp/r/<token>`,
+`csp-report#…`, `?token=…` and `csp-report;jsessionid=…` are masked like
+absolute ones. Paths the caller chose (inputs, Evidence and output files)
+and local paths in error and coverage text are shown as given, with only
+credential formats masked.
+
+Source lines shown next to evidence are masked by span on a bounded window
+of the line, whatever the code's syntax: random-looking runs (hex, UUIDs,
+base62 and base64), JWTs, Bearer and Basic values and `btoa("user:pw")`,
+values after a credential-like name (key, token, secret, auth, pass, pwd,
+sig, signature, appid, client_id and the like) in code, JSON, form bodies,
+headers, bracketed keys, setters such as `setPassword("…")`, call arguments
+and `||`, `??` or ternary fallbacks, unquoted values in comments and
+template text or mixing letters and digits, strings that follow `?name=`
+pieces or end user info with `@`, URL parts as their claims show them, and
+escaped character runs. Code that only reads a secret stays readable, and so
+do names made of word-like pieces such as `sendAnalyticsEventV2Async`,
+`@aws-sdk/client-route-53-domains` or `claude-3-5-sonnet-20241022`; a
+template's `${…}` interpolations are code. HTML character references are
+decoded only in `.html`, `.htm`, `.xhtml`, `.svg` and `.xml` files, where
+tabs and line breaks in a quoted URL do not split its values. Text near the
+cut edge of a long line, and the rest of the URL or value it falls in, is
+not shown. On a line where REA reported a key, and on up to four lines that
+continue it (after `+`, `,`, `[`, `(`, inside a template or a continued
+string), every string is masked except the readable parts of URLs and short
+keyword-like strings such as HTTP methods and header names. A 40 or 64 hex
+path segment is kept only before a static asset file, and content-hashed
+file names keep their name, including a static asset named only by its hash.
+A `<script src>` starting with two slashes or backslashes is read as
+protocol-relative, as browsers read it.
+
+Markdown output is escaped so release content cannot add headings, links or
+HTML to a pull-request comment. REA redacts transport credentials in
+captures itself. The saved Evidence under `evidence/` is REA's output
+verbatim and can hold the raw values a release ships; treat that directory
+as sensitive.
 
 ## Cost
 

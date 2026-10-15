@@ -5,14 +5,24 @@
 // through them. Every scan is linear in the slice. Display only: the saved
 // Evidence keeps the original.
 import { printable, secretSpans } from "./redact.mjs";
-import { maskTag, replaceSpans, urlRuns } from "./urls.mjs";
+import {
+  interpolationEnd,
+  literalParts,
+  maskTag,
+  replaceSpans,
+  urlOwned,
+  urlRuns,
+} from "./urls.mjs";
 
 const MAX_LINE = 180;
 const LEAD = 60;
 const MARGIN = 2000;
 // Text this close to a cut slice edge may belong to a value whose context
-// was cut off, so it is never shown.
+// was cut off, so it is never shown, nor is the rest of the run it is in.
 const EDGE = 200;
+const RUN_BOUNDARY = /[\s"'`<>\\)\]}]/;
+// Files whose lines are markup, where character references are decoded.
+const MARKUP_FILE = /\.(?:html?|xhtml|svg|xml)$/i;
 
 // How each view character was written in the source.
 const LITERAL = 0;
@@ -92,18 +102,19 @@ const escapeAt = (text, index) => {
 };
 
 /**
- * The slice as the rules read it: HTML character references and JavaScript
- * escapes decoded, with each view character's source range and kind, so a
- * key written as `\x41…` or a query behind `&#x26;` is still found.
+ * The slice as the rules read it: JavaScript escapes decoded, and in markup
+ * HTML character references too, with each view character's source range
+ * and kind, so a key written as `\x41…` or a query behind `&#x26;` is still
+ * found; `&amp;` in a script is code, not a reference.
  */
-const viewOf = (source) => {
+const viewOf = (source, markup) => {
   let text = "";
   const starts = [];
   const ends = [];
   const kinds = [];
   for (let index = 0; index < source.length;) {
     const decoded =
-      source[index] === "&"
+      source[index] === "&" && markup
         ? referenceAt(source, index)
         : source[index] === "\\"
           ? escapeAt(source, index)
@@ -118,7 +129,8 @@ const viewOf = (source) => {
     text += value;
     index = end;
   }
-  return { text, starts, ends, kinds };
+  const runs = urlRuns(text, markup ? "markup" : "code");
+  return { text, starts, ends, kinds, runs, owned: urlOwned(text, runs) };
 };
 
 // Which tag a range keeps when two rules mask exactly it: a URL part keeps
@@ -141,13 +153,18 @@ const tagged = (text, start, end, rank) => ({
   rank,
 });
 
-// Word runs written partly as `\x..` or `\u....` escapes, which can hide a key.
-const escapeSpans = ({ text, kinds }) => {
+// Word runs outside URLs written partly as `\x..` or `\u....` escapes,
+// which can hide a key.
+const escapeSpans = ({ text, kinds, owned }) => {
   const spans = [];
   for (let index = 0; index < text.length;) {
     let end = index;
     let escaped = false;
-    while (end < text.length && /[A-Za-z0-9_+/=.-]/.test(text[end])) {
+    while (
+      end < text.length &&
+      !owned[end] &&
+      /[A-Za-z0-9_+/=.-]/.test(text[end])
+    ) {
       escaped ||= kinds[end] === CODE_ESCAPE;
       end += 1;
     }
@@ -193,34 +210,97 @@ const wordEnd = (text, from) => {
   return end;
 };
 
-// On a line REA marked sensitive, every string body. The cited column is
-// code, so strings are paired forward from it and backward from it, and a
-// misread quote elsewhere cannot carry a string across the cited call.
+// The closing quote of a string opening at `open`, before `to`: a template
+// closes after its interpolations.
+const closeOf = (view, open, to) => {
+  let close = open + 1;
+  while (close < to && !sameQuote(view, close, open)) {
+    const after =
+      view.text[open] === "`" ? interpolationEnd(view.text, close) : -1;
+    close = after === -1 ? close + 1 : after;
+  }
+  return close;
+};
+
+// Short strings that name protocol parts rather than carry values: HTTP
+// methods, header-like names (`x-api-key`, `Content-Type`) and single words.
+const KEYWORD =
+  /^(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$|^[A-Za-z][a-z]*(?:-[A-Za-z][a-z]*)*$/;
+const keywordLike = (written) =>
+  written.trim().length <= 24 && KEYWORD.test(written.trim());
+
+// The parts of [start, end) outside URL runs, which the URL rules mask.
+const outsideUrls = ({ text, owned }, start, end, spans) => {
+  for (let index = start; index < end;) {
+    if (owned[index]) {
+      index += 1;
+      continue;
+    }
+    let stop = index;
+    while (stop < end && !owned[stop]) stop += 1;
+    if (/\S/.test(text.slice(index, stop)))
+      spans.push(tagged(text, index, stop, "string"));
+    index = stop;
+  }
+};
+
+// A string body on a sensitive line: URLs keep their readable parts and a
+// keyword-like string stays; a template's literal parts are masked and the
+// strings inside its interpolations are read as code.
+const bodySpans = (view, { start, end, template }, spans, depth) => {
+  const { text } = view;
+  const parts = template ? literalParts(text, start, end) : [{ start, end }];
+  let cursor = start;
+  for (const part of [...parts, { start: end, end }]) {
+    if (part.start > cursor && depth < 2)
+      forwardStrings(view, [cursor + 2, part.start - 1], spans, depth + 1);
+    cursor = part.end;
+  }
+  const written = parts.map((part) => text.slice(part.start, part.end));
+  if (keywordLike(written.join(""))) return;
+  for (const part of parts) outsideUrls(view, part.start, part.end, spans);
+};
+
+// Strings opening in [from, to), paired forward.
+const forwardStrings = (view, [from, to], spans, depth = 0) => {
+  const { text } = view;
+  for (let index = from; index < to; index += 1) {
+    if (!QUOTES.includes(text[index]) || !opensString(text, index)) continue;
+    const close = closeOf(view, index, to);
+    const end = close < to ? close : wordEnd(text, index + 1);
+    const template = text[index] === "`";
+    bodySpans(view, { start: index + 1, end, template }, spans, depth);
+    index = end;
+  }
+};
+
+// On a line REA marked sensitive, every string body but URLs' readable
+// parts and keyword-like strings. The cited column is code, so strings are
+// paired forward from it and backward from it, and a misread quote
+// elsewhere cannot carry a string across the cited call.
 const stringSpans = (view, anchor) => {
   const { text } = view;
   const spans = [];
-  for (let index = anchor; index < text.length; index += 1) {
-    if (!QUOTES.includes(text[index]) || !opensString(text, index)) continue;
-    let close = index + 1;
-    while (close < text.length && !sameQuote(view, close, index)) close += 1;
-    const end = close < text.length ? close : wordEnd(text, index + 1);
-    spans.push(tagged(text, index + 1, end, "string"));
-    index = end;
-  }
+  forwardStrings(view, [anchor, text.length], spans);
   for (let index = anchor - 1; index >= 0; index -= 1) {
     if (!QUOTES.includes(text[index]) || !closesString(text, index)) continue;
     let open = index - 1;
     while (open >= 0 && !sameQuote(view, open, index)) open -= 1;
-    spans.push(tagged(text, open + 1, index, "string"));
+    const template = text[index] === "`";
+    bodySpans(view, { start: open + 1, end: index, template }, spans, 0);
     index = open;
   }
   return spans;
 };
 
-// On a sensitive line, shorter words that mix letters and digits.
-const shortWordSpans = ({ text }) =>
+// On a sensitive line, shorter words outside URLs that mix letters and
+// digits.
+const shortWordSpans = ({ text, owned }) =>
   [...text.matchAll(/[A-Za-z0-9_+=-]{8,}/g)]
-    .filter(([word]) => /\d/.test(word) && /[A-Za-z]/.test(word))
+    .filter(
+      ({ index, 0: word }) =>
+        !owned[index] && /\d/.test(word) && /[A-Za-z]/.test(word),
+    )
     .map(({ index, 0: word }) =>
       tagged(text, index, index + word.length, "string"),
     );
@@ -255,15 +335,16 @@ const merge = (spans, text) => {
   return merged;
 };
 
-// A URL written with character references (`&#x26;key=`) is shown decoded,
-// with its masks, so it reads as its claim does and later scrubbing cannot
-// take a reference for a fragment.
-const decodedRuns = ({ text, kinds }, runs, spans) => {
+// A URL written with character references (`&#x26;key=`) or escapes
+// (`\x26`, `\/`) is shown decoded, with its masks, so it reads as its claim
+// does and later scrubbing cannot read an escape as part of a value.
+const decodedRuns = ({ text, kinds, runs }, spans) => {
   const result = [];
   let next = 0;
   for (const run of runs) {
     if (run.end - run.start > 300) continue;
-    if (!kinds.slice(run.start, run.end).includes(REFERENCE)) continue;
+    if (!kinds.slice(run.start, run.end).some((kind) => kind !== LITERAL))
+      continue;
     if (run.start < (result.at(-1)?.end ?? 0)) continue;
     while (next < spans.length && spans[next].end <= run.start)
       result.push(spans[next++]);
@@ -286,21 +367,20 @@ const decodedRuns = ({ text, kinds }, runs, spans) => {
 };
 
 /** Masked spans of a slice in source coordinates, ordered and disjoint. */
-const maskSpans = (source, anchor, sensitive) => {
-  const view = viewOf(source);
+const maskSpans = (source, anchor, { sensitive, markup }) => {
+  const view = viewOf(source, markup);
   let viewAnchor = 0;
   while (viewAnchor < view.starts.length && view.starts[viewAnchor] < anchor)
     viewAnchor += 1;
-  const runs = urlRuns(view.text);
   const spans = [
-    ...secretSpans(view, runs),
+    ...secretSpans(view),
     ...escapeSpans(view),
     ...(sensitive
       ? [...stringSpans(view, viewAnchor), ...shortWordSpans(view)]
       : []),
   ];
   const merged = merge(clip(spans, viewAnchor), view.text);
-  return decodedRuns(view, runs, merged).map((item) => ({
+  return decodedRuns(view, merged).map((item) => ({
     ...item,
     start: view.starts[item.start],
     end: view.ends[item.end - 1],
@@ -355,18 +435,36 @@ const snap = (pieces, [first, last], [low, high]) => {
   ];
 };
 
-const excerpt = ({ line, column, sensitive, width }) => {
+// Where shown text starts after a cut slice start, and ends before a cut
+// slice end: past EDGE characters and the rest of the run they fall in,
+// such as user info whose `scheme://` or `@host` was cut off, but never
+// past the cited column.
+const shownFrom = (source, cited) => {
+  let at = Math.min(EDGE, cited);
+  while (at < cited && !RUN_BOUNDARY.test(source[at])) at += 1;
+  return at;
+};
+const shownTo = (source, cited) => {
+  let at = Math.max(source.length - EDGE, cited);
+  while (at > cited && !RUN_BOUNDARY.test(source[at - 1])) at -= 1;
+  return at;
+};
+
+const excerpt = ({ line, column, width, ...reading }) => {
   const cited = Math.min(Math.max(0, Number(column) || 0), line.length);
   const from = Math.max(0, cited - LEAD - MARGIN);
   const to = Math.min(line.length, cited + width + MARGIN);
   const source = line.slice(from, to);
-  const pieces = render(source, maskSpans(source, cited - from, sensitive));
+  const pieces = render(source, maskSpans(source, cited - from, reading));
   const shown = pieces.map((piece) => piece.shown).join("");
   if (from === 0 && to === line.length && shown.length <= width)
     return shown.trim();
-  const low = from > 0 ? positionOf(pieces, EDGE) : 0;
+  const low =
+    from > 0 ? positionOf(pieces, shownFrom(source, cited - from)) : 0;
   const high =
-    to < line.length ? positionOf(pieces, source.length - EDGE) : shown.length;
+    to < line.length
+      ? positionOf(pieces, shownTo(source, cited - from))
+      : shown.length;
   const position = positionOf(pieces, cited - from);
   const first = Math.max(low, Math.min(position - LEAD, high - width));
   const window = [first, Math.min(high, first + width)];
@@ -378,23 +476,52 @@ const excerpt = ({ line, column, sensitive, width }) => {
 
 /**
  * A source line for display, at most MAX_LINE characters around `column`.
- * `sensitive` also masks every string and shorter token-like words: a line
- * where REA reported a key.
+ * `sensitive` also masks every string but URLs' readable parts and
+ * keyword-like strings, and shorter token-like words: a line where REA
+ * reported a key. `file` decides whether the line is markup, whose
+ * character references are decoded.
  */
-export const sourceLine = (text, column = 0, sensitive = false) =>
-  excerpt({ line: String(text), column, sensitive, width: MAX_LINE });
+export const sourceLine = (
+  text,
+  column = 0,
+  { sensitive = false, file = "" } = {},
+) =>
+  excerpt({
+    line: String(text),
+    column,
+    sensitive,
+    markup: MARKUP_FILE.test(String(file)),
+    width: MAX_LINE,
+  });
 
 /**
- * True when a line ends with an odd run of backslashes, inside a string
- * continued on the next line: that line then starts in a string whose
- * context it does not show.
+ * How a line hands its expression to the next one: `escaped` when it ends
+ * with an odd run of backslashes, inside a string continued on the next
+ * line; `template` when it ends inside a template literal (`opened` says
+ * whether it started inside one); `operand` when it ends with `+`, `,`, `[`
+ * or `(`, so the next line carries on the value.
  */
-export const continuesString = (line) => {
+export const continuation = (line, opened = false) => {
+  let template = opened;
+  for (let index = 0; index < line.length; index += 1)
+    if (line[index] === "\\") index += 1;
+    else if (line[index] === "`") template = !template;
   let backslashes = 0;
   while (line[line.length - 1 - backslashes] === "\\") backslashes += 1;
-  return backslashes % 2 === 1;
+  const last = line.trimEnd().at(-1) ?? "";
+  return {
+    escaped: backslashes % 2 === 1,
+    template,
+    operand: last !== "" && "+,[(".includes(last),
+  };
 };
 
 /** The start of a text for display, at most `width` characters, masked as a source line is. */
 export const textPreview = (text, width) =>
-  excerpt({ line: String(text), column: 0, sensitive: false, width });
+  excerpt({
+    line: String(text),
+    column: 0,
+    sensitive: false,
+    markup: false,
+    width,
+  });

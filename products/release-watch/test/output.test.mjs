@@ -34,7 +34,7 @@ describe("redaction", () => {
     );
     assert.match(
       flags,
-      /^-s -w -X main\.endpoint=https:\/\/t\.example\.net\/c\?k=‹[0-9a-f]{4}› /,
+      /^-s -w -X main\.endpoint=https:\/\/t\.example\.net\/c\?k=‹[0-9a-f]{6}› /,
     );
     assert.ok(
       flags.endsWith(

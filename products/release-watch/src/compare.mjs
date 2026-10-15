@@ -30,7 +30,8 @@ import {
   releaseMovesOf,
   verdictFor,
 } from "./policy.mjs";
-import { continuesString, sourceLine } from "./source-line.mjs";
+import { sourceText } from "./redact.mjs";
+import { continuation, sourceLine } from "./source-line.mjs";
 import { openSources } from "./sources.mjs";
 import { surfaceNames, surfacesOf } from "./surfaces.mjs";
 
@@ -166,10 +167,32 @@ const sensitiveLines = (app) =>
       }),
   );
 
+// How many lines on a sensitive line's expression may carry its value.
+const CHAIN = 4;
+
+// Whether a source line is shown as sensitive: REA reported a key on it, it
+// starts inside a string continued from the line before (what that string
+// holds is not on it), or it carries on the expression of a reported line
+// through `+`, `,`, `[`, `(` or a template literal, at most CHAIN lines on.
+const sensitiveAt = (sources, [file, line], reported) => {
+  if (reported.has(`${file}:${line}`)) return true;
+  const text = (at) => sources.lineAt(file, at)?.text ?? "";
+  if (continuation(text(line - 1)).escaped) return true;
+  for (let start = line - 1; start >= Math.max(1, line - CHAIN); start -= 1) {
+    if (!reported.has(`${file}:${start}`)) continue;
+    let state = { template: false };
+    let carried = true;
+    for (let at = start; at < line && carried; at += 1) {
+      state = continuation(text(at), state.template);
+      carried = state.escaped || state.template || state.operand;
+    }
+    if (carried) return true;
+  }
+  return false;
+};
+
 // Source lines for display, attached only to evidence located in this side's
-// release and verified against REA's digest when one was recorded. A line
-// that continues a string from the line before is shown as sensitive too,
-// since what that string holds is not on it.
+// release and verified against REA's digest when one was recorded.
 const attachSources = (findings, side, sources, sideName) => {
   if (sources === null) return;
   const digests = new Set(side.app.assets.map((asset) => asset.data.sha256));
@@ -186,13 +209,13 @@ const attachSources = (findings, side, sources, sideName) => {
         continue;
       const snippet = sources.lineAt(file, line);
       if (snippet === null) continue;
-      const before = sources.lineAt(file, line - 1)?.text ?? "";
       item.snippet = {
         line: snippet.line,
-        text: sourceLine(
-          snippet.text,
-          column ?? 0,
-          sensitive.has(where) || continuesString(before),
+        text: sourceText(
+          sourceLine(snippet.text, column ?? 0, {
+            sensitive: sensitiveAt(sources, [file, line], sensitive),
+            file,
+          }),
         ),
         verified: snippet.verified,
         release: side.label,

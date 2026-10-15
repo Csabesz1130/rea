@@ -10,7 +10,7 @@ import {
   packageNameOf,
   sdkOf,
 } from "../catalog.mjs";
-import { scrubDeep } from "../redact.mjs";
+import { localPath, localText, scrubDeep } from "../redact.mjs";
 import { RELEASE_WATCH_LIMITS, coverageOf } from "./coverage.mjs";
 import { displaySetting } from "../rules/go.mjs";
 import { headerChanges } from "../rules/runtime.mjs";
@@ -387,9 +387,11 @@ export const componentSections = (component) => {
   ].filter((entry) => entry.rows.length > 0);
 };
 
+// Input paths and Evidence files are the caller's choices and are shown as
+// given (scrubPath); error and coverage text names local files (localText).
 const sideSummary = (side) => ({
   label: side.label,
-  input: side.target?.root ?? null,
+  input: localPath(side.target?.root ?? null),
   kind: side.target?.kind ?? "missing",
   present: side.target !== null,
   package: side.app?.package ?? null,
@@ -397,7 +399,7 @@ const sideSummary = (side) => ({
   application: side.app
     ? {
         evidence_id: side.app.evidence_id,
-        evidence_file: side.appEvidence,
+        evidence_file: localPath(side.appEvidence),
         root_sha256: side.app.root_sha256,
         format: side.app.format,
         coverage: side.app.coverage,
@@ -409,23 +411,23 @@ const sideSummary = (side) => ({
     name: runtime.name,
     sha256: runtime.fuses.sha256,
     evidence_id: runtime.fuses.evidence_id,
-    evidence_file: runtime.file,
+    evidence_file: localPath(runtime.file),
     ambiguous: runtime.fuses.ambiguous,
     fuses: runtime.fuses.fuses,
   })),
   helpers: side.helpers.map((helper) => ({
-    relative: helper.relative,
+    relative: localPath(helper.relative),
     identified: helper.identified,
     sha256: helper.go?.sha256 ?? null,
     evidence_id: helper.go?.evidence_id ?? null,
-    evidence_file: helper.file,
+    evidence_file: localPath(helper.file),
   })),
   capture: side.capture
     ? {
-        name: side.capture.name,
+        name: localPath(side.capture.name),
         sha256: side.capture.sha256,
         evidence_id: side.capture.evidence_id,
-        evidence_file: side.capture.file,
+        evidence_file: localPath(side.capture.file),
         records: side.capture.total_records,
       }
     : null,
@@ -449,7 +451,7 @@ export const reportJson = (report) =>
         ? {
             evidence_id: component.comparison.evidence_id,
             summary: component.comparison.summary ?? null,
-            evidence_file: component.comparison.file ?? null,
+            evidence_file: localPath(component.comparison.file ?? null),
           }
         : null,
       module_aliases: [...component.aliases].map(([from, alias]) => ({
@@ -457,11 +459,14 @@ export const reportJson = (report) =>
         to: alias.path,
         basis: alias.basis,
       })),
-      coverage: coverageOf(component),
+      coverage: localText(coverageOf(component)),
       inventory: componentSections(component),
     })),
     limitations: RELEASE_WATCH_LIMITS,
     findings: report.findings,
-    errors: report.errors,
+    errors: report.errors.map((error) => ({
+      ...error,
+      message: localText(error.message),
+    })),
     run: report.run,
   });

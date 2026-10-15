@@ -38,20 +38,21 @@ export const hostOf = (url) => {
 };
 
 /**
- * A `<script src>` value as the browser resolves its host: surrounding ASCII
- * whitespace removed and protocol-relative sources read as https. Null for a
- * relative source.
+ * A `<script src>` value as the browser resolves its host: ASCII tab and
+ * newline removed anywhere, C0 controls and spaces trimmed at both ends, and
+ * a source starting with two or more slashes or backslashes (`//host`,
+ * `\\host`, `/\host`) read as protocol-relative https, as WHATWG URL reads
+ * it against an https page. Null for a relative source.
  */
 export const scriptSourceUrl = (source) => {
   if (typeof source !== "string") return null;
-  // As a browser parses it: ASCII tab and newline removed anywhere, C0
-  // controls and spaces trimmed at both ends.
   const trimmed = source
     .replace(/[\t\n\r]/g, "")
     // oxlint-disable-next-line no-control-regex -- the URL parser trims C0 controls.
-    .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
+    .replace(/^[\u0000- ]+|[\u0000- ]+$/g, "");
   if (/^(data|blob|javascript):/i.test(trimmed)) return null;
-  const absolute = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
+  const slashes = /^[\\/]{2,}/.exec(trimmed)?.[0].length ?? 0;
+  const absolute = slashes > 0 ? `https://${trimmed.slice(slashes)}` : trimmed;
   return hostOf(absolute) === null ? null : absolute;
 };
 
@@ -59,7 +60,7 @@ export const scriptSourceUrl = (source) => {
 export const isEmbeddedScript = (source) =>
   typeof source === "string" &&
   // oxlint-disable-next-line no-control-regex -- the URL parser trims C0 controls.
-  /^[\u0000-\u0020]*(data|javascript):/i.test(source.replace(/[\t\n\r]/g, ""));
+  /^[\u0000- ]*(data|javascript):/i.test(source.replace(/[\t\n\r]/g, ""));
 
 /** The host of a `<script src>` value, or null for a relative source. */
 export const scriptHostOf = (source) => hostOf(scriptSourceUrl(source));
@@ -73,19 +74,33 @@ export const schemeOf = (url) => {
   }
 };
 
-const MASKED = /^…?‹[0-9a-f]{4}›$/;
+const TAGS = /‹[0-9a-f]{6}›/g;
+const MASKED = /^…?‹[0-9a-f]{6}›$/;
 // A key made fresh for every run: equal values share a tag within a report,
 // and a tag cannot be matched against guesses offline.
 const RUN_KEY = randomBytes(32);
+const tagOf = (text) =>
+  `‹${createHmac("sha256", RUN_KEY).update(text).digest("hex").slice(0, 6)}›`;
 
 /**
  * A short tag that tells two masked values apart within one report without
- * revealing either. Masking a masked value returns it unchanged.
+ * revealing either. Tags already in a value are atomic: only the text
+ * around them is tagged, so masking a masked text returns it unchanged.
  */
-export const maskTag = (value) =>
-  MASKED.test(String(value))
-    ? String(value)
-    : `‹${createHmac("sha256", RUN_KEY).update(String(value)).digest("hex").slice(0, 4)}›`;
+export const maskTag = (value) => {
+  const text = String(value);
+  if (MASKED.test(text)) return text;
+  let result = "";
+  let cursor = 0;
+  for (const match of text.matchAll(TAGS)) {
+    if (match.index > cursor) result += tagOf(text.slice(cursor, match.index));
+    result += match[0];
+    cursor = match.index + match[0].length;
+  }
+  return cursor === 0 || cursor < text.length
+    ? result + tagOf(text.slice(cursor))
+    : result;
+};
 
 /** C0 and C1 controls, line and paragraph separators, and bidirectional controls. */
 export const CONTROL =
@@ -110,83 +125,114 @@ const readable = (pathname) => {
   }
 };
 
+// A URL part as the URL parser keeps it: ASCII tab and line breaks, which
+// it drops anywhere, removed, then percent-decoding undone.
 const decoded = (segment) => {
+  const kept = segment.replace(/[\t\n\r]/g, "");
   try {
-    return decodeURIComponent(segment);
+    return decodeURIComponent(kept);
   } catch {
-    return segment;
+    return kept;
   }
 };
 
 // A query name or value as URLSearchParams reads it: '+' is a space.
-const queryValue = (raw) => new URLSearchParams(`v=${raw}`).get("v") ?? raw;
+const queryValue = (raw) => {
+  const kept = raw.replace(/[\t\n\r]/g, "");
+  return new URLSearchParams(`v=${kept}`).get("v") ?? kept;
+};
 
 // Commit SHAs and content digests name content only when a static asset
 // file follows them in the path; elsewhere a hex run may be a webhook secret.
 const DIGEST = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const STATIC_ASSET =
   /\.(?:m?js|cjs|css|map|wasm|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$/i;
-// File types whose content-hashed names (name.<hash>.ext, name-<hash>.ext)
-// keep the hash.
+// File types whose content-hashed names (name.<hash>.ext, name-<hash>.ext,
+// name_<hash>.ext) keep the hash.
 const HASHED_TYPE =
   /^(?:m?js|cjs|jsx|css|map|wasm|json|html?|txt|xml|webmanifest|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico|mp3|mp4|webm|ogg|wav)$/i;
-const CONTENT_HASH = /^[0-9a-f]{6,64}$/;
+const HEX_HASH = "(?:[0-9a-f]{6,64}|[0-9A-F]{6,64})";
+const CONTENT_HASH = new RegExp(`^${HEX_HASH}$`);
+const HASH_SUFFIX = new RegExp(`(?<=.)[-_]${HEX_HASH}$`);
 const EXTENSION = /^[A-Za-z0-9]{1,5}$/;
-const TOKEN_RUN = /[A-Za-z0-9_\-+=~%]{20,}/g;
 const JWT = /^eyJ[\w-]*\.[\w-]*(?:\.[\w-]*)?$/;
 
-/** True when a text holds a run of 20 or more token characters mixing letters and digits. */
-export const hasTokenRun = (text) =>
+// Random-looking runs: 20 or more token characters, split into chunks at
+// separators and each chunk into pieces at case changes and letter/digit
+// boundaries. A chunk made of word-like pieces (sendAnalyticsEventV2Async,
+// route-53, claude-3-5-sonnet-20241022) reads as a name; hex, UUIDs, chunks
+// of short alternating pieces (base62, base64), four or more letter/digit
+// switches, and 12 capitals or 10 digits run together beside other
+// characters read as tokens.
+const TOKEN_RUN = /[A-Za-z0-9_\-+=~%]{20,}/g;
+const CHUNKS = /[^_\-+=~%]+/g;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const HEX_CHUNK =
+  /^(?=.*\d)(?:(?=.*[a-f])[0-9a-f]{16,}|(?=.*[A-F])[0-9A-F]{16,})$/;
+const PIECES = /[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g;
+
+const randomChunk = (chunk) => {
+  if (chunk.length < 8) return false;
+  if (HEX_CHUNK.test(chunk)) return true;
+  const pieces = chunk.match(PIECES) ?? [];
+  let switches = 0;
+  for (let index = 1; index < pieces.length; index += 1)
+    if (/\d/.test(pieces[index][0]) !== /\d/.test(pieces[index - 1][0]))
+      switches += 1;
+  return (
+    switches >= 4 ||
+    2 * chunk.length < 5 * pieces.length ||
+    (/\d/.test(chunk) && pieces.some((piece) => /^[A-Z]{12,}$/.test(piece))) ||
+    (/[A-Za-z]/.test(chunk) && pieces.some((piece) => /^\d{10,}$/.test(piece)))
+  );
+};
+
+/** True when a text holds a random-looking run of 20 or more token characters. */
+export const hasRandomRun = (text) =>
   (text.match(TOKEN_RUN) ?? []).some(
-    (run) => /\d/.test(run) && /[A-Za-z]/.test(run),
+    (run) => UUID.test(run) || (run.match(CHUNKS) ?? []).some(randomChunk),
   );
 
 // The parts of a file name a token could hide in: a content hash in
-// name.<hash>.ext or name-<hash>.ext identifies the content and is left out.
+// name.<hash>.ext, name-<hash>.ext or name_<hash>.ext identifies the content
+// and is left out, as is a static asset named only by its hash (<hash>.js).
 const nameParts = (value) => {
   const parts = value.split(".");
   const extension = parts.length > 1 ? parts.at(-1) : "";
   if (!EXTENSION.test(extension) && !HASHED_TYPE.test(extension)) return parts;
   const stem = parts.slice(0, -1);
   if (!HASHED_TYPE.test(extension)) return stem;
+  const asset = STATIC_ASSET.test(value);
   return stem.map((part, index) =>
-    index === 0
-      ? part.replace(/(?<=.)-[0-9a-f]{6,64}$/, "")
-      : CONTENT_HASH.test(part)
-        ? ""
-        : part,
+    (index > 0 || asset) && CONTENT_HASH.test(part)
+      ? ""
+      : part.replace(HASH_SUFFIX, ""),
   );
 };
 
 /**
  * A path segment that carries a token: a bot token, a JWT, a digest not
- * followed by a static asset file (`next`), or a long run of letters and
- * digits other than a content hash in an asset name.
+ * followed by a static asset file (`next`), or a random-looking run other
+ * than a content hash in an asset name.
  */
 export const isTokenSegment = (segment, next) => {
   const value = decoded(segment);
   if (/^bot\d+:/.test(value) || JWT.test(value)) return true;
   if (DIGEST.test(value))
     return !(typeof next === "string" && STATIC_ASSET.test(decoded(next)));
-  return nameParts(value).some(hasTokenRun);
-};
-
-/** A path for display: token-like segments are masked by their decoded value. */
-export const displayPath = (pathname) => {
-  const segments = pathname.split("/");
-  return segments
-    .map((segment, index) =>
-      isTokenSegment(segment, segments[index + 1])
-        ? maskTag(decoded(segment))
-        : segment,
-    )
-    .join("/");
+  return nameParts(value).some(hasRandomRun);
 };
 
 // URLs written in code or prose. Runs are found and split with linear scans
-// so a long line costs one pass.
+// so a long line costs one pass. A text is read in one of three modes:
+// "code" (a source line), "markup" (a line of an HTML-like file, where
+// unquoted attribute values hold URLs and the URL parser drops tabs and
+// line breaks inside them) or "prose" (a claim or header value, where a
+// bare name or path after a space is a URL).
 const ENDS_URL = /[\s"'`<>\\]/;
-const BOUNDARY = /[\s"'`([=,}>]/;
+const ENDS_MARKUP_URL = /[ \f"'`<>\\]/;
+const BOUNDARY = /[\s"'`([=,}>:{]/;
+const QUOTE = /["'`]/;
 const SCHEME_CHARACTER = /[A-Za-z0-9+.-]/;
 const HOST_START = /[A-Za-z0-9[$]/;
 const PATH_START = /[A-Za-z0-9_.~%$-]/;
@@ -194,9 +240,12 @@ const PATH_CHARACTER = /[A-Za-z0-9_.~%+/-]/;
 const WEB_FILE =
   /\.(?:m?js|cjs|html?|php|aspx?|jsp|cgi|json|xml|txt|css|svg|png|gif|jpe?g|webp|ico|wasm|map)$/i;
 const INTERPOLATION = 256;
+// At most this many query pairs per URL are tagged one by one; the rest of
+// the query is one tag.
+const MAX_PAIRS = 64;
 
 // The index after a `${…}` template interpolation at `index`, or -1.
-const interpolationEnd = (text, index) => {
+export const interpolationEnd = (text, index) => {
   if (text[index] !== "$" || text[index + 1] !== "{") return -1;
   let depth = 0;
   const limit = Math.min(text.length, index + INTERPOLATION);
@@ -219,7 +268,11 @@ const indexOfAny = (text, characters, from, to) => {
 
 // Where a URL run starting at `start` ends: at a quote, space, angle
 // bracket, backslash or closing bracket, or at `,` or `;` before a space.
-const runEnd = (text, start) => {
+// In a quoted markup attribute (`opened` by the quote before the run), tabs
+// and line breaks do not end it: the URL parser drops them.
+const runEnd = (text, start, { mode, opened }) => {
+  const ends =
+    mode === "markup" && QUOTE.test(opened ?? "") ? ENDS_MARKUP_URL : ENDS_URL;
   let index = start;
   while (index < text.length) {
     const after = interpolationEnd(text, index);
@@ -228,7 +281,7 @@ const runEnd = (text, start) => {
       continue;
     }
     const character = text[index];
-    if (ENDS_URL.test(character) || ")]}".includes(character)) break;
+    if (ends.test(character) || ")]}".includes(character)) break;
     if (",;".includes(character) && /^\s?$/.test(text[index + 1] ?? "")) break;
     index += 1;
   }
@@ -237,7 +290,7 @@ const runEnd = (text, start) => {
 
 // `scheme://` runs found by their separator, so a scheme glued to other
 // text still starts a URL.
-const absoluteRuns = (text) => {
+const absoluteRuns = (text, mode) => {
   const runs = [];
   let from = 0;
   for (
@@ -253,7 +306,7 @@ const absoluteRuns = (text) => {
     )
       start -= 1;
     while (start < marker && !/[A-Za-z]/.test(text[start])) start += 1;
-    const end = runEnd(text, marker + 3);
+    const end = runEnd(text, marker + 3, { mode, opened: text[start - 1] });
     runs.push({
       start: start === marker ? marker + 1 : start,
       end,
@@ -264,9 +317,20 @@ const absoluteRuns = (text) => {
   return runs;
 };
 
-// A name with a query starting at `index`: sw.js?key=, api/v1?token=, and a
-// bare name only after a quote, or after a space in prose.
-const queriedNameAt = (text, index, prose) => {
+// Whether a name that is no path from `/` starts a URL in this context: in
+// code only inside a string, so `r=n/2?t=1:e` stays a ternary; in markup
+// also as an unquoted attribute value; in prose after a space too.
+const nameContext = (before, name, mode) => {
+  if (before === "" || QUOTE.test(before) || before === "}") return true;
+  if (mode === "markup") return before === "=";
+  if (mode !== "prose") return false;
+  return /\s/.test(before) || name.includes("/") || WEB_FILE.test(name);
+};
+
+// A name starting at `index` that a query, fragment or path parameter
+// follows (sw.js?key=, api/v1?token=, sw.js#token=, csp-report;jsessionid=),
+// or, in prose, a path without a leading slash (csp/r/<token>).
+const namedAt = (text, index, mode) => {
   let end = index;
   while (
     end < text.length &&
@@ -274,27 +338,34 @@ const queriedNameAt = (text, index, prose) => {
     PATH_CHARACTER.test(text[end])
   )
     end += 1;
-  if (text[end] !== "?" || end === index) return false;
+  if (end === index) return false;
   const name = text.slice(index, end);
-  const before = text[index - 1] ?? "";
-  const bare = /["'`]/.test(before) || (prose && /^\s?$/.test(before));
-  return name.includes("/") || WEB_FILE.test(name) || bare;
+  if (!nameContext(text[index - 1] ?? "", name, mode)) return false;
+  const after = text.slice(end, end + 66);
+  if (/^[?#][^\s"'`]/.test(after) || /^;[\w.~-]{1,64}=/.test(after))
+    return true;
+  return mode === "prose" && /^[A-Za-z0-9_.~%-]+\/[^/]/.test(name);
 };
 
 // A relative URL starting at `index`: its authority's index when it is
-// protocol-relative, -1 for a path from `/`, `./` or `../` or a name with a
-// query, and null for none.
-const relativeAt = (text, index, prose) => {
+// protocol-relative, -1 for a path from `/`, `./` or `../`, a bare query
+// (`?token=`) or a named one, and null for none.
+const relativeAt = (text, index, mode) => {
   if (index > 0 && !BOUNDARY.test(text[index - 1])) return null;
   if (text.startsWith("//", index))
     return HOST_START.test(text[index + 2] ?? "") ? index + 2 : null;
   if (text[index] === "/")
     return PATH_START.test(text[index + 1] ?? "") ? -1 : null;
   if (text.startsWith("./", index) || text.startsWith("../", index)) return -1;
-  return queriedNameAt(text, index, prose) ? -1 : null;
+  if (text[index] === "?")
+    return /^\?[\w.~%-]{1,64}=/.test(text.slice(index, index + 66)) &&
+      nameContext(text[index - 1] ?? "", "", mode)
+      ? -1
+      : null;
+  return namedAt(text, index, mode) ? -1 : null;
 };
 
-const relativeRuns = (text, absolute, prose) => {
+const relativeRuns = (text, absolute, mode) => {
   const runs = [];
   let taken = 0;
   for (let index = 0; index < text.length;) {
@@ -304,11 +375,14 @@ const relativeRuns = (text, absolute, prose) => {
       taken += 1;
       continue;
     }
-    const authority = relativeAt(text, index, prose);
+    const authority = relativeAt(text, index, mode);
     const end =
       authority === null
         ? index
-        : Math.min(runEnd(text, index), next?.start ?? text.length);
+        : Math.min(
+            runEnd(text, index, { mode, opened: text[index - 1] }),
+            next?.start ?? text.length,
+          );
     if (end > index) runs.push({ start: index, end, authority });
     index = Math.max(index + 1, end);
   }
@@ -327,98 +401,151 @@ const hostRange = (text, run) => {
 
 /**
  * Every URL written in a text, absolute or relative, in order: `{ start,
- * end, authority, host }`. `prose` also reads a bare name with a query after
- * a space as a URL, as in a header value.
+ * end, authority, host }`. `mode` is "code", "markup" or "prose".
  */
-export const urlRuns = (text, prose = false) => {
-  const absolute = absoluteRuns(text);
-  return [...absolute, ...relativeRuns(text, absolute, prose)]
+export const urlRuns = (text, mode = "code") => {
+  const absolute = absoluteRuns(text, mode);
+  return [...absolute, ...relativeRuns(text, absolute, mode)]
     .sort((a, b) => a.start - b.start)
     .map((run) => ({ ...run, host: hostRange(text, run) }));
 };
 
-const segmentSpans = (text, from, to) => {
-  const segments = [];
-  for (let index = from; index <= to;) {
-    const slash = indexOfAny(text, "/", index, to);
-    segments.push({ start: index, end: slash });
-    index = slash + 1;
+/**
+ * For each character of a text, the URL run (its index + 1, else 0) whose
+ * parts these rules mask; a single label after `//`, such as `//FAKEtoken…`
+ * after a comment marker, is no host and is left to other rules.
+ */
+export const urlOwned = (text, runs) => {
+  const owned = new Int32Array(text.length);
+  for (const [index, run] of runs.entries()) {
+    owned.fill(index + 1, run.start, run.end);
+    const host = run.host && text.slice(run.host.start, run.host.end);
+    if (host !== null && !/[.:[]/.test(host))
+      owned.fill(0, run.host.start, run.host.end);
   }
-  return segments.flatMap((segment, position) => {
-    const value = text.slice(segment.start, segment.end);
-    const next = segments[position + 1];
-    return isTokenSegment(value, next && text.slice(next.start, next.end))
-      ? [{ ...segment, tag: maskTag(decoded(value)) }]
-      : [];
-  });
+  return owned;
 };
 
-// A query value's literal parts, split around template interpolations,
-// each tagged by its decoded value.
-const valueSpans = (text, from, to) => {
-  const spans = [];
-  const literal = (start, end) => ({
-    start,
-    end,
-    tag: maskTag(queryValue(text.slice(start, end))),
-  });
-  let chunk = from;
-  for (let index = from; index < to;) {
+/**
+ * Whether these rules mask a value starting at `start` of a text view
+ * `{ text, runs, owned }`: one inside a URL run, or a whole URL with a
+ * scheme, whose host and path stay readable.
+ */
+export const urlMasks = ({ text, runs, owned }, start) => {
+  const run = runs?.[(owned?.[start] ?? 0) - 1];
+  return (
+    run !== undefined &&
+    (run.start < start || (run.authority >= 0 && text[run.start] !== "/"))
+  );
+};
+
+/** The non-empty literal parts of [start, end) around `${…}` interpolations, as `{ start, end }`. */
+export const literalParts = (text, start, end) => {
+  const parts = [];
+  let chunk = start;
+  for (let index = start; index < end;) {
     const after = interpolationEnd(text, index);
-    if (after === -1 || after > to) {
+    if (after === -1 || after > end) {
       index += 1;
       continue;
     }
-    if (index > chunk) spans.push(literal(chunk, index));
+    if (index > chunk) parts.push({ start: chunk, end: index });
     index = after;
     chunk = after;
   }
-  if (to > chunk) spans.push(literal(chunk, to));
-  return spans;
+  if (end > chunk) parts.push({ start: chunk, end });
+  return parts;
 };
 
-const querySpans = (text, from, to) => {
-  const spans = [];
-  for (let index = from; index < to;) {
+// A value's literal parts, each tagged by its form after `decode`.
+const valueSpans = (text, [from, to], decode, sink) => {
+  for (const { start, end } of literalParts(text, from, to))
+    sink.push({ start, end, tag: maskTag(decode(text.slice(start, end))) });
+};
+
+// One path segment: the segment when it carries a token, and the value of
+// each path parameter (`;jsessionid=…`, `;token=…`).
+const segmentSpans = (text, [start, end], next, sink) => {
+  const parameters = indexOfAny(text, ";", start, end);
+  const name = text.slice(start, parameters);
+  if (isTokenSegment(name, next))
+    sink.push({ start, end: parameters, tag: maskTag(decoded(name)) });
+  for (let index = parameters + 1; index < end;) {
+    const parameter = indexOfAny(text, ";", index, end);
+    const equals = indexOfAny(text, "=", index, parameter);
+    if (equals + 1 < parameter)
+      valueSpans(text, [equals + 1, parameter], decoded, sink);
+    else if (hasRandomRun(text.slice(index, equals)))
+      sink.push({
+        start: index,
+        end: equals,
+        tag: maskTag(decoded(text.slice(index, equals))),
+      });
+    index = parameter + 1;
+  }
+};
+
+const pathSpans = (text, from, to, sink) => {
+  for (let index = from; index <= to;) {
+    const slash = indexOfAny(text, "/", index, to);
+    const next = slash < to ? indexOfAny(text, "/", slash + 1, to) : -1;
+    segmentSpans(
+      text,
+      [index, slash],
+      next === -1 ? undefined : text.slice(slash + 1, next),
+      sink,
+    );
+    index = slash + 1;
+  }
+};
+
+// The rest of an over-long query, as one tag in text and in claims alike.
+const restTag = (rest) => maskTag(decoded(rest));
+
+const querySpans = (text, from, to, sink) => {
+  for (let index = from, count = 0; index < to; count += 1) {
+    if (count === MAX_PAIRS) {
+      sink.push({ start: index, end: to, tag: restTag(text.slice(index, to)) });
+      return;
+    }
     const pair = indexOfAny(text, "&", index, to);
     const equals = indexOfAny(text, "=", index, pair);
     if (
       (equals === pair || equals + 1 === pair) &&
-      hasTokenRun(text.slice(index, equals))
+      hasRandomRun(text.slice(index, equals))
     )
-      spans.push({
+      sink.push({
         start: index,
         end: equals,
         tag: maskTag(queryValue(text.slice(index, equals))),
       });
-    if (equals < pair) spans.push(...valueSpans(text, equals + 1, pair));
+    if (equals < pair) valueSpans(text, [equals + 1, pair], queryValue, sink);
     index = pair + 1;
   }
-  return spans;
 };
 
 /**
- * The secret parts of one URL run, as `{ start, end, tag }` in order: user
- * info, token-like path segments, query values (and token-like names
- * without one) and the fragment, which shows as "…".
+ * The secret parts of one URL run, as `{ start, end, tag }` in order, added
+ * to `sink`: user info, token-like path segments and path parameter values,
+ * query values (and token-like names without one) and the fragment, which
+ * shows as "…".
  */
-export const runSpans = (text, run) => {
-  const spans = [];
+export const runSpans = (text, run, sink = []) => {
   if (run.host !== null && run.host.start > run.authority)
-    spans.push({
+    sink.push({
       start: run.authority,
       end: run.host.start - 1,
-      tag: maskTag(text.slice(run.authority, run.host.start - 1)),
+      tag: maskTag(decoded(text.slice(run.authority, run.host.start - 1))),
     });
   const pathStart = run.host?.end ?? run.start;
   const query = indexOfAny(text, "?#", pathStart, run.end);
-  spans.push(...segmentSpans(text, pathStart, query));
+  pathSpans(text, pathStart, query, sink);
   const fragment =
     text[query] === "?" ? indexOfAny(text, "#", query, run.end) : query;
-  if (text[query] === "?") spans.push(...querySpans(text, query + 1, fragment));
+  if (text[query] === "?") querySpans(text, query + 1, fragment, sink);
   if (fragment + 1 < run.end)
-    spans.push({ start: fragment + 1, end: run.end, tag: "…" });
-  return spans;
+    sink.push({ start: fragment + 1, end: run.end, tag: "…" });
+  return sink;
 };
 
 /** A text with each `{ start, end, tag }` span, in order and disjoint, replaced by its tag. */
@@ -433,11 +560,11 @@ export const replaceSpans = (text, spans) => {
 };
 
 /** Every URL in a text masked by pattern: relative ones, other schemes, template literals. */
-export const maskUrlsIn = (text, prose = false) =>
-  replaceSpans(
-    text,
-    urlRuns(text, prose).flatMap((run) => runSpans(text, run)),
-  );
+export const maskUrlsIn = (text, mode = "code") => {
+  const spans = [];
+  for (const run of urlRuns(text, mode)) runSpans(text, run, spans);
+  return replaceSpans(text, spans);
+};
 
 // Masking by pattern, for one URL WHATWG URL cannot parse (a relative
 // source, a template fragment).
@@ -451,30 +578,41 @@ export const maskLoosely = (text) => {
   );
 };
 
+/** A path for display: token-like segments and path parameter values are masked by their decoded value. */
+export const displayPath = (pathname) => {
+  const spans = [];
+  pathSpans(pathname, 0, pathname.length, spans);
+  return replaceSpans(pathname, spans);
+};
+
 // A parsed query for display: names decoded as URLSearchParams reads them,
 // each value as a tag of its decoded form, a token-like name without a
-// value masked, and a pair written as `name=` kept so.
+// value masked, a pair written as `name=` kept so, and the pairs after
+// MAX_PAIRS as one tag.
 const displayQuery = (search) => {
-  const pairs = search
-    .slice(1)
-    .split("&")
+  const written = search.slice(1).split("&");
+  const pairs = written
+    .slice(0, MAX_PAIRS)
     .filter((pair) => pair !== "")
     .map((pair) => {
       const equals = pair.indexOf("=");
       const name = queryValue(equals === -1 ? pair : pair.slice(0, equals));
       const value = equals === -1 ? "" : pair.slice(equals + 1);
       if (value !== "") return `${visible(name)}=${maskTag(queryValue(value))}`;
-      const shown = hasTokenRun(name) ? maskTag(name) : visible(name);
+      const shown = hasRandomRun(name) ? maskTag(name) : visible(name);
       return equals === -1 ? shown : `${shown}=`;
     });
+  if (written.length > MAX_PAIRS)
+    pairs.push(restTag(written.slice(MAX_PAIRS).join("&")));
   return pairs.length ? `?${pairs.join("&")}` : "";
 };
 
 /**
- * A URL for display: user info is dropped, query values, fragments and
- * token-like path segments are masked, so credentials in URLs never reach a
- * report. A URL with nothing to mask is returned exactly as given; one WHATWG
- * cannot parse is masked by pattern instead of passed through.
+ * A URL for display: user info is dropped, query values, fragments,
+ * token-like path segments and path parameter values are masked, so
+ * credentials in URLs never reach a report. A URL with nothing to mask is
+ * returned exactly as given; one WHATWG cannot parse is masked by pattern
+ * instead of passed through.
  */
 export const displayUrl = (url) => {
   let parsed;
