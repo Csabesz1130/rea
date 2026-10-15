@@ -1,6 +1,6 @@
 // Self-contained HTML report: verdict first, then one ledger row per finding,
 // then the inventory, provenance and run cost.
-import { inventory } from "./model.mjs";
+import { componentSections } from "./model.mjs";
 
 const escape = (value) =>
   String(value ?? "")
@@ -22,19 +22,11 @@ const DECISION = {
     line: "A person should review these changes before rollout.",
   },
   pass: { word: "Pass", line: "No change reached the review threshold." },
+  error: {
+    word: "Error",
+    line: "Part of the release could not be analyzed; nothing was cleared.",
+  },
 };
-const STATUS = {
-  added: "added",
-  removed: "removed",
-  changed: "changed",
-  unchanged: "unchanged",
-  ambiguous: "ambiguous",
-  "not-previously-observed": "new",
-  "no-longer-observed": "gone",
-};
-
-const short = (digest) => (digest ? `${digest.slice(0, 12)}…` : "—");
-
 const STYLE = `
 /* Layout: an audit ledger. Verdict band, then findings as ruled rows with a
    severity column, then reference tables. */
@@ -77,6 +69,17 @@ h1 .versions { display: block; margin-top: 6px; font: 500 16px/1.3 var(--mono); 
 .verdict.block .word { color: var(--critical); }
 .verdict.review .word { color: var(--medium); }
 .verdict.pass .word { color: var(--accent); }
+.verdict.error .word { color: var(--critical); }
+.components { display: flex; flex-wrap: wrap; gap: 10px 14px; }
+.component { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--rule); background: var(--paper); min-width: 0; }
+.component b { font: 650 14px/1.2 var(--display); }
+.component span { font: 500 12px/1.3 var(--mono); color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 600 10.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 4px 6px 3px; border: 1px solid var(--accent); color: var(--accent); }
+.gutter .comp { font: 500 11px/1.2 var(--mono); color: var(--accent); overflow-wrap: anywhere; }
+.errors { border-left: 3px solid var(--critical); padding: 10px 14px; background: var(--code); display: grid; gap: 6px; }
+h3.component-title { margin: 8px 0 12px; font: 700 17px/1.2 var(--display); }
+.note { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
 .verdict .line { color: var(--muted); font-size: 14px; }
 .stats { display: flex; flex-wrap: wrap; gap: 8px 28px; padding-top: 16px; border-top: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
 .stat { display: grid; gap: 2px; min-width: 0; }
@@ -129,7 +132,7 @@ td.mono, .mono { font-family: var(--mono); font-size: 12.5px; overflow-wrap: any
 .st { font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; }
 .st.added, .st.new, .st.changed { color: var(--high); }
 .st.removed, .st.gone { color: var(--low); }
-.st.unchanged { color: var(--muted); }
+.st.unchanged, .st.known { color: var(--muted); }
 .regressed { color: var(--high); font-weight: 600; }
 .empty { color: var(--muted); font-style: italic; }
 footer { color: var(--muted); font-size: 13px; }
@@ -150,7 +153,7 @@ const MARK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
 
 const evidenceItem = (item) => {
   const where = item.location?.file
-    ? `${item.location.file}${item.location.line ? `:${item.location.line}` : ""}`
+    ? `${item.location.file}${item.location.line ? `:${item.location.line}` : ""}${item.location.record !== undefined && item.location.record !== null ? ` record ${item.location.record}` : ""}`
     : null;
   const snippet = item.snippet
     ? `<div class="snippet"><span class="ln">${item.snippet.line}</span><code>${escape(item.snippet.text)}</code>${item.snippet.verified ? `<span class="ok" title="File SHA-256 matches REA's digest">sha256 ✓ ${escape(item.snippet.release)}</span>` : ""}</div>`
@@ -158,9 +161,9 @@ const evidenceItem = (item) => {
   return `<li><span class="basis ${item.basis}">${BASIS[item.basis] ?? item.basis}</span><div class="claim">${escape(item.claim)}<span class="where">${where ? `${escape(where)} · ` : ""}<span class="source">${escape(item.source)}</span></span></div>${snippet}</li>`;
 };
 
-const findingRow = (finding) => `
+const findingRow = (finding, showComponent) => `
 <article class="finding ${finding.severity}" id="${finding.id}">
-  <div class="gutter"><span class="fid">${finding.id}</span><span class="sevtag">${finding.severity}</span><span class="rule-id">${finding.rule}</span></div>
+  <div class="gutter"><span class="fid">${finding.id}</span><span class="sevtag">${finding.severity}</span><span class="rule-id">${finding.rule}</span>${showComponent ? `<span class="comp">${escape(finding.component)}</span>` : ""}</div>
   <div class="body">
     <h3>${escape(finding.title)}</h3>
     <p class="summary">${escape(finding.summary)}</p>
@@ -171,132 +174,146 @@ const findingRow = (finding) => `
   </div>
 </article>`;
 
-const table = (title, headers, rows, wide = false) => `
-<section class="table${wide ? " wide" : ""}"><h4>${escape(title)}</h4>${
-  rows.length === 0
-    ? `<p class="empty">Nothing to show.</p>`
-    : `<div class="scroll"><table><thead><tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody>${rows.map((cells) => `<tr>${cells.join("")}</tr>`).join("")}</tbody></table></div>`
-}</section>`;
+const STATUS_CLASS = new Set([
+  "added",
+  "new",
+  "changed",
+  "removed",
+  "gone",
+  "unchanged",
+  "known",
+]);
 
-const statusCell = (status) =>
-  `<td><span class="st ${STATUS[status] ?? status}">${STATUS[status] ?? status}</span></td>`;
-const cell = (value, mono = false) =>
-  `<td${mono ? ` class="mono"` : ""}>${escape(value)}</td>`;
-
-const inventorySection = (report) => {
-  const tables = inventory(report);
-  const helperRows = tables.helpers.flatMap((helper) => [
-    ...helper.dependencies.map((dependency) => [
-      cell(helper.relative, true),
-      cell(`${dependency.path} ${dependency.version}`, true),
-      statusCell(dependency.status),
-      cell(dependency.sum ?? "no checksum", true),
-    ]),
-    ...helper.settings.map((setting) => [
-      cell(helper.relative, true),
-      cell(setting.key, true),
-      statusCell("changed"),
-      cell(`${setting.before ?? "—"} → ${setting.after ?? "—"}`, true),
-    ]),
-  ]);
-  return `
-<section>
-  <h2>What changed</h2>
-  <p class="lede">Every capability REA recovered from both releases. "New" means REA saw it only in ${escape(report.right.label)} but its coverage of ${escape(report.left.label)} cannot prove it was absent.</p>
-  <div class="tables">
-    ${table(
-      "Electron fuses",
-      ["Fuse", report.left.label, report.right.label],
-      tables.fuses.map((row) => [
-        cell(row.name, true),
-        cell(row.before),
-        `<td class="${row.changed ? "regressed" : ""}">${escape(row.after)}</td>`,
-      ]),
-    )}
-    ${table(
-      "Renderer APIs and IPC",
-      ["API", "Channel", "Status"],
-      tables.bridge.map((row) => [
-        cell(row.member, true),
-        cell(row.channel, true),
-        statusCell(row.status),
-      ]),
-    )}
-    ${table(
-      "URLs in code",
-      ["URL", "Module", "Status"],
-      tables.urls.map((row) => [
-        cell(row.url, true),
-        cell(row.module, true),
-        statusCell(row.status),
-      ]),
-    )}
-    ${table("Requests and processes", ["Call", "Module", "Status"], [...tables.requests.map((row) => [cell(`${row.method}()`, true), cell(row.module, true), statusCell(row.status)]), ...tables.processes.map((row) => [cell(`${row.method}() child process`, true), cell(row.module, true), statusCell(row.status)])])}
-    ${table(
-      "Files",
-      ["Path", "Status"],
-      tables.files.map((row) => [cell(row.path, true), statusCell(row.status)]),
-    )}
-    ${table("Helper binaries", ["Binary", "Item", "Status", "Detail"], helperRows, true)}
-  </div>
-</section>`;
+const cellHtml = (value) => {
+  if (value !== null && typeof value === "object")
+    return `<td class="mono${value.flag ? " regressed" : ""}">${escape(value.text)}</td>`;
+  const text = String(value ?? "");
+  if (STATUS_CLASS.has(text))
+    return `<td><span class="st ${text}">${escape(text)}</span></td>`;
+  return `<td class="mono">${escape(text)}</td>`;
 };
 
-const provenanceSection = (report) => {
+const table = (entry, wide = false) => `
+<section class="table${wide ? " wide" : ""}"><h4>${escape(entry.title)}</h4>${entry.note ? `<p class="note">${escape(entry.note)}</p>` : ""}<div class="scroll"><table><thead><tr>${entry.headers.map((header) => `<th>${escape(header)}</th>`).join("")}</tr></thead><tbody>${entry.rows.map((cells) => `<tr>${cells.map(cellHtml).join("")}</tr>`).join("")}</tbody></table></div></section>`;
+
+const WIDE = new Set([
+  "helpers",
+  "headers",
+  "destinations",
+  "api-groups",
+  "cookies",
+]);
+
+const inventorySection = (report) => `
+<section>
+  <h2>What changed</h2>
+  <p class="lede">Every capability REA recovered from both releases. "New" means REA saw it only in the new release but its coverage of the old one cannot prove it was absent.</p>
+  ${report.components
+    .map((component) => {
+      const sections = componentSections(component);
+      return `${report.components.length > 1 ? `<h3 class="component-title">${escape(component.name)}</h3>` : ""}<div class="tables">${sections.length ? sections.map((entry) => table(entry, WIDE.has(entry.id))).join("") : `<p class="empty">Nothing changed that Release Watch tracks.</p>`}</div>`;
+    })
+    .join("")}
+</section>`;
+
+const short = (digest) => (digest ? `${digest.slice(0, 12)}…` : "—");
+
+const evidenceRows = (component) => {
   const rows = [];
-  for (const side of [report.left, report.right]) {
+  for (const side of [component.left, component.right]) {
+    const name = `${component.name} ${side.label}`;
     if (side.app)
       rows.push([
-        cell(`${side.label} application`),
-        cell(side.app.root_sha256 ? short(side.app.root_sha256) : "—", true),
-        cell(side.app.evidence_id, true),
-        cell(side.appEvidenceFile, true),
+        `${name} application`,
+        short(side.app.root_sha256),
+        side.app.evidence_id,
+        side.appEvidence ?? "—",
       ]);
     if (side.runtime)
       rows.push([
-        cell(`${side.label} ${side.runtime.name} (fuses)`),
-        cell(short(side.runtime.fuses.sha256), true),
-        cell(side.runtime.fuses.evidence_id, true),
-        cell(side.runtime.file, true),
+        `${name} ${side.runtime.name} fuses`,
+        short(side.runtime.fuses.sha256),
+        side.runtime.fuses.evidence_id,
+        side.runtime.file,
       ]);
     for (const helper of side.helpers)
       if (helper.go)
         rows.push([
-          cell(`${side.label} ${helper.relative}`),
-          cell(short(helper.go.sha256), true),
-          cell(helper.go.evidence_id, true),
-          cell(helper.file, true),
+          `${name} ${helper.relative}`,
+          short(helper.go.sha256),
+          helper.go.evidence_id,
+          helper.file,
         ]);
+    if (side.capture)
+      rows.push([
+        `${name} capture ${side.capture.name}`,
+        short(side.capture.sha256),
+        side.capture.evidence_id,
+        side.capture.file,
+      ]);
   }
-  if (report.comparison?.evidence_id)
+  if (component.comparison?.evidence_id)
     rows.push([
-      cell("REA version comparison"),
-      cell("—"),
-      cell(report.comparison.evidence_id, true),
-      cell(report.comparison.file, true),
+      `${component.name} REA version comparison`,
+      "—",
+      component.comparison.evidence_id,
+      component.comparison.file,
     ]);
+  return rows;
+};
+
+const provenanceSection = (report) => {
+  const evidence = report.components.flatMap(evidenceRows);
+  const coverage = report.components.flatMap((component) =>
+    [component.left, component.right]
+      .filter((side) => side.app)
+      .map((side) => [
+        `${component.name} ${side.label}`,
+        side.app.coverage.graph,
+        side.app.coverage.semantic,
+        String(side.app.inlineScripts),
+      ]),
+  );
   const calls = report.run.rea_calls.map((call) => [
-    cell(call.label, true),
-    cell(`${(call.elapsed_ms / 1000).toFixed(2)} s`),
-    cell(call.ok ? "ok" : "failed"),
+    call.label,
+    `${(call.elapsed_ms / 1000).toFixed(2)} s`,
+    call.ok ? "ok" : "failed",
   ]);
-  const coverage = [report.left, report.right]
-    .filter((side) => side.app)
-    .map((side) => [
-      cell(side.label),
-      cell(side.app.coverage.graph),
-      cell(side.app.coverage.semantic),
-    ]);
   return `
 <section>
   <h2>Evidence and cost</h2>
-  <p class="lede">Each finding links to complete REA Evidence saved next to this report. The analysis is deterministic and sent no data to a model.</p>
+  <p class="lede">Each finding links to complete REA Evidence saved next to this report under evidence/. The analysis is deterministic and sent no data to a model. The evidence directory keeps REA's records verbatim, including any credentials the releases contain; treat it as sensitive.</p>
   <div class="tables">
-    ${table("Evidence records", ["Subject", "SHA-256", "Evidence ID", "File"], rows, true)}
-    ${table("REA calls", ["Step", "Time", "Result"], calls)}
-    ${table("REA coverage", ["Release", "Application graph", "Semantic graph"], coverage)}
+    ${table({ title: "Evidence records", headers: ["Subject", "SHA-256", "Evidence ID", "File"], rows: evidence }, true)}
+    ${table({ title: "REA calls", headers: ["Step", "Time", "Result"], rows: calls })}
+    ${coverage.length ? table({ title: "REA coverage", headers: ["Release", "Application graph", "Semantic graph", "Inline scripts"], rows: coverage }) : ""}
   </div>
 </section>`;
+};
+
+const componentStrip = (report) =>
+  `<div class="components">${report.components
+    .map(
+      (component) =>
+        `<div class="component"><b>${escape(component.name)}</b><span>${escape(component.left.label)} → ${escape(component.right.label)} · ${escape(component.right.target?.kind ?? component.left.target?.kind ?? "missing")}</span>${component.surfaces.length ? `<div class="chips">${component.surfaces.map((surface) => `<span class="chip">${escape(surface)}</span>`).join("")}</div>` : ""}</div>`,
+    )
+    .join("")}</div>`;
+
+const headline = (report) => {
+  const kinds = new Set(
+    report.components.flatMap((component) => [
+      component.left.target?.kind,
+      component.right.target?.kind,
+    ]),
+  );
+  if (kinds.has("electron-dist") || kinds.has("asar")) return "update review";
+  if (
+    [...kinds].every(
+      (kind) => kind === "web-build" || kind === "har" || kind === undefined,
+    )
+  )
+    return "deployment review";
+  return "release review";
 };
 
 /** Render the full HTML report. */
@@ -313,15 +330,16 @@ export const renderHtml = (report) => {
     `<div class="stat"><b>${report.run.llm_tokens}</b><span>LLM tokens</span></div>`,
   ].join("");
   const errors = report.errors.length
-    ? `<section><h2>Analysis errors</h2>${report.errors.map((error) => `<p class="mono">${escape(error.side)} ${escape(error.operation)}: ${escape(error.message)}</p>`).join("")}</section>`
+    ? `<section><h2>Analysis errors</h2><div class="errors">${report.errors.map((error) => `<p class="mono">${escape(error.component)} ${escape(error.side)} · ${escape(error.operation)}: ${escape(error.message)}</p>`).join("")}</div></section>`
     : "";
   const product = report.product ?? "Release";
+  const showComponent = report.components.length > 1;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>${escape(product)} ${escape(report.right.label)} review</title>
+<title>${escape(product)} ${escape(report.labels.right)} review</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -331,22 +349,23 @@ export const renderHtml = (report) => {
 <header class="band"><div class="wrap">
   <div class="brand">${MARK}Release Watch</div>
   <div class="title-row">
-    <h1>${escape(product)} update review<span class="versions">${escape(report.left.label)} → ${escape(report.right.label)}</span></h1>
+    <h1>${escape(product)} ${headline(report)}<span class="versions">${escape(report.labels.left)} → ${escape(report.labels.right)}</span></h1>
     <div class="verdict ${verdict.decision}"><span class="word">${decision.word}</span><span class="line">${decision.line}</span></div>
   </div>
+  ${componentStrip(report)}
   <div class="stats">${stats}</div>
 </div></header>
 <main><div class="wrap">
+  ${errors}
   <section>
     <h2>Findings</h2>
     <p class="lede">Ordered by severity. Each line says whether REA observed it, REA inferred it, or Release Watch correlated it; what neither could establish is listed separately.</p>
-    <div class="ledger">${report.findings.map(findingRow).join("") || `<p class="empty">No findings.</p>`}</div>
+    <div class="ledger">${report.findings.map((finding) => findingRow(finding, showComponent)).join("") || `<p class="empty">No findings.</p>`}</div>
   </section>
   ${inventorySection(report)}
   ${provenanceSection(report)}
-  ${errors}
 </div></main>
-<footer><div class="wrap">Generated ${escape(report.generated_at)} by ${escape(report.tool.name)} ${escape(report.tool.version)} on REA Evidence. Static analysis only: neither release was executed.</div></footer>
+<footer><div class="wrap">Generated ${escape(report.generated_at)} by ${escape(report.tool.name)} ${escape(report.tool.version)} on REA Evidence. Static analysis and recorded captures only: Release Watch ran neither release.</div></footer>
 </body>
 </html>
 `;

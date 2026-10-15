@@ -5,8 +5,6 @@ import { createHash } from "node:crypto";
 import { readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
-const MAX_LINE = 180;
-
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 /**
@@ -17,11 +15,9 @@ export const openSources = async (rea, appPath, assets, label) => {
   let root = appPath;
   let owned = null;
   if (statSync(appPath).isFile()) {
-    const extracted = await rea.run(
-      "extract-artifact",
-      [appPath],
-      `extract ${label}`,
-    );
+    const extracted = await rea.run("extract-artifact", [appPath], {
+      label: `extract ${label}`,
+    });
     if (!extracted.ok)
       return { lineAt: () => null, close: () => {}, error: extracted.error };
     root = extracted.evidence.normalized_result.output_root;
@@ -50,15 +46,7 @@ export const openSources = async (rea, appPath, assets, label) => {
       const file = line ? load(relative) : null;
       const text = file?.lines[line - 1];
       if (text === undefined) return null;
-      const trimmed = text.trim();
-      return {
-        line,
-        text:
-          trimmed.length > MAX_LINE
-            ? `${trimmed.slice(0, MAX_LINE)}…`
-            : trimmed,
-        verified: file.verified,
-      };
+      return { line, text: text.trim(), verified: file.verified };
     },
     close: () => {
       if (owned !== null) rmSync(owned, { recursive: true, force: true });

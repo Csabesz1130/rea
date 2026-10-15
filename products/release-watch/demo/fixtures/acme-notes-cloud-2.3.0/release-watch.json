@@ -1,0 +1,15 @@
+{
+  "product": "Acme Notes Cloud",
+  "version": "2.3.0",
+  "components": [
+    {
+      "name": "web",
+      "path": "web/site",
+      "capture": "web.har"
+    },
+    {
+      "name": "api",
+      "path": "api"
+    }
+  ]
+}

@@ -2,6 +2,8 @@
 import { isNew } from "../diff.mjs";
 
 export const SEVERITIES = ["info", "low", "medium", "high", "critical"];
+export const APP_SOURCE = "REA analyze_javascript_application";
+export const CAPTURE_SOURCE = "REA inspect_web_network_capture";
 
 export const severityRank = (severity) => SEVERITIES.indexOf(severity);
 
@@ -33,14 +35,26 @@ const basisOf = (state) =>
       ? "inferred"
       : "unknown";
 
-/** One evidence line: a claim backed by an REA fact. */
-export const cite = (claim, fact, source) => ({
+const where = (fact) => {
+  const location = fact?.location ?? null;
+  if (location?.record === undefined || location.record === null)
+    return location;
+  return { ...location, line: null };
+};
+
+/**
+ * One evidence line: a claim backed by an REA fact. `redact` lists
+ * `{ value, with }` pairs: literal values that must never appear in source
+ * snippets, and what to show instead.
+ */
+export const cite = (claim, fact, source, { redact = [] } = {}) => ({
   claim,
   basis: basisOf(fact?.state),
   source,
-  location: fact?.location ?? null,
+  location: where(fact),
   artifact_sha256: fact?.artifact_sha256 ?? null,
   rea_authority: fact?.authority ?? null,
+  ...(redact.length > 0 ? { redact } : {}),
 });
 
 /** One evidence line produced by Release Watch's own correlation. */
@@ -63,12 +77,42 @@ export const reported = (claim, basis, source) => ({
   rea_authority: null,
 });
 
+const before = (a, b) =>
+  a.line < b.line || (a.line === b.line && a.column <= b.column);
+
+/** True when source range `inner` lies inside `outer` (both `{ start, end }` with line and column). */
+export const within = (inner, outer) =>
+  inner !== null &&
+  outer !== null &&
+  before(outer.start, inner.start) &&
+  before(inner.end, outer.end);
+
 export const hostOf = (url) => {
   try {
     return new URL(url).hostname.toLowerCase();
   } catch {
     return null;
   }
+};
+
+/** A URL for display: query values are replaced so keys in query strings never reach a report. */
+export const displayUrl = (url) => {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.username || parsed.password) {
+    parsed.username = "";
+    parsed.password = "";
+  }
+  const names = [...parsed.searchParams.keys()];
+  parsed.search = "";
+  const base = parsed.toString();
+  return names.length === 0
+    ? base
+    : `${base}?${names.map((name) => `${name}=…`).join("&")}`;
 };
 
 export const urlsIn = (text) =>
@@ -80,3 +124,12 @@ export const isVendorHost = (host, vendorDomains) =>
   vendorDomains.some(
     (domain) => host === domain || host.endsWith(`.${domain}`),
   );
+
+/** "the old release's" capture label: `v1.4.0 capture`. */
+export const captureLabel = (side) => `${side.label} capture`;
+
+/** Every finding a rule pack returns, plus the facts it has explained. */
+export const packResult = (findings = [], claims = {}) => ({
+  findings,
+  claims: { hosts: claims.hosts ?? [], nodes: claims.nodes ?? [] },
+});

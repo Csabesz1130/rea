@@ -1,29 +1,46 @@
 #!/usr/bin/env node
-// release-watch compare <old-release> <new-release> [options]
+// release-watch compare <old> <new> [options]
+// release-watch record <url> --out <file.har> [options]
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { compareReleases } from "../src/compare.mjs";
 import { createRea, resolveReaCommand } from "../src/rea.mjs";
+import { parseStep, recordHar } from "../src/record.mjs";
 import { renderHtml } from "../src/report/html.mjs";
 import { renderMarkdown } from "../src/report/markdown.mjs";
 import { reportJson } from "../src/report/model.mjs";
 import { SEVERITIES } from "../src/rules/shared.mjs";
 
-const USAGE = `Usage: release-watch compare <old-release> <new-release> [options]
+const USAGE = `Usage:
+  release-watch compare <old> <new> [options]
+  release-watch record <url> --out <file.har> [options]
 
-A release is an Electron distribution directory, an extracted app directory,
-or an .asar file.
+compare: <old> and <new> are each an Electron distribution directory, a
+JavaScript app directory (package.json), a built web app (index.html or
+dist/), an .asar file, a HAR capture, or a directory with a
+release-watch.json manifest listing several components.
 
-Options:
   --out <dir>             Report directory (default: ./release-watch-report)
+  --old-capture <har>     Runtime capture of the old release (single component)
+  --new-capture <har>     Runtime capture of the new release (single component)
   --vendor-domain <name>  A domain the vendor owns; repeat for several
   --fail-on <severity>    critical | high | medium | low | never (default: high)
   --rea <path>            REA CLI to use (default: this checkout, then \`rea\`)
-  --help                  Show this help
 
-Exit status: 0 below the threshold, 2 at or above it, 1 on usage or analysis errors.`;
+record: loads <url> in Chromium, runs the steps, and saves a HAR without
+response bodies.
+
+  --out <file.har>        Where to write the capture (required)
+  --step <step>           click:SEL | fill:SEL=TEXT | press:SEL=KEY | wait:MS |
+                          waitfor:SEL | goto:PATH; repeat in order
+  --settle-ms <ms>        Wait after the last step (default: 1000)
+  --browser <path>        Chromium executable (default: CHROMIUM_PATH)
+  --browser-arg <arg>     Extra Chromium argument; repeat for several
+
+Exit status for compare: 0 below the threshold, 2 at or above it, 1 when a
+component could not be analyzed or on usage errors.`;
 
 const color = process.env.NO_COLOR
   ? false
@@ -46,36 +63,63 @@ const DECISION_TONE = {
   block: paint("1;97;41"),
   review: paint("1;30;43"),
   pass: paint("1;30;42"),
+  error: paint("1;97;41"),
+};
+
+const OPTIONS = {
+  out: { type: "string" },
+  "old-capture": { type: "string" },
+  "new-capture": { type: "string" },
+  "vendor-domain": { type: "string", multiple: true, default: [] },
+  "fail-on": { type: "string", default: "high" },
+  rea: { type: "string" },
+  step: { type: "string", multiple: true, default: [] },
+  "settle-ms": { type: "string", default: "1000" },
+  browser: { type: "string" },
+  "browser-arg": { type: "string", multiple: true, default: [] },
+  help: { type: "boolean", default: false },
 };
 
 const parse = () => {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: {
-      out: { type: "string", default: "release-watch-report" },
-      "vendor-domain": { type: "string", multiple: true, default: [] },
-      "fail-on": { type: "string", default: "high" },
-      rea: { type: "string" },
-      help: { type: "boolean", default: false },
-    },
+    options: OPTIONS,
   });
-  if (values.help) return { help: true };
-  const [command, left, right] = positionals;
-  if (command !== "compare" || !left || !right || positionals.length !== 3)
-    throw new Error("Expected: compare <old-release> <new-release>");
+  if (values.help || positionals.length === 0) return { command: "help" };
+  const [command, ...operands] = positionals;
+  if (command === "record") {
+    if (operands.length !== 1 || !values.out)
+      throw new Error("Expected: record <url> --out <file.har>");
+    const settle = Number(values["settle-ms"]);
+    if (!Number.isInteger(settle) || settle < 0)
+      throw new Error("--settle-ms must be a whole number of milliseconds");
+    return {
+      command,
+      url: operands[0],
+      out: path.resolve(values.out),
+      steps: values.step.map(parseStep),
+      settleMs: settle,
+      browser: values.browser ?? null,
+      browserArgs: values["browser-arg"],
+    };
+  }
+  if (command !== "compare" || operands.length !== 2)
+    throw new Error("Expected: compare <old> <new>");
   if (values["fail-on"] !== "never" && !SEVERITIES.includes(values["fail-on"]))
     throw new Error(`--fail-on must be one of ${SEVERITIES.join(", ")}, never`);
   return {
-    help: false,
-    left,
-    right,
-    outDir: path.resolve(values.out),
+    command,
+    left: operands[0],
+    right: operands[1],
+    outDir: path.resolve(values.out ?? "release-watch-report"),
     rea: values.rea,
     options: {
       vendorDomains: values["vendor-domain"].map((domain) =>
         domain.toLowerCase(),
       ),
       failOn: values["fail-on"],
+      leftCapture: values["old-capture"] ?? null,
+      rightCapture: values["new-capture"] ?? null,
     },
   };
 };
@@ -84,6 +128,12 @@ const progressLine = (call) => {
   const mark = call.ok ? tone.ok("✓") : tone.fail("✗");
   const seconds = `${(call.elapsed_ms / 1000).toFixed(1)} s`.padStart(7);
   console.log(`  ${mark} ${call.label.padEnd(34)} ${tone.dim(seconds)}`);
+};
+
+const shown = (outDir, file) => {
+  const full = path.join(outDir, file);
+  const relative = path.relative(process.cwd(), full);
+  return relative.startsWith("..") ? full : relative;
 };
 
 const printSummary = (model, outDir) => {
@@ -97,21 +147,22 @@ const printSummary = (model, outDir) => {
   console.log(
     `${DECISION_TONE[verdict.decision](` ${verdict.decision.toUpperCase()} `)}  ${counts}`,
   );
+  for (const error of model.errors)
+    console.log(
+      tone.fail(`  ${error.component} ${error.side}: ${error.message}`),
+    );
   console.log("");
+  const several = model.components.length > 1;
   for (const finding of model.findings) {
     const label = finding.severity.toUpperCase().padEnd(8);
+    const where = several ? tone.dim(` [${finding.component}]`) : "";
     console.log(
-      `  ${tone[finding.severity](label)} ${tone.dim(finding.id.padEnd(3))} ${finding.title}`,
+      `  ${tone[finding.severity](label)} ${tone.dim(finding.id.padEnd(3))} ${finding.title}${where}`,
     );
   }
-  const relative = (file) => {
-    const full = path.join(outDir, file);
-    const shown = path.relative(process.cwd(), full);
-    return shown.startsWith("..") ? full : shown;
-  };
   console.log("");
   console.log(
-    `${tone.dim("Report")} ${tone.accent(relative("report.html"))}  ${tone.dim("JSON")} ${relative("report.json")}  ${tone.dim("Markdown")} ${relative("report.md")}`,
+    `${tone.dim("Report")} ${tone.accent(shown(outDir, "report.html"))}  ${tone.dim("JSON")} ${shown(outDir, "report.json")}  ${tone.dim("Markdown")} ${shown(outDir, "report.md")}`,
   );
   console.log(
     tone.dim(
@@ -120,21 +171,10 @@ const printSummary = (model, outDir) => {
   );
 };
 
-const main = async () => {
-  let args;
-  try {
-    args = parse();
-  } catch (error) {
-    console.error(`${error.message}\n\n${USAGE}`);
-    return 1;
-  }
-  if (args.help) {
-    console.log(USAGE);
-    return 0;
-  }
+const compare = async (args) => {
   const rea = createRea(resolveReaCommand(args.rea), { onCall: progressLine });
   console.log(
-    `${tone.bold("Release Watch")} ${tone.dim("0.1.0 · static review on REA Evidence")}`,
+    `${tone.bold("Release Watch")} ${tone.dim("0.2.0 · static and runtime review on REA Evidence")}`,
   );
   const report = await compareReleases({
     left: args.left,
@@ -152,14 +192,34 @@ const main = async () => {
   writeFileSync(path.join(args.outDir, "report.md"), renderMarkdown(model));
   writeFileSync(path.join(args.outDir, "report.html"), renderHtml(report));
   printSummary(model, args.outDir);
-  if (report.errors.length > 0) {
-    for (const error of report.errors)
-      console.error(
-        tone.fail(`${error.side} ${error.operation}: ${error.message}`),
-      );
+  if (model.verdict.decision === "error") return 1;
+  return model.verdict.decision === "block" ? 2 : 0;
+};
+
+const record = async (args) => {
+  await recordHar(args);
+  console.log(`Saved ${args.out}`);
+  return 0;
+};
+
+const main = async () => {
+  let args;
+  try {
+    args = parse();
+  } catch (error) {
+    console.error(`${error.message}\n\n${USAGE}`);
     return 1;
   }
-  return model.verdict.decision === "block" ? 2 : 0;
+  if (args.command === "help") {
+    console.log(USAGE);
+    return 0;
+  }
+  try {
+    return args.command === "record" ? await record(args) : await compare(args);
+  } catch (error) {
+    console.error(tone.fail(error.message));
+    return 1;
+  }
 };
 
 process.exitCode = await main();

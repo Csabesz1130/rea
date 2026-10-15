@@ -1,5 +1,11 @@
 // Rules for native helper executables shipped next to the app.
-import { hostOf, isVendorHost, reported, urlsIn } from "./shared.mjs";
+import {
+  hostOf,
+  isVendorHost,
+  packResult,
+  reported,
+  urlsIn,
+} from "./shared.mjs";
 
 const GO_SOURCE = "REA inspect_go_binary";
 
@@ -88,7 +94,7 @@ const trimpathFinding = (helper, change, context) =>
     : [];
 
 /** Findings for each helper paired across releases. */
-export const helperFindings = (context) =>
+const helperFindings = (context) =>
   context.diff.helpers.flatMap((helper) => {
     if (helper.go === null) return [];
     const findings = [];
@@ -103,3 +109,6 @@ export const helperFindings = (context) =>
         findings.push(...dependencyFindings(helper, item));
     return findings;
   });
+
+/** Helper binary rules. */
+export const helpersPack = (context) => packResult(helperFindings(context));

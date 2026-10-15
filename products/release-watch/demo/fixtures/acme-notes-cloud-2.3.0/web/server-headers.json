@@ -1,0 +1,9 @@
+{
+  "document": {
+    "content-security-policy": "default-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+    "strict-transport-security": "max-age=63072000; includeSubDomains",
+    "x-frame-options": "DENY",
+    "referrer-policy": "strict-origin-when-cross-origin"
+  },
+  "session-cookie": "session=s3ss10n; Path=/; HttpOnly; Secure; SameSite=Lax"
+}

@@ -1,0 +1,204 @@
+// Product knowledge Release Watch applies to REA facts: which hosts belong to
+// AI providers, which packages are AI or MCP SDKs, which literal shapes are
+// vendor credentials and which response headers carry security policy.
+// Matches here are Release Watch heuristics, never REA observations.
+
+const exactOrSuffix = (host, entry) =>
+  entry.host !== undefined
+    ? host === entry.host
+    : entry.suffix !== undefined
+      ? host.endsWith(entry.suffix)
+      : entry.pattern.test(host);
+
+const AI_PROVIDERS = [
+  { host: "api.openai.com", provider: "OpenAI" },
+  { host: "api.anthropic.com", provider: "Anthropic" },
+  { host: "generativelanguage.googleapis.com", provider: "Google Gemini" },
+  {
+    pattern: /^([a-z0-9-]+-)?aiplatform\.googleapis\.com$/,
+    provider: "Google Vertex AI",
+  },
+  { suffix: ".openai.azure.com", provider: "Azure OpenAI" },
+  {
+    pattern: /^bedrock-runtime(-fips)?\.[a-z0-9-]+\.amazonaws\.com$/,
+    provider: "Amazon Bedrock",
+  },
+  { host: "api.mistral.ai", provider: "Mistral" },
+  { host: "api.cohere.com", provider: "Cohere" },
+  { host: "api.cohere.ai", provider: "Cohere" },
+  { host: "api.groq.com", provider: "Groq" },
+  { host: "api.together.xyz", provider: "Together AI" },
+  { host: "api.fireworks.ai", provider: "Fireworks AI" },
+  { host: "openrouter.ai", provider: "OpenRouter" },
+  { host: "api.deepseek.com", provider: "DeepSeek" },
+  { host: "api.perplexity.ai", provider: "Perplexity" },
+  { host: "api.x.ai", provider: "xAI" },
+  { host: "api-inference.huggingface.co", provider: "Hugging Face" },
+  { host: "router.huggingface.co", provider: "Hugging Face" },
+  { host: "api.replicate.com", provider: "Replicate" },
+];
+
+/** The AI provider a host belongs to, or null. */
+export const aiProviderOf = (host) =>
+  host === null
+    ? null
+    : (AI_PROVIDERS.find((entry) => exactOrSuffix(host, entry))?.provider ??
+      null);
+
+const AI_SDKS = [
+  { name: "openai", label: "OpenAI SDK" },
+  { name: "@openai/agents", label: "OpenAI Agents SDK" },
+  { name: "@anthropic-ai/sdk", label: "Anthropic SDK" },
+  { name: "@anthropic-ai/claude-agent-sdk", label: "Claude Agent SDK" },
+  { name: "@google/genai", label: "Google Gen AI SDK" },
+  { name: "@google/generative-ai", label: "Google Generative AI SDK" },
+  { name: "@google-cloud/vertexai", label: "Vertex AI SDK" },
+  { name: "@aws-sdk/client-bedrock-runtime", label: "Amazon Bedrock SDK" },
+  { name: "@mistralai/mistralai", label: "Mistral SDK" },
+  { name: "cohere-ai", label: "Cohere SDK" },
+  { name: "groq-sdk", label: "Groq SDK" },
+  { name: "ollama", label: "Ollama client" },
+  { name: "ai", label: "Vercel AI SDK" },
+  { scope: "@ai-sdk/", label: "Vercel AI SDK provider" },
+  { name: "langchain", label: "LangChain" },
+  { scope: "@langchain/", label: "LangChain" },
+  { name: "llamaindex", label: "LlamaIndex" },
+  { name: "@huggingface/inference", label: "Hugging Face Inference" },
+  { name: "replicate", label: "Replicate client" },
+];
+
+const MCP_SERVER = /^@modelcontextprotocol\/sdk\/server(\/|$)/;
+const MCP_ANY = /^@modelcontextprotocol\/sdk(\/|$)/;
+
+/** The npm package name a module specifier refers to, or null for relative and URL specifiers. */
+export const packageNameOf = (specifier) => {
+  if (typeof specifier !== "string" || specifier.length === 0) return null;
+  if (/^(\.|\/|[a-z][a-z0-9+.-]*:)/i.test(specifier)) return null;
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+};
+
+/**
+ * Classify an import specifier or package name: `{ kind: "mcp-server" | "mcp" | "ai", label }`
+ * for AI and MCP SDKs, otherwise null.
+ */
+export const sdkOf = (specifier) => {
+  if (MCP_SERVER.test(specifier))
+    return { kind: "mcp-server", label: "MCP server SDK" };
+  if (MCP_ANY.test(specifier)) return { kind: "mcp", label: "MCP SDK" };
+  const name = packageNameOf(specifier);
+  if (name === null) return null;
+  const entry = AI_SDKS.find((sdk) =>
+    sdk.name !== undefined ? sdk.name === name : name.startsWith(sdk.scope),
+  );
+  return entry ? { kind: "ai", label: entry.label } : null;
+};
+
+const AI_ENVIRONMENT = new Set([
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_ENDPOINT",
+  "MISTRAL_API_KEY",
+  "COHERE_API_KEY",
+  "GROQ_API_KEY",
+  "OPENROUTER_API_KEY",
+  "TOGETHER_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "XAI_API_KEY",
+  "HF_TOKEN",
+  "REPLICATE_API_TOKEN",
+]);
+
+/** True when an environment variable name is a documented AI provider setting. */
+export const isAiEnvironmentKey = (key) => AI_ENVIRONMENT.has(key);
+
+// Documented credential formats. A literal must match a whole pattern.
+const CREDENTIALS = [
+  {
+    pattern: /^sk-ant-[A-Za-z0-9_-]{20,}$/,
+    kind: "Anthropic API key",
+    keep: 7,
+  },
+  {
+    pattern: /^sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}$/,
+    kind: "OpenAI API key",
+    keep: 8,
+  },
+  { pattern: /^sk-[A-Za-z0-9]{32,}$/, kind: "OpenAI API key", keep: 3 },
+  { pattern: /^AIza[0-9A-Za-z_-]{35}$/, kind: "Google API key", keep: 4 },
+  { pattern: /^gsk_[A-Za-z0-9]{40,}$/, kind: "Groq API key", keep: 4 },
+  { pattern: /^hf_[A-Za-z0-9]{30,}$/, kind: "Hugging Face token", keep: 3 },
+  { pattern: /^r8_[A-Za-z0-9]{30,}$/, kind: "Replicate token", keep: 3 },
+  { pattern: /^gh[pousr]_[A-Za-z0-9]{36,}$/, kind: "GitHub token", keep: 4 },
+  { pattern: /^github_pat_[A-Za-z0-9_]{22,}$/, kind: "GitHub token", keep: 11 },
+  { pattern: /^xox[abprs]-[A-Za-z0-9-]{10,}$/, kind: "Slack token", keep: 5 },
+  { pattern: /^(AKIA|ASIA)[A-Z0-9]{16}$/, kind: "AWS access key ID", keep: 4 },
+  {
+    pattern: /^(sk|rk)_live_[A-Za-z0-9]{20,}$/,
+    kind: "Stripe secret key",
+    keep: 8,
+  },
+];
+
+/** Show a credential's documented prefix, its last four characters and its length, never the rest. */
+export const maskCredential = (value, keep) =>
+  `${value.slice(0, keep)}…${value.slice(-4)} (${value.length} characters)`;
+
+/** `{ kind, masked }` when a literal has a documented credential format, otherwise null. */
+export const credentialOf = (value) => {
+  if (typeof value !== "string") return null;
+  const entry = CREDENTIALS.find((credential) =>
+    credential.pattern.test(value),
+  );
+  return entry
+    ? { kind: entry.kind, masked: maskCredential(value, entry.keep) }
+    : null;
+};
+
+// Request header and query parameter names that carry API credentials. REA
+// redacts Authorization and cookies itself; these names it keeps verbatim.
+const CREDENTIAL_HEADERS = new Set(["x-api-key", "api-key", "x-goog-api-key"]);
+const CREDENTIAL_QUERY = new Set(["api_key", "apikey", "access_token"]);
+
+export const isCredentialHeader = (name) =>
+  CREDENTIAL_HEADERS.has(String(name).toLowerCase());
+export const isCredentialQuery = (name) =>
+  CREDENTIAL_QUERY.has(String(name).toLowerCase());
+
+/** Response headers that carry browser security policy, with the cost of losing each. */
+export const SECURITY_HEADERS = {
+  "content-security-policy": {
+    label: "Content-Security-Policy",
+    removed: "high",
+  },
+  "strict-transport-security": {
+    label: "Strict-Transport-Security",
+    removed: "high",
+  },
+  "x-frame-options": { label: "X-Frame-Options", removed: "medium" },
+  "x-content-type-options": {
+    label: "X-Content-Type-Options",
+    removed: "medium",
+  },
+  "referrer-policy": { label: "Referrer-Policy", removed: "medium" },
+  "permissions-policy": { label: "Permissions-Policy", removed: "medium" },
+  "cross-origin-opener-policy": {
+    label: "Cross-Origin-Opener-Policy",
+    removed: "medium",
+  },
+};
+
+// DOM properties and methods that parse HTML from a string.
+export const HTML_SINKS = new Set([
+  "write:/innerHTML",
+  "write:/outerHTML",
+  "read:/insertAdjacentHTML",
+  "read:/write",
+  "read:/writeln",
+]);

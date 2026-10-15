@@ -1,20 +1,16 @@
 // Electron boundary rules: renderer-reachable process execution, new bridge
 // APIs, webPreferences regressions and fuse regressions.
 import {
+  APP_SOURCE,
   absencePhrase,
   cite,
   heuristic,
   maxSeverity,
   newFacts,
+  packResult,
   reported,
+  within,
 } from "./shared.mjs";
-
-const APP_SOURCE = "REA analyze_javascript_application";
-
-const before = (a, b) =>
-  a.line < b.line || (a.line === b.line && a.column <= b.column);
-const within = (inner, outer) =>
-  before(outer.start, inner.start) && before(inner.end, outer.end);
 
 /**
  * The read, inside the handler's source range, of a binding the handler's
@@ -39,7 +35,7 @@ const handlerReach = (app, handler, targetModule) => {
  * A new renderer-exposed bridge member whose IPC handler lives in a module that
  * contains, or statically imports, a new process-execution site.
  */
-export const rendererProcessExecution = (context) => {
+const rendererProcessExecution = (context) => {
   const { right, diff, labels } = context;
   const app = right.app;
   const findings = [];
@@ -109,31 +105,7 @@ export const rendererProcessExecution = (context) => {
   return { findings, coveredExec, coveredMembers };
 };
 
-export const newProcessExecution = (context, coveredExec) =>
-  newFacts(context.diff.app.childProcesses)
-    .filter(({ fact }) => !coveredExec.has(fact.node_id))
-    .map(({ fact, status }) => ({
-      rule: "RW-P01",
-      severity: "high",
-      title: `New process execution: ${fact.data.method}() in ${fact.data.module}`,
-      summary: `${context.labels.right} creates child processes from ${fact.data.module}.`,
-      why: "Process execution is a common step in supply-chain payloads and widens what the app can do on endpoints.",
-      recommendation:
-        "Confirm the command source and that it cannot be influenced by web content or network data.",
-      evidence: [
-        cite(
-          `${fact.data.method}() child-process creation (${absencePhrase(status, context.labels.left)})`,
-          fact,
-          APP_SOURCE,
-        ),
-      ],
-      unknowns:
-        fact.data.command === null
-          ? ["REA did not resolve the command statically."]
-          : [],
-    }));
-
-export const newBridgeMembers = (context, coveredMembers) =>
+const newBridgeMembers = (context, coveredMembers) =>
   newFacts(context.diff.app.bridgeMembers)
     .filter(({ fact }) => !coveredMembers.has(fact.key))
     .map(({ fact, status }) => ({
@@ -179,7 +151,7 @@ const preferenceRegressions = (before, after) =>
     return [{ name, rule, was, now }];
   });
 
-export const webPreferenceRegressions = (context) =>
+const webPreferenceRegressions = (context) =>
   context.diff.app.windows
     .filter((item) => item.status === "changed")
     .flatMap((item) => {
@@ -257,7 +229,7 @@ const implicationOutcome = (fuses, index) =>
   fuses.implications.find((implication) => implication.fuse_index === index)
     ?.outcome ?? null;
 
-export const fuseRegressions = (context) => {
+const fuseRegressions = (context) => {
   const { left, right, diff } = context;
   if (!left.runtime?.fuses || !right.runtime?.fuses) return [];
   const rows = diff.fuses.filter(
@@ -297,4 +269,18 @@ export const fuseRegressions = (context) => {
       ],
     },
   ];
+};
+
+/** Electron rules; claims the exec sites RW-E01 explains so RW-P01 skips them. */
+export const electronPack = (context) => {
+  const execution = rendererProcessExecution(context);
+  return packResult(
+    [
+      ...execution.findings,
+      ...webPreferenceRegressions(context),
+      ...fuseRegressions(context),
+      ...newBridgeMembers(context, execution.coveredMembers),
+    ],
+    { nodes: [...execution.coveredExec] },
+  );
 };
