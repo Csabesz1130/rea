@@ -74,13 +74,25 @@ export const schemeOf = (url) => {
   }
 };
 
-const TAGS = /‹[0-9a-f]{6}›/g;
-const MASKED = /^…?‹[0-9a-f]{6}›$/;
+const TAGS = /‹[0-9a-f]{6,64}›/g;
+const MASKED = /^…?‹[0-9a-f]{6,64}›$/;
 // A key made fresh for every run: equal values share a tag within a report,
 // and a tag cannot be matched against guesses offline.
 const RUN_KEY = randomBytes(32);
-const tagOf = (text) =>
-  `‹${createHmac("sha256", RUN_KEY).update(text).digest("hex").slice(0, 6)}›`;
+// The value each tag of this run stands for. A tag is six hex digits of the
+// value's keyed digest, two more each time another value already holds it,
+// so equal values always share a tag and different values never do.
+const issued = new Map();
+const tagOf = (text) => {
+  const digest = createHmac("sha256", RUN_KEY).update(text).digest("hex");
+  for (let width = 6; width < digest.length; width += 2) {
+    const tag = `‹${digest.slice(0, width)}›`;
+    const holder = issued.get(tag);
+    if (holder === undefined) issued.set(tag, text);
+    if (holder === undefined || holder === text) return tag;
+  }
+  return `‹${digest}›`;
+};
 
 /**
  * A short tag that tells two masked values apart within one report without

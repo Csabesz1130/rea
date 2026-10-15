@@ -162,12 +162,22 @@ describe("tags", () => {
     }
   });
 
-  it("tells many values apart with six hex digits", () => {
-    const tags = new Set(
-      Array.from({ length: 2000 }, (_, index) => maskTag(`value-${index}`)),
+  it("tells every value apart, with six hex digits unless another value holds them", () => {
+    const values = Array.from(
+      { length: 20_000 },
+      (_, index) => `value-${index}`,
     );
-    assert.equal(tags.size, 2000);
-    assert.match(maskTag("x"), /^‹[0-9a-f]{6}›$/);
+    const tags = values.map((value) => maskTag(value));
+    assert.equal(new Set(tags).size, values.length);
+    assert.deepEqual(
+      values.slice(0, 50).map((value) => maskTag(value)),
+      tags.slice(0, 50),
+      "a value keeps its tag",
+    );
+    assert.ok(tags.every((tag) => /^‹(?:[0-9a-f]{2}){3,32}›$/.test(tag)));
+    assert.ok(
+      tags.filter((tag) => tag.length === 8).length > values.length * 0.99,
+    );
   });
 });
 
@@ -222,7 +232,7 @@ describe("bounded scrubbing", () => {
 
 describe("caller-selected paths", () => {
   const root =
-    "/tmp/rw-0199bedf-b8a3-5a58-a554-d9b6b6acb229/aB3dE5gH7jK9mN1pQ3rS5tU7";
+    "/tmp/rw-123e4567-e89b-42d3-a456-426614174000/aB3dE5gH7jK9mN1pQ3rS5tU7";
 
   it("keeps input, Evidence and output paths and local paths in errors as given", () => {
     const report = scrubDeep({

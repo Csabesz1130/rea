@@ -3,61 +3,21 @@
 // holds a UUID: report.json, Markdown and HTML must mask every planted value
 // and keep the paths as given. Skipped when REA has not been built.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const product = path.resolve(here, "..");
-const reaBuilt = existsSync(path.resolve(product, "../../dist/cli.js"));
-const skip = reaBuilt ? false : "REA is not built (npm run build:cached)";
+import { compareCli, skip, writeFiles as write } from "./cli-run.mjs";
+
 const TAG = /‹[0-9a-f]{6}›/g;
 
-const write = (root, files) => {
-  for (const [name, text] of Object.entries(files)) {
-    mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
-    writeFileSync(path.join(root, name), text);
-  }
-  return root;
-};
-
-const compare = (root, left, right) => {
-  const out = path.join(root, "out");
-  const result = spawnSync(
-    process.execPath,
-    [
-      path.join(product, "bin", "release-watch.mjs"),
-      "compare",
-      left,
-      right,
-      "--out",
-      out,
-      "--jobs",
-      "1",
-    ],
-    { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } },
-  );
-  const read = (name) =>
-    existsSync(path.join(out, name))
-      ? readFileSync(path.join(out, name), "utf8")
-      : "";
-  const json = read("report.json");
-  return {
-    result,
-    report: json ? JSON.parse(json) : null,
-    outputs: [json, read("report.md"), read("report.html")],
-  };
-};
+// Writes report files under the caller-selected `root`, one job at a time.
+const compare = (root, left, right) =>
+  compareCli(left, right, {
+    out: path.join(root, "out"),
+    args: ["--jobs", "1"],
+  });
 
 const evidenceAt = (report, file, line) =>
   report.findings
@@ -96,7 +56,7 @@ describe("compare: planted secrets in a JavaScript app", { skip }, () => {
   let run;
   before(() => {
     root = mkdtempSync(
-      path.join(tmpdir(), "rw-0199bedf-b8a3-5a58-a554-d9b6b6acb229-"),
+      path.join(tmpdir(), "rw-123e4567-e89b-42d3-a456-426614174000-"),
     );
     write(path.join(root, "old"), {
       "package.json": pkg("1.0.0"),
@@ -207,7 +167,7 @@ describe("compare: planted secrets in a web build", { skip }, () => {
 describe("compare: errors that name caller-selected paths", { skip }, () => {
   it("keeps a path holding a UUID in error text", () => {
     const root = mkdtempSync(
-      path.join(tmpdir(), "rw-0199bedf-b8a3-5a58-a554-d9b6b6acb229-"),
+      path.join(tmpdir(), "rw-123e4567-e89b-42d3-a456-426614174000-"),
     );
     mkdirSync(path.join(root, "empty-old"));
     mkdirSync(path.join(root, "empty-new"));

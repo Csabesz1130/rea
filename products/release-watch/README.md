@@ -245,8 +245,9 @@ query values, fragments, user info, path parameter values (`;jsessionid=`)
 and token-like path segments with a tag such as `‹3f9c2a›`, and writes
 control and bidirectional characters as `\uXXXX` in `report.json` (spaces in
 rendered output). Tags are keyed per run, equal values share a tag within a
-report, a claim and a source line give a URL part the same tag, and
-scrubbing a tagged text again keeps its tags. A query with more than 64
+report and different values never do (a tag grows past six hex digits when
+another value holds it), a claim and a source line give a URL part the
+same tag, and scrubbing a tagged text again keeps its tags. A query with more than 64
 pairs shows its first 64 values as tags and the rest as one tag. A field
 that cannot be scrubbed is withheld rather than written. Header values are
 read as prose: relative URLs such as `report-uri csp/r/<token>`,

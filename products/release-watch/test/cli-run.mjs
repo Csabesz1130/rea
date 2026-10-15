@@ -21,9 +21,13 @@ export const skip = reaBuilt
   ? false
   : "REA is not built (npm run build:cached)";
 
-/** Compares two releases; `{ out, result, report }`, with `report` null when none was written. */
-export const run = (left, right, ...extra) => {
-  const out = mkdtempSync(path.join(tmpdir(), "release-watch-test-"));
+/**
+ * Runs `compare` with `args` after the two releases and `--out out`:
+ * `{ out, result, report, outputs }`, with `report` null when none was
+ * written and `outputs` the text of report.json, report.md and report.html
+ * ("" for a file not written).
+ */
+export const compareCli = (left, right, { out, args = [] }) => {
   const result = spawnSync(
     process.execPath,
     [
@@ -33,17 +37,37 @@ export const run = (left, right, ...extra) => {
       right,
       "--out",
       out,
-      "--vendor-domain",
-      "acmenotes.example",
-      ...extra,
+      ...args,
     ],
     { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } },
   );
-  const reportFile = path.join(out, "report.json");
-  const report = existsSync(reportFile)
-    ? JSON.parse(readFileSync(reportFile, "utf8"))
-    : null;
-  return { out, result, report };
+  const read = (name) =>
+    existsSync(path.join(out, name))
+      ? readFileSync(path.join(out, name), "utf8")
+      : "";
+  const json = read("report.json");
+  return {
+    out,
+    result,
+    report: json ? JSON.parse(json) : null,
+    outputs: [json, read("report.md"), read("report.html")],
+  };
+};
+
+/** Compares two releases into a new temporary directory, with the demo's vendor domain. */
+export const run = (left, right, ...extra) =>
+  compareCli(left, right, {
+    out: mkdtempSync(path.join(tmpdir(), "release-watch-test-")),
+    args: ["--vendor-domain", "acmenotes.example", ...extra],
+  });
+
+/** Writes `files` (path → text) under `root`, creating directories; returns `root`. */
+export const writeFiles = (root, files) => {
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  }
+  return root;
 };
 
 /**
@@ -62,11 +86,7 @@ export const releases = () => {
         path.join(dir, "package.json"),
         JSON.stringify({ name: "written", version, ...pkg }),
       );
-      for (const [file, text] of Object.entries(files)) {
-        mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
-        writeFileSync(path.join(dir, file), text);
-      }
-      return dir;
+      return writeFiles(dir, files);
     },
     keep: (dir) => dirs.push(dir),
     cleanup: () =>
