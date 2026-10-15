@@ -1,5 +1,6 @@
 // Electron boundary rules: renderer-reachable process execution, new bridge
 // APIs, webPreferences regressions and fuse regressions.
+import { reachClaim, reachOf } from "./reach.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
@@ -7,33 +8,26 @@ import {
   heuristic,
   maxSeverity,
   newFacts,
+  newGroups,
   packResult,
   reported,
-  within,
 } from "./shared.mjs";
 
-/**
- * The read, inside the handler's source range, of a binding the handler's
- * module imports from `targetModule`. Null when REA facts do not connect them.
- */
-const handlerReach = (app, handler, targetModule) => {
-  const file = handler.location?.file ?? null;
-  const range = handler.data.handler_range;
-  if (file === null || range === null) return null;
-  const imported = app.modules.get(file)?.imported ?? new Map();
-  return (
-    app.bindingReads.find(
-      (read) =>
-        read.data.module === file &&
-        imported.get(read.data.name) === targetModule &&
-        within(read.data.range, range),
-    ) ?? null
+const FUSE_SOURCE = "REA inspect_electron_fuses";
+
+const execEvidence = (group, labels) =>
+  group.facts.map((exec) =>
+    cite(
+      `${exec.data.method}() creates a child process in ${exec.data.module}${exec.data.command ? "" : " with a command REA did not resolve"} (${absencePhrase(group.status, labels.left, group.counts)})`,
+      exec,
+      APP_SOURCE,
+    ),
   );
-};
 
 /**
- * A new renderer-exposed bridge member whose IPC handler lives in a module that
- * contains, or statically imports, a new process-execution site.
+ * A new renderer-exposed bridge member whose IPC handler reaches a new,
+ * added or changed process-execution site: one finding per channel and
+ * exec key, citing every site of that key.
  */
 const rendererProcessExecution = (context) => {
   const { right, diff, labels } = context;
@@ -45,18 +39,24 @@ const rendererProcessExecution = (context) => {
   const handlers = new Map(
     app.ipcHandlers.map((handler) => [handler.data.channel, handler]),
   );
-  const execSites = newFacts(diff.app.childProcesses);
+  const groups = newGroups(diff.app.childProcesses, { field: "command" });
   for (const { fact: member, status: memberStatus } of newFacts(
     diff.app.bridgeMembers,
   )) {
     const handler = handlers.get(member.data.channel);
-    const handlerModule = handler?.location?.file ?? null;
-    if (handlerModule === null) continue;
-    for (const { fact: exec, status: execStatus, counts } of execSites) {
-      const execModule = exec.data.module;
-      const read = handlerReach(app, handler, execModule);
-      if (read === null) continue;
-      coveredExec.add(exec.node_id);
+    const scope = {
+      module: handler?.location?.file ?? null,
+      range: handler?.data.handler_range ?? null,
+    };
+    if (scope.module === null) continue;
+    for (const group of groups) {
+      const reached = group.facts
+        .map((exec) => ({ exec, path: reachOf(app, scope, exec) }))
+        .filter(({ path }) => path);
+      if (reached.length === 0) continue;
+      const [{ exec, path }] = reached;
+      group.facts.forEach((fact) => coveredExec.add(fact.node_id));
+      group.left.forEach((fact) => coveredExec.add(fact.node_id));
       coveredMembers.add(member.key);
       const evidence = [
         cite(
@@ -70,14 +70,10 @@ const rendererProcessExecution = (context) => {
           APP_SOURCE,
         ),
         heuristic(
-          `The handler reads ${read.data.name}, which ${handlerModule} imports from ${execModule}; REA reports the import binding and the read, Release Watch connects them`,
-          read.location,
+          reachClaim(path, exec, "The handler"),
+          path.read?.location ?? exec.location,
         ),
-        cite(
-          `${exec.data.method}() creates a child process in ${execModule} (${absencePhrase(execStatus, labels.left, counts)})`,
-          exec,
-          APP_SOURCE,
-        ),
+        ...execEvidence(group, labels),
       ];
       if (app.summary?.sender_validation_observations === 0)
         evidence.push(
@@ -91,13 +87,13 @@ const rendererProcessExecution = (context) => {
         rule: "RW-E01",
         severity: "critical",
         title: `Renderer can reach new process execution via "${member.data.channel}"`,
-        summary: `${labels.right} exposes ${member.data.member}() to web content; its handler module reaches ${exec.data.method}() in ${execModule}.`,
+        summary: `${labels.right} exposes ${member.data.member}() to web content; its handler reaches ${exec.data.method}() in ${exec.data.module}.`,
         why: "Any script running in the window, including injected content, could ask the main process to start programs with the user's privileges.",
         recommendation:
           "Ask the vendor why a renderer-exposed IPC channel can start processes, and require an allow-list of commands plus sender validation before deployment.",
         evidence,
         unknowns: [
-          "REA did not establish that the IPC argument reaches the exec command; the path is an imported binding read inside the handler.",
+          "REA did not establish that the IPC argument reaches the exec command; the path is a correlation of REA facts by location.",
         ],
       });
     }
@@ -142,102 +138,143 @@ const WEB_PREFERENCES = {
   allowRunningInsecureContent: { safe: false, label: "Mixed-content blocking" },
 };
 
-// How every window on one side sets one preference: "unsafe" when any window
-// sets the unsafe value, "dynamic" when any value is not a literal,
-// otherwise "safe" (set to the safe value or omitted).
-const preferenceState = (windows, name, rule) => {
-  const settings = windows.map((window) => ({
-    window,
-    setting: window.data.web_preferences[name] ?? null,
-  }));
-  const unsafe = settings.filter(
-    ({ setting }) => setting?.known && setting.value !== rule.safe,
-  );
-  const dynamic = settings.filter(
-    ({ setting }) => setting !== null && !setting.known,
-  );
-  const state =
-    unsafe.length > 0 ? "unsafe" : dynamic.length > 0 ? "dynamic" : "safe";
-  return { state, settings, offending: unsafe.length > 0 ? unsafe : dynamic };
-};
+// One window's setting of one preference: "default" when omitted.
+const stateOf = (setting, rule) =>
+  setting === null
+    ? "default"
+    : !setting.known
+      ? "dynamic"
+      : setting.value === rule.safe
+        ? "safe"
+        : "unsafe";
 
 const settingText = (name, setting) =>
   setting === null
     ? `${name} omitted`
     : `${name} = ${setting.known ? JSON.stringify(setting.value) : `dynamic value ${setting.value ?? ""}`.trim()}`;
 
-// Lines describing how the old release set the preference: explicit values
-// are REA facts, omitted values rely on Electron's documented default.
-const beforeEvidence = (context, name, rule, before) => {
-  if (before.settings.length === 0)
-    return [
-      reported(
-        `${context.labels.left}: REA reported no BrowserWindow, so no window set ${name}`,
-        "derived",
-        APP_SOURCE,
-      ),
-    ];
-  return before.settings.map(({ window, setting }) =>
-    setting === null
-      ? heuristic(
-          `${context.labels.left}: BrowserWindow in ${window.data.source_path ?? window.key} omits ${name}; Electron 20+ defaults it to ${JSON.stringify(rule.safe)}`,
-          window.location,
-          { side: "left" },
-        )
-      : cite(
-          `${context.labels.left}: BrowserWindow in ${window.data.source_path ?? window.key}: ${settingText(name, setting)}`,
-          window,
-          APP_SOURCE,
-          {
-            side: "left",
-          },
-        ),
-  );
+const windowFile = (window) => window.data.source_path ?? window.key;
+
+// Windows by file, old files renamed to their new path.
+const byFile = (windows, aliases = new Map()) => {
+  const files = new Map();
+  for (const window of windows) {
+    const file = aliases.get(windowFile(window))?.path ?? windowFile(window);
+    if (!files.has(file)) files.set(file, []);
+    files.get(file).push(window);
+  }
+  return files;
 };
 
-// Compared as sets of windows, so a window that moved file, a new window and
-// several windows in one file are all graded the same way.
+const count = (windows, name, rule, state) =>
+  windows.filter(
+    (window) =>
+      stateOf(window.data.web_preferences[name] ?? null, rule) === state,
+  ).length;
+
+// How the old release set the preference in this file: explicit values are
+// REA facts, omitted values rely on Electron's documented default.
+const beforeLines = (context, { name, rule, windows, file }) =>
+  windows.length === 0
+    ? [
+        reported(
+          `${context.labels.left}: REA reported no BrowserWindow in ${file}`,
+          "derived",
+          APP_SOURCE,
+        ),
+      ]
+    : windows.map((window) => {
+        const setting = window.data.web_preferences[name] ?? null;
+        return setting === null
+          ? heuristic(
+              `${context.labels.left}: BrowserWindow in ${windowFile(window)} omits ${name}; Electron 20+ defaults it to ${JSON.stringify(rule.safe)}`,
+              window.location,
+              { side: "left" },
+            )
+          : cite(
+              `${context.labels.left}: BrowserWindow in ${windowFile(window)}: ${settingText(name, setting)}`,
+              window,
+              APP_SOURCE,
+              {
+                side: "left",
+              },
+            );
+      });
+
+/**
+ * Windows are paired by file (through module renames). A file whose windows
+ * set the unsafe or a dynamic value more often than before is a regression;
+ * a file that is new counts only when the component as a whole has more
+ * such windows, so a window that moved file with its options is not new.
+ */
 const webPreferenceRegressions = (context) => {
   const { left, right } = context;
   if (!left.app || !right.app) return [];
-  return Object.entries(WEB_PREFERENCES).flatMap(([name, rule]) => {
-    const before = preferenceState(left.app.windows, name, rule);
-    const after = preferenceState(right.app.windows, name, rule);
-    if (before.state !== "safe" || after.state === "safe") return [];
-    const known = after.state === "unsafe";
-    const shown = after.offending[0].setting;
-    return [
-      {
-        rule: "RW-E02",
-        severity: known ? "high" : "medium",
-        title: known
-          ? `${rule.label} turned off (${name}: ${JSON.stringify(shown.value)})`
-          : `${rule.label} no longer statically known (${name})`,
-        summary: `${after.offending.length} BrowserWindow${after.offending.length === 1 ? "" : "s"} in ${context.labels.right} set ${name} to ${known ? "the unsafe value" : "a dynamic value"}; no window in ${context.labels.left} did.`,
-        why: "This removes a layer that contains compromised or untrusted web content.",
-        recommendation:
-          "Ask the vendor to restore the setting or document the compensating control.",
-        evidence: [
-          ...beforeEvidence(context, name, rule, before),
-          ...after.offending.map(({ window, setting }) =>
-            cite(
-              `${context.labels.right}: BrowserWindow in ${window.data.source_path ?? window.key}: ${settingText(name, setting)}`,
-              window,
-              APP_SOURCE,
+  const before = byFile(left.app.windows, context.aliases);
+  const after = byFile(right.app.windows);
+  return Object.entries(WEB_PREFERENCES).flatMap(([name, rule]) =>
+    [...after].flatMap(([file, windows]) => {
+      const old = before.get(file) ?? [];
+      const grew = (state) =>
+        count(windows, name, rule, state) > count(old, name, rule, state) &&
+        (old.length > 0 ||
+          count(right.app.windows, name, rule, state) >
+            count(left.app.windows, name, rule, state));
+      const known = grew("unsafe");
+      if (!known && !grew("dynamic")) return [];
+      const offending = windows.filter(
+        (window) =>
+          stateOf(window.data.web_preferences[name] ?? null, rule) ===
+          (known ? "unsafe" : "dynamic"),
+      );
+      const oldDynamic = known && count(old, name, rule, "dynamic") > 0;
+      const shown = offending[0].data.web_preferences[name];
+      return [
+        {
+          rule: "RW-E02",
+          severity: known && !oldDynamic ? "high" : "medium",
+          title: known
+            ? `${rule.label} turned off (${name}: ${JSON.stringify(shown.value)})`
+            : `${rule.label} no longer statically known (${name})`,
+          summary: `${offending.length} BrowserWindow${offending.length === 1 ? "" : "s"} in ${file} set ${name} to ${known ? "the unsafe value" : "a dynamic value"} in ${context.labels.right}, more than in ${context.labels.left}.`,
+          why: "This removes a layer that contains compromised or untrusted web content.",
+          recommendation:
+            "Ask the vendor to restore the setting or document the compensating control.",
+          evidence: [
+            // A file new in this release is compared with the whole old release.
+            ...beforeLines(context, {
+              name,
+              rule,
+              windows: old.length > 0 ? old : left.app.windows,
+              file,
+            }),
+            ...offending.map((window) =>
+              cite(
+                `${context.labels.right}: BrowserWindow in ${file}: ${settingText(name, shown)}`,
+                window,
+                APP_SOURCE,
+              ),
             ),
-          ),
-        ],
-        unknowns: [
-          "Static webPreferences do not prove runtime enforcement; code can still change them before window creation.",
-          ...(before.settings.some(({ setting }) => setting === null)
-            ? [
-                "Release Watch assumes Electron 20 or later defaults for omitted options; REA did not report the Electron version.",
-              ]
-            : []),
-        ],
-      },
-    ];
-  });
+          ],
+          unknowns: [
+            "Static webPreferences do not prove runtime enforcement; code can still change them before window creation.",
+            ...(oldDynamic
+              ? [
+                  `${context.labels.left} set ${name} to a dynamic value REA did not resolve, so the old state is not established.`,
+                ]
+              : []),
+            ...(old.some(
+              (window) => (window.data.web_preferences[name] ?? null) === null,
+            )
+              ? [
+                  "Release Watch assumes Electron 20 or later defaults for omitted options; REA did not report the Electron version.",
+                ]
+              : []),
+          ],
+        },
+      ];
+    }),
+  );
 };
 
 const FUSES = {
@@ -277,57 +314,90 @@ const FUSES = {
   },
 };
 
+const isRead = (state) => state === "enabled" || state === "disabled";
+
 const implicationOutcome = (fuses, index) =>
   fuses.implications.find((implication) => implication.fuse_index === index)
     ?.outcome ?? null;
 
-const fuseRegressions = (context) => {
-  const { left, right, diff } = context;
-  if (!left.runtime?.fuses || !right.runtime?.fuses) return [];
-  if (left.runtime.fuses.ambiguous || right.runtime.fuses.ambiguous) return [];
-  // Only a fuse REA read as enabled or disabled on the new side is graded;
-  // removed or unknown fuses are coverage limits, reported by RW-C03.
-  const rows = diff.fuses.filter(
-    (change) =>
-      FUSES[change.name] &&
-      change.before === FUSES[change.name].safe &&
-      (change.after === "enabled" || change.after === "disabled"),
+// Severity of one fuse in its unsafe state; ASAR integrity is not enforced
+// on Linux, which REA reports as an unknown outcome.
+const fuseSeverity = (name, fuses, unknowns) => {
+  if (
+    name !== "EnableEmbeddedAsarIntegrityValidation" ||
+    implicationOutcome(fuses, 4) !== "unknown"
+  )
+    return FUSES[name].severity;
+  unknowns.add(
+    "REA reports that embedded ASAR integrity is enforced only on macOS and Windows builds; on this Linux build the fuse byte does not establish enforcement either way.",
   );
-  if (rows.length === 0) return [];
-  const unknowns = [];
-  const severities = rows.map((change) => {
-    if (change.name !== "EnableEmbeddedAsarIntegrityValidation")
-      return FUSES[change.name].severity;
-    if (implicationOutcome(right.runtime.fuses, 4) !== "unknown")
-      return FUSES[change.name].severity;
-    unknowns.push(
-      "REA reports that embedded ASAR integrity is enforced only on macOS and Windows builds; on this Linux build the fuse byte does not establish enforcement either way.",
-    );
-    return "low";
-  });
-  return [
-    {
-      rule: "RW-E03",
-      severity: maxSeverity(severities),
-      title: `Electron hardening fuses removed (${rows.length})`,
-      summary: `${right.runtime.name}: ${rows.map((row) => row.name).join(", ")} moved to their unsafe state.`,
-      why: "Fuses are compiled-in switches that block well-known ways to run code inside a trusted, signed app. Losing them usually means the release pipeline changed.",
-      recommendation:
-        "Ask the vendor whether the build pipeline changed, and block until the fuses are restored.",
-      evidence: rows.map((row, index) =>
-        reported(
-          `${row.name}: ${row.before} → ${row.after} (${severities[index]}). ${FUSES[row.name].meaning}`,
-          "observed",
-          "REA inspect_electron_fuses",
-        ),
-      ),
-      unknowns: [
-        ...unknowns,
-        "Fuse state does not show whether the app enables these behaviours through other means.",
-      ],
-    },
-  ];
+  return "low";
 };
+
+/**
+ * Fuses REA read as unsafe on a new executable, for every executable pair.
+ * A fuse whose old state REA did not establish (several wires, no wire for
+ * that fuse) is still reported when the new state is unsafe, at medium.
+ */
+const fuseRegressions = (context) =>
+  context.diff.runtimes.flatMap((pair) => {
+    const after = pair.after?.fuses;
+    if (!after || after.ambiguous) return [];
+    const before = pair.before?.fuses ?? null;
+    const unknowns = new Set();
+    const rows = Object.entries(FUSES).flatMap(([name, fuse]) => {
+      const now = after.fuses[name];
+      if (!isRead(now) || now === fuse.safe) return [];
+      const was =
+        before && !before.ambiguous
+          ? (before.fuses[name] ?? "unknown")
+          : "unknown";
+      if (was !== fuse.safe && was !== "unknown") return [];
+      if (before === null) return [];
+      const established = was === fuse.safe;
+      return [
+        {
+          name,
+          was,
+          now,
+          severity: established
+            ? fuseSeverity(name, after, unknowns)
+            : "medium",
+          established,
+        },
+      ];
+    });
+    if (rows.length === 0) return [];
+    if (rows.some((row) => !row.established))
+      unknowns.add(
+        `REA did not establish the old state of every fuse in ${pair.before.name} (${before.ambiguous ? "several fuse wires" : "fuse missing"}).`,
+      );
+    const where = pair.matched
+      ? pair.after.name
+      : `${pair.after.name}, a new executable compared with ${pair.before.name}`;
+    return [
+      {
+        rule: "RW-E03",
+        severity: maxSeverity(rows.map((row) => row.severity)),
+        title: `Electron hardening fuses removed (${rows.length})${pair.matched ? "" : ` in new executable ${pair.after.name}`}`,
+        summary: `${where}: ${rows.map((row) => row.name).join(", ")} ${rows.length === 1 ? "is" : "are"} in the unsafe state.`,
+        why: "Fuses are compiled-in switches that block well-known ways to run code inside a trusted, signed app. Losing them usually means the release pipeline changed.",
+        recommendation:
+          "Ask the vendor whether the build pipeline changed, and block until the fuses are restored.",
+        evidence: rows.map((row) =>
+          reported(
+            `${row.name}: ${row.was} → ${row.now} (${row.severity}). ${FUSES[row.name].meaning}`,
+            "observed",
+            FUSE_SOURCE,
+          ),
+        ),
+        unknowns: [
+          ...unknowns,
+          "Fuse state does not show whether the app enables these behaviours through other means.",
+        ],
+      },
+    ];
+  });
 
 /** Electron rules; claims the exec sites RW-E01 explains so RW-P01 skips them. */
 export const electronPack = (context) => {

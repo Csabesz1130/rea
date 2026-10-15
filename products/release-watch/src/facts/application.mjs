@@ -1,7 +1,7 @@
 // Projects `analyze_javascript_application` Evidence into the capability
 // facts Release Watch compares. This module never reads application source.
 import { HTML_SINKS } from "../catalog.mjs";
-import { isUrl } from "../urls.mjs";
+import { isUrl, scriptKey } from "../urls.mjs";
 import {
   edgeFact,
   firstObservation,
@@ -188,8 +188,10 @@ const GRAPH_PROJECTIONS = {
         !properties.script_path
       )
         continue;
+      // Keyed as the browser resolves the source, so whitespace or host
+      // case alone is not a new script.
       facts.pageScripts.push(
-        observationFact(node, observation, properties.script_path, {
+        observationFact(node, observation, scriptKey(properties.script_path), {
           script_path: properties.script_path,
           resolution_status: properties.resolution_status ?? null,
         }),
@@ -340,8 +342,24 @@ const bindingRelations = (semantic, facts, contexts) => {
   for (const relation of semantic.relations) {
     const source = byId.get(relation.source_node_id);
     const target = byId.get(relation.target_node_id);
-    if (relation.relation === "defines" && target?.kind === "binding")
+    if (relation.relation === "defines" && target?.kind === "binding") {
       definedBinding.set(relation.source_node_id, target.label ?? null);
+      // The expression that defines a binding, with its range: a function
+      // declaration's range holds the function body.
+      if (rangeOf(source ?? {}) !== null)
+        facts.bindingDefinitions.push(
+          semanticFact(
+            source,
+            contexts,
+            `${target.identity?.module_path ?? null}#${target.label}`,
+            {
+              module: target.identity?.module_path ?? null,
+              name: target.label ?? null,
+              range: rangeOf(source),
+            },
+          ),
+        );
+    }
     const readsBinding =
       relation.relation === "reads" && source?.kind === "binding";
     if (!readsBinding || !rangeOf(target ?? {})) continue;
@@ -411,6 +429,7 @@ const semanticFacts = (semantic) => {
     stringLiterals: [],
     urlLiterals: [],
     bindingReads: [],
+    bindingDefinitions: [],
     htmlSinks: [],
     memberCalls: [],
     dynamicEvaluation: [],

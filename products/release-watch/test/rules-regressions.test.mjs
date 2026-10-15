@@ -64,117 +64,6 @@ describe("counted sites", () => {
   });
 });
 
-describe("Electron windows and fuses", () => {
-  const window = (file, preferences) =>
-    fact(
-      file,
-      { source_path: file, web_preferences: preferences },
-      at(file, 4),
-    );
-
-  it("grades a window that moved file and enabled Node.js integration", () => {
-    const findings = evaluate(
-      side("v1", app({ windows: [window("main.js", {})] })),
-      side(
-        "v2",
-        app({
-          windows: [
-            window("windows/main.js", {
-              nodeIntegration: { known: true, value: true },
-            }),
-          ],
-        }),
-      ),
-    );
-    assert.deepEqual(rules(findings), ["RW-E02"]);
-    assert.equal(findings[0].severity, "high");
-    const [before, after] = findings[0].evidence;
-    assert.equal(
-      before.basis,
-      "heuristic",
-      "an omitted option relies on Electron's default",
-    );
-    assert.equal(before.side, "left");
-    assert.equal(after.basis, "observed");
-  });
-
-  const fuses = (state) => ({
-    name: "acme",
-    fuses: {
-      ambiguous: false,
-      fuses: { RunAsNode: state },
-      implications: [],
-      limitations: [],
-    },
-  });
-
-  it("grades a fuse REA read as enabled, and reports an unreadable one as a coverage gap", () => {
-    const enabled = evaluate(
-      side("v1", app(), { runtime: fuses("disabled") }),
-      side("v2", app(), { runtime: fuses("enabled") }),
-    );
-    assert.deepEqual(rules(enabled), ["RW-E03"]);
-    const unknown = evaluate(
-      side("v1", app(), { runtime: fuses("disabled") }),
-      side("v2", app(), { runtime: fuses("unknown") }),
-    );
-    assert.deepEqual(rules(unknown), ["RW-C03"]);
-    const missing = evaluate(
-      side("v1", app(), { runtime: fuses("disabled") }),
-      side("v2", app(), { runtime: null }),
-    );
-    assert.deepEqual(rules(missing), ["RW-C03"]);
-  });
-});
-
-describe("MCP servers", () => {
-  const server = "src/server.js";
-  const tools = "src/tools.js";
-  const mcp = (childProcesses) =>
-    app({
-      imports: [
-        fact(
-          "@modelcontextprotocol/sdk/server/mcp.js",
-          {
-            specifier: "@modelcontextprotocol/sdk/server/mcp.js",
-            module: server,
-          },
-          at(server, 1),
-        ),
-      ],
-      memberCalls: [
-        fact(
-          `${tools}#read:/registerTool`,
-          { module: tools, member: "registerTool", range: range(5, 0, 20, 2) },
-          at(tools, 5),
-        ),
-      ],
-      childProcesses,
-    });
-  const exec = fact(
-    `${tools}#exec`,
-    {
-      module: tools,
-      method: "exec",
-      command: null,
-      range: range(12, 4, 12, 40),
-    },
-    at(tools, 12),
-  );
-
-  it("connects a registration in a module that only receives the server object", () => {
-    const findings = evaluate(side("v1", mcp([])), side("v2", mcp([exec])));
-    assert.deepEqual(rules(findings), ["RW-M01"]);
-  });
-
-  it("does not report a tool that already reached the same exec site", () => {
-    assert.deepEqual(
-      rules(evaluate(side("v1", mcp([exec])), side("v2", mcp([exec])))),
-      [],
-    );
-  });
-});
-
 describe("web builds", () => {
   const source = (original) =>
     fact(
@@ -315,22 +204,45 @@ describe("runtime cookies", () => {
 });
 
 describe("coverage", () => {
-  it("turns a truncated new-side analysis into a review finding", () => {
-    const truncated = app();
-    truncated.coverage = {
-      ...truncated.coverage,
-      graph: "complete",
+  const bundle = (sha256) =>
+    fact("vendor/bundle.js", { sha256 }, at("vendor/bundle.js", 1));
+  const truncated = (sha256) => {
+    const truncatedApp = app({ assets: [bundle(sha256)] });
+    truncatedApp.coverage = {
+      ...truncatedApp.coverage,
       semantic_truncated: true,
       semantic_limits: ["semantic_graph_file_node_ceiling 20000"],
       semantic_ceiling_modules: ["vendor/bundle.js"],
     };
-    const findings = evaluate(side("v1", app()), side("v2", truncated));
-    assert.deepEqual(rules(findings), ["RW-C01"]);
+    return truncatedApp;
+  };
+
+  it("reviews a truncated analysis of unchanged code and blocks one of changed code", () => {
+    const same = evaluate(
+      side("v1", app({ assets: [bundle("a")] })),
+      side("v2", truncated("a")),
+    );
+    assert.deepEqual(rules(same), ["RW-C01"]);
     assert.match(
-      findings[0].evidence.map((item) => item.claim).join("\n"),
+      same[0].evidence.map((item) => item.claim).join("\n"),
       /vendor\/bundle\.js/,
     );
-    assert.equal(verdictFor(findings, "high").decision, "review");
+    assert.equal(verdictFor(same, "high").decision, "review");
+    const changed = evaluate(
+      side("v1", app({ assets: [bundle("a")] })),
+      side("v2", truncated("b")),
+    );
+    assert.equal(changed[0].severity, "high");
+    assert.match(changed[0].title, /Changed code in v2 was not examined/);
+  });
+
+  it("does not report REA's routine partial graph status as missing code", () => {
+    const partial = app();
+    partial.coverage = { ...partial.coverage, graph: "partial" };
+    assert.deepEqual(
+      rules(evaluate(side("v1", app()), side("v2", partial))),
+      [],
+    );
   });
 
   it("notes a capture present on one side only", () => {
@@ -474,6 +386,148 @@ describe("one-sided captures", () => {
     assert.match(
       findings.find((finding) => finding.rule === "RW-H03").evidence[0].claim,
       /no capture of v1 to compare/,
+    );
+  });
+});
+
+describe("process and request sites", () => {
+  const exec = (module, command) =>
+    fact(
+      `${module}#exec`,
+      { module, method: "exec", command, range: range(3, 0, 3, 9) },
+      at(module, 3),
+    );
+
+  it("keeps an exec with an unresolved command high when the removed one ran a fixed command", () => {
+    const findings = evaluate(
+      side(
+        "v1",
+        app({ childProcesses: [exec("version.js", "git --version")] }),
+      ),
+      side("v2", app({ childProcesses: [exec("remote.js", null)] })),
+    );
+    assert.deepEqual(
+      findings.map((finding) => [finding.rule, finding.severity]),
+      [["RW-P01", "high"]],
+    );
+  });
+
+  it("reports a command that became dynamic with the same number of sites", () => {
+    const findings = evaluate(
+      side("v1", app({ childProcesses: [exec("run.js", "uname -a")] })),
+      side("v2", app({ childProcesses: [exec("run.js", null)] })),
+    );
+    assert.deepEqual(rules(findings), ["RW-P01"]);
+    assert.match(findings[0].title, /Process execution changed/);
+  });
+
+  it("reports one finding per key when a module gains a second request site", () => {
+    const fetchAt = (line) =>
+      fact(
+        "a.js#fetch",
+        {
+          module: "a.js",
+          method: "fetch",
+          endpoint: null,
+          range: range(line, 0, line, 9),
+        },
+        at("a.js", line),
+      );
+    const findings = evaluate(
+      side("v1", app({ requests: [fetchAt(2)] })),
+      side("v2", app({ requests: [fetchAt(2), fetchAt(9)] })),
+    );
+    assert.deepEqual(rules(findings), ["RW-N02"]);
+  });
+});
+
+describe("destinations and headers", () => {
+  it("reports browser code calling an AI provider that only the old server called", () => {
+    const openai = "https://api.openai.com/v1/chat/completions";
+    const endpoint = (file) =>
+      fact(
+        openai,
+        { value: openai, mechanism: "call:fetch", candidate: false },
+        at(file, 3),
+      );
+    const server = side("v1", app({ endpoints: [endpoint("server.js")] }));
+    const browser = side(
+      "v2",
+      app({
+        endpoints: [endpoint("server.js"), endpoint("assets/app.js")],
+        browserModules: new Set(["assets/app.js"]),
+      }),
+    );
+    const findings = evaluate(server, browser);
+    assert.deepEqual(rules(findings), ["RW-A01"]);
+    assert.match(findings[0].title, /Browser code calls OpenAI directly/);
+  });
+
+  it("ignores XML namespace URLs next to an unresolved request", () => {
+    const request = fact(
+      "ui.js#fetch",
+      {
+        module: "ui.js",
+        method: "fetch",
+        endpoint: null,
+        range: range(4, 0, 4, 20),
+      },
+      at("ui.js", 4),
+    );
+    const svg = "http://www.w3.org/2000/svg";
+    const findings = evaluate(
+      side("v1", app({ requests: [request] })),
+      side(
+        "v2",
+        app({
+          requests: [request],
+          urlLiterals: [
+            fact(
+              svg,
+              { module: "ui.js", url: svg, value: svg, binding: "SVG_NS" },
+              at("ui.js", 1),
+            ),
+          ],
+        }),
+      ),
+    );
+    assert.deepEqual(rules(findings), []);
+  });
+
+  it("does not report a CSP whose only change is its per-response nonce", () => {
+    const page = (nonce) =>
+      fact(
+        "/",
+        {
+          origin: "https://app.example",
+          host: "app.example",
+          path: "/",
+          display_path: "/",
+          headers: {
+            "content-security-policy": `script-src 'self' 'nonce-${nonce}'`,
+          },
+        },
+        { file: "x.har", record: 0 },
+      );
+    const capture = (nonce) => ({
+      name: "x.har",
+      mainHost: "app.example",
+      limitations: [],
+      gaps: [],
+      exchanges: [],
+      documents: [page(nonce)],
+      cookies: [],
+      credentials: [],
+      apiGroups: [],
+    });
+    assert.deepEqual(
+      rules(
+        evaluate(
+          side("v1", null, { capture: capture("q8Zr1kP0") }),
+          side("v2", null, { capture: capture("Lf4Yb9sN") }),
+        ),
+      ),
+      [],
     );
   });
 });

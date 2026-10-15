@@ -92,6 +92,8 @@ const FAMILIES = [
     coverage: "semantic",
     moduleKeyed: true,
     countable: true,
+    // Same count with a different command is a change, not an unchanged key.
+    equal: sameValues("command"),
   },
   { family: "timers", coverage: "semantic", moduleKeyed: true },
   { family: "configReads", coverage: "semantic" },
@@ -137,10 +139,22 @@ const HASHED_NAME = [
 const withoutHash = (modulePath) =>
   HASHED_NAME.reduce((name, pattern) => name.replace(pattern, ""), modulePath);
 
+/** True for the file names REA analyzes as JavaScript or TypeScript modules. */
+export const isScriptPath = (modulePath) =>
+  /\.(m?js|cjs|jsx|ts|mts|cts|tsx)$/.test(modulePath);
+
 const scriptPaths = (app) =>
-  app.assets
-    .map((asset) => asset.key)
-    .filter((key) => /\.(m?js|cjs|ts|mts)$/.test(key));
+  app.assets.map((asset) => asset.key).filter(isScriptPath);
+
+// Scripts an HTML page loads directly, as module paths.
+const htmlLoaded = (app) =>
+  new Set(
+    (app.pageScripts ?? []).map((script) =>
+      String(script.data.script_path)
+        .trim()
+        .replace(/^\.?\//, ""),
+    ),
+  );
 
 /**
  * Map old module paths to new ones: REA's own pairing of changed assets
@@ -165,14 +179,45 @@ export const moduleAliases = (leftApp, rightApp, reaPairs = []) => {
   };
   const leftNames = byBareName(leftPaths);
   const rightNames = byBareName(rightPaths);
+  const pair = (leftPath, rightPath, basis) => {
+    if (!leftPath || !rightPath || leftPath === rightPath) return;
+    if (aliases.has(leftPath) || rightPaths.has(leftPath)) return;
+    aliases.set(leftPath, { path: rightPath, basis });
+  };
+  for (const [bare, leftPath] of leftNames)
+    pair(
+      leftPath,
+      rightNames.get(bare),
+      "same bundle name without content hash",
+    );
+  // Several bundles sharing a hash-free name (a Vite entry and a lazy chunk
+  // both named index-*.js) pair by role: the one an HTML page loads, and the
+  // one it does not, when each role has one bundle on each side.
+  const leftHtml = htmlLoaded(leftApp);
+  const rightHtml = htmlLoaded(rightApp);
+  const unpaired = (paths, taken) =>
+    paths.filter((modulePath) => !taken.has(modulePath));
+  const pairedRight = new Set([...aliases.values()].map((alias) => alias.path));
   for (const [bare, leftPath] of leftNames) {
-    const rightPath = rightNames.get(bare);
-    if (!leftPath || !rightPath || leftPath === rightPath) continue;
-    if (aliases.has(leftPath) || rightPaths.has(leftPath)) continue;
-    aliases.set(leftPath, {
-      path: rightPath,
-      basis: "same bundle name without content hash",
-    });
+    if (leftPath !== null || rightNames.get(bare) !== null) continue;
+    const before = unpaired(
+      leftPaths.filter((path) => withoutHash(path) === bare),
+      aliases,
+    );
+    const after = unpaired(
+      [...rightPaths].filter((path) => withoutHash(path) === bare),
+      pairedRight,
+    );
+    for (const loaded of [true, false]) {
+      const left = before.filter((path) => leftHtml.has(path) === loaded);
+      const right = after.filter((path) => rightHtml.has(path) === loaded);
+      if (left.length === 1 && right.length === 1)
+        pair(
+          left[0],
+          right[0],
+          `same bundle name and role (${loaded ? "loaded by HTML" : "imported"}) without content hash`,
+        );
+    }
   }
   return aliases;
 };

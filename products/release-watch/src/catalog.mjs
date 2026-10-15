@@ -214,3 +214,34 @@ export const HTML_SINKS = new Set([
   "read:/write",
   "read:/writeln",
 ]);
+
+// Hosts whose URLs in code name XML namespaces and schemas, not destinations.
+const NAMESPACE_HOSTS = new Set([
+  "www.w3.org",
+  "schemas.openxmlformats.org",
+  "schemas.microsoft.com",
+  "ns.adobe.com",
+  "purl.org",
+  "xmlns.com",
+]);
+
+/** True when a host's URLs are identifiers, such as the SVG namespace, rather than places code sends data. */
+export const isNamespaceHost = (host) => NAMESPACE_HOSTS.has(host);
+
+// HTTP client packages whose requests REA's request extraction may not
+// model. Release Watch only notes that they are imported.
+const HTTP_CLIENTS = new Set([
+  "axios",
+  "got",
+  "node-fetch",
+  "undici",
+  "superagent",
+  "ky",
+  "request",
+  "needle",
+  "ofetch",
+  "cross-fetch",
+]);
+
+/** True when a package name is an HTTP client library. */
+export const isHttpClient = (name) => HTTP_CLIENTS.has(name);

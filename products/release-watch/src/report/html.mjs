@@ -234,6 +234,10 @@ const coverageSection = (model) => {
       : []),
   ]);
   const limitations = model.components.flatMap((component) => [
+    ...component.coverage.rea_comparison_limitations.map((note) => [
+      `${component.name} REA module pairing`,
+      note,
+    ]),
     ...scoped(component, component.right, component.coverage.right.limitations),
     ...scoped(component, component.left, component.coverage.left.limitations),
   ]);
@@ -262,12 +266,12 @@ const evidenceRows = (component) => {
         side.application.evidence_id,
         side.application.evidence_file ?? "—",
       ]);
-    if (side.runtime)
+    for (const runtime of side.runtimes)
       rows.push([
-        `${name} ${side.runtime.name} fuses`,
-        short(side.runtime.sha256),
-        side.runtime.evidence_id,
-        side.runtime.evidence_file,
+        `${name} ${runtime.name} fuses`,
+        short(runtime.sha256),
+        runtime.evidence_id,
+        runtime.evidence_file,
       ]);
     for (const helper of side.helpers)
       if (helper.evidence_id)

@@ -10,10 +10,12 @@ import {
 } from "../catalog.mjs";
 import { scrubText } from "../redact.mjs";
 import { sdkUses } from "../surfaces.mjs";
-import { hostOf } from "../urls.mjs";
+import { hostOf, maskTag } from "../urls.mjs";
 import {
   absenceUnknowns,
+  browserHosts,
   hostAbsence,
+  sourceModule,
   sourceEvidence,
   sourceUnknowns,
 } from "./network.mjs";
@@ -22,7 +24,7 @@ import {
   absencePhrase,
   cite,
   heuristic,
-  newFacts,
+  newGroups,
   packResult,
 } from "./shared.mjs";
 
@@ -30,29 +32,35 @@ const BROWSER_CODE = heuristic(
   "Release Watch treats scripts an HTML page or service worker loads, and the modules they import, as browser code",
 );
 
-const moduleOfSource = (source) =>
-  source.request?.data.module ?? source.fact?.data?.module ?? null;
-
+/**
+ * RW-A01: an AI provider host the old release never contacted, or one only
+ * its server code contacted that browser code now calls directly.
+ */
 const providerFindings = (context) => {
   const { right, labels, network } = context;
   const findings = [];
   const hosts = [];
-  for (const [host, sources] of network.fresh) {
+  const oldBrowser = browserHosts(context.left);
+  for (const [host, sources] of network.current) {
     const provider = aiProviderOf(host);
     if (provider === null) continue;
-    hosts.push(host);
     const seenInBrowser = sources.some((source) => source.kind === "capture");
     const browserModule = sources.some((source) =>
-      right.app?.browserModules.has(moduleOfSource(source)),
+      right.app?.browserModules.has(sourceModule(source)),
     );
     const fromBrowser = seenInBrowser || browserModule;
+    const fresh = network.fresh.has(host);
+    if (!fresh && !(fromBrowser && !oldBrowser.has(host))) continue;
+    hosts.push(host);
     findings.push({
       rule: "RW-A01",
       severity: "high",
       title: fromBrowser
         ? `Browser code calls ${provider} directly (${host})`
         : `New AI provider receives data: ${provider} (${host})`,
-      summary: `${labels.right} sends requests to ${provider}; ${host} was ${hostAbsence(context)}.`,
+      summary: fresh
+        ? `${labels.right} sends requests to ${provider}; ${host} was ${hostAbsence(context)}.`
+        : `${labels.right} calls ${provider} from browser code; ${labels.left} contacted ${host} only from code that does not run in the browser.`,
       why: fromBrowser
         ? `Prompts and user data now go to ${provider} straight from users' browsers. A browser cannot authenticate to ${provider} without a credential anyone can read, unless the vendor issues short-lived tokens.`
         : `Prompts and user data now go to ${provider}. That is a new processor for privacy, contract and AI-governance reviews.`,
@@ -66,7 +74,7 @@ const providerFindings = (context) => {
       unknowns: [
         ...sourceUnknowns(sources),
         "Release Watch does not see what the requests contain.",
-        ...absenceUnknowns(context),
+        ...(fresh ? absenceUnknowns(context) : []),
       ],
     });
   }
@@ -80,37 +88,73 @@ const credentialTokens = (value) => {
   return whole ? [{ value, ...whole }] : credentialsIn(value);
 };
 
-// Every literal on the new side is checked, not only new or changed keys, so
-// a key added to an existing variable or embedded in a longer string is
-// found. A token already present on the old side is not reported.
+// Strings that can hold a key, with the fact that locates each: string
+// literals and the URLs REA resolved for requests (a key in a query string).
+const keyCarriers = (app) => [
+  ...(app?.stringLiterals ?? []).map((fact) => ({
+    fact,
+    value: fact.data.value,
+    module: fact.data.module,
+    binding: fact.data.binding,
+  })),
+  ...(app?.endpoints ?? []).map((fact) => ({
+    fact,
+    value: fact.data.value,
+    module: fact.location?.file ?? null,
+    binding: null,
+  })),
+];
+
+const tokensOf = (carriers, keep = () => true) =>
+  new Set(
+    carriers
+      .filter(keep)
+      .flatMap((carrier) =>
+        credentialTokens(carrier.value).map((token) => token.value),
+      ),
+  );
+
+/**
+ * RW-A02. Every new-side string is checked, not only new or changed keys, so
+ * a key added to an existing variable or embedded in a longer string is
+ * found. A key the old release already shipped is reported again only when
+ * it moved into browser code.
+ */
 const credentialFindings = (context) => {
   const { left, right, labels } = context;
   if (!right.app) return [];
-  const before = new Set(
-    (left.app?.stringLiterals ?? []).flatMap((fact) =>
-      credentialTokens(fact.data.value).map((token) => token.value),
-    ),
+  const oldCarriers = keyCarriers(left.app);
+  const before = tokensOf(oldCarriers);
+  const beforeInBrowser = tokensOf(oldCarriers, (carrier) =>
+    left.app?.browserModules.has(carrier.module),
   );
   const seen = new Set();
-  return right.app.stringLiterals.flatMap((fact) =>
-    credentialTokens(fact.data.value)
-      .filter((token) => !before.has(token.value))
+  return keyCarriers(right.app).flatMap((carrier) => {
+    const inBrowser = right.app.browserModules.has(carrier.module);
+    return credentialTokens(carrier.value)
+      .filter(
+        (token) =>
+          !before.has(token.value) ||
+          (inBrowser && !beforeInBrowser.has(token.value)),
+      )
       .filter((token) => {
-        const identity = `${fact.data.module}\u0000${token.value}`;
+        const identity = `${carrier.module}\u0000${token.value}`;
         if (seen.has(identity)) return false;
         seen.add(identity);
         return true;
       })
       .map((token) => {
-        const inBrowser = right.app.browserModules.has(fact.data.module);
-        const binding = fact.data.binding
-          ? ` assigned to ${fact.data.binding}`
+        const moved = before.has(token.value);
+        const binding = carrier.binding
+          ? ` assigned to ${carrier.binding}`
           : "";
         return {
           rule: "RW-A02",
           severity: inBrowser ? "critical" : "high",
-          title: `${token.kind} shipped in ${inBrowser ? "browser code" : "code"}: ${fact.data.module}`,
-          summary: `${labels.right} contains a string with the format of a ${token.kind}${binding}.`,
+          title: `${token.kind} ${moved ? "moved into" : "shipped in"} ${inBrowser ? "browser code" : "code"}: ${carrier.module}`,
+          summary: moved
+            ? `${labels.right} ships a ${token.kind} in browser code that ${labels.left} kept in code that does not run in the browser.`
+            : `${labels.right} contains a string with the format of a ${token.kind}${binding}.`,
           why: inBrowser
             ? "Anyone who opens the site can read this key and use the account it belongs to."
             : "Keys in shipped code leak through packages, logs and support bundles; they belong in a secret store.",
@@ -118,19 +162,20 @@ const credentialFindings = (context) => {
             "Revoke the key now, move the call behind a server, and review the key's usage logs.",
           evidence: [
             cite(
-              `${token.kind} ${token.masked}${binding} (not in any string REA reported for ${labels.left})`,
-              fact,
+              `${token.kind} ${token.masked}${binding} (${moved ? `also in ${labels.left}, outside browser code` : `not in any string REA reported for ${labels.left}`})`,
+              carrier.fact,
               APP_SOURCE,
             ),
             ...(inBrowser ? [BROWSER_CODE] : []),
           ],
           unknowns: [
             "Release Watch matched a documented key format; it cannot tell whether the key is live.",
+            "REA reports strings assigned to variables and URLs it resolved; a key written inline in a call or header is not seen.",
             "The raw value remains in the saved REA Evidence under evidence/; treat that directory as sensitive.",
           ],
         };
-      }),
-  );
+      });
+  });
 };
 
 const statusesOf = (items) =>
@@ -190,16 +235,27 @@ const aiModules = (app) => {
   return modules;
 };
 
+// Prose: several words, not a URL, no key-shaped token, and not an
+// authorization value such as "Bearer <token>".
 const isProse = (value) =>
   value.length >= 40 &&
-  /\s/.test(value) &&
+  value.trim().split(/\s+/).length >= 5 &&
   !/^[a-z]+:\/\//i.test(value) &&
+  !/^\s*(Bearer|Basic|Token)\s/i.test(value) &&
+  credentialsIn(value).length === 0 &&
   credentialOf(value) === null;
+
+// Long letter-and-digit runs inside prose are masked in previews.
+const TOKEN_WORD =
+  /(?=[A-Za-z0-9_\-+/=.]*\d)(?=[A-Za-z0-9_\-+/=.]*[A-Za-z])[A-Za-z0-9_\-+/=.]{20,}/g;
 
 const digest = (value) =>
   createHash("sha256").update(value).digest("hex").slice(0, 12);
 const preview = (value) => {
-  const flat = scrubText(value).replace(/\s+/g, " ").trim();
+  const flat = scrubText(value)
+    .replace(TOKEN_WORD, (word) => maskTag(word))
+    .replace(/\s+/g, " ")
+    .trim();
   return flat.length > 90 ? `${flat.slice(0, 90)}…` : flat;
 };
 const describe = (label, value) =>
@@ -246,9 +302,10 @@ const promptFindings = (context) => {
 const htmlSinkFindings = (context) => {
   const { right, labels, surfaces } = context;
   if (!right.app || !surfaces.includes("ai")) return [];
-  return newFacts(context.diff.app.htmlSinks)
-    .filter(({ fact }) => right.app.browserModules.has(fact.data.module))
-    .flatMap(({ fact, status, counts }) => {
+  return newGroups(context.diff.app.htmlSinks)
+    .filter((group) => right.app.browserModules.has(group.facts[0].data.module))
+    .flatMap((group) => {
+      const [fact] = group.facts;
       const request = right.app.requests.find(
         (candidate) => candidate.data.module === fact.data.module,
       );
@@ -259,15 +316,13 @@ const htmlSinkFindings = (context) => {
           rule: "RW-A05",
           severity: "medium",
           title: `Model output may be rendered as HTML in ${fact.data.module}`,
-          summary: `A new ${property} sink sits in browser code that also fetches data, in a component that calls AI models.`,
+          summary: `A new ${property} sink sits in browser code that also fetches data, in a component that calls AI models (${absencePhrase(group.status, labels.left, group.counts)}).`,
           why: "Model output is untrusted: a prompt-injected answer rendered as HTML runs script in the user's session.",
           recommendation:
             "Render model output as text, or sanitize it with an allow-list sanitizer before inserting HTML.",
           evidence: [
-            cite(
-              `${property} assignment or call (${absencePhrase(status, labels.left, counts)})`,
-              fact,
-              APP_SOURCE,
+            ...group.facts.map((site) =>
+              cite(`${property} assignment or call`, site, APP_SOURCE),
             ),
             cite(
               `${request.data.method}() request in the same module`,

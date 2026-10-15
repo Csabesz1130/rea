@@ -2,6 +2,7 @@
 // capture) and its `api-surface` analysis view into runtime facts. Values come
 // from REA's retained records; this module reads no capture file itself.
 import { isCredentialHeader, isCredentialQuery } from "../catalog.mjs";
+import { displayPath } from "../urls.mjs";
 
 const parseUrl = (value) => {
   try {
@@ -99,7 +100,7 @@ const cookiesOf = (capture, record, url) =>
   (record.reported.response?.cookies ?? [])
     .filter((cookie) => typeof cookie.name === "string")
     .map((cookie) =>
-      recordFact(capture, record, cookie.name, {
+      recordFact(capture, record, `${url.hostname}#${cookie.name}`, {
         host: url.hostname,
         name: cookie.name,
         http_only: cookie.httpOnly === true,
@@ -123,6 +124,7 @@ const documentFact = (capture, record, url) =>
     origin: url.origin,
     host: url.hostname,
     path: url.pathname,
+    display_path: displayPath(url.pathname),
     headers: headerMap(record.reported.response?.headers),
   });
 
@@ -181,26 +183,34 @@ export const captureFacts = (evidence, apiSurface, name) => {
     cookies: [],
     credentials: [],
     apiGroups: [],
-    // The host of the first page the browser loaded: the deployment itself.
+    // The host the session started on: the deployment itself, even when it
+    // redirects to a sign-in provider first.
     mainHost: null,
+    // What Release Watch itself could not examine in this capture.
+    gaps: [],
   };
   for (const record of result.records ?? []) {
     const url = parseUrl(record.reported?.request?.url);
     if (url === null) continue;
     facts.exchanges.push(exchangeFact(capture, record, url));
-    if (isDocument(record)) {
+    facts.mainHost ??= url.hostname;
+    if (isDocument(record))
       facts.documents.push(documentFact(capture, record, url));
-      facts.mainHost ??= url.hostname;
-    }
     facts.cookies.push(...cookiesOf(capture, record, url));
     facts.credentials.push(...credentialsOf(capture, record, url));
   }
-  // Pages of the deployment pair by path, so a staging host can be compared
-  // with production; pages of other hosts (iframes, sign-in) keep their host.
+  // Pages and cookies of the deployment pair by path and name, so a staging
+  // host can be compared with production; those of other hosts (iframes,
+  // sign-in, third parties) keep their host.
   for (const document of facts.documents)
     if (document.data.host !== facts.mainHost) {
       document.key = `${document.data.host}${document.data.path}`;
       document.label = document.key;
+    }
+  for (const cookie of facts.cookies)
+    if (cookie.data.host === facts.mainHost) {
+      cookie.key = cookie.data.name;
+      cookie.label = cookie.key;
     }
   if (apiSurface)
     for (const group of apiSurface.normalized_result?.groups ?? [])

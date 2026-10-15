@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -180,6 +181,50 @@ describe("compare: web and API release with captures", { skip }, () => {
       "REA exact-module-source-digest",
       "same bundle name without content hash",
     ]);
+  });
+});
+
+describe("compare: a renamed component", { skip }, () => {
+  let renamed;
+  before(() => {
+    const copy = mkdtempSync(path.join(tmpdir(), "release-watch-rename-"));
+    cpSync(path.join(fixtures, "acme-notes-cloud-2.4.0"), copy, {
+      recursive: true,
+    });
+    const manifest = JSON.parse(
+      readFileSync(path.join(copy, "release-watch.json"), "utf8"),
+    );
+    manifest.components[0].name = "frontend";
+    writeFileSync(
+      path.join(copy, "release-watch.json"),
+      JSON.stringify(manifest),
+    );
+    renamed = {
+      ...run(path.join(fixtures, "acme-notes-cloud-2.3.0"), copy),
+      copy,
+    };
+  });
+  after(() => {
+    rmSync(renamed.out, { recursive: true, force: true });
+    rmSync(renamed.copy, { recursive: true, force: true });
+  });
+
+  it("pairs it with its old name and still compares its captures", () => {
+    assert.equal(renamed.result.status, 2, renamed.result.stderr);
+    assert.deepEqual(
+      renamed.report.components.map((component) => [
+        component.name,
+        component.renamed,
+      ]),
+      [
+        ["web-to-frontend", { from: "web", to: "frontend" }],
+        ["api", null],
+      ],
+    );
+    const rules = renamed.report.findings.map((finding) => finding.rule);
+    for (const rule of ["RW-H02", "RW-H03", "RW-H04", "RW-A02"])
+      assert.ok(rules.includes(rule), rule);
+    assert.ok(!rules.includes("RW-C02"));
   });
 });
 

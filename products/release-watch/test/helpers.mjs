@@ -1,5 +1,6 @@
 // Synthetic REA facts and a one-component policy run for rule tests.
-import { diffApplications, diffCaptures, diffFuses } from "../src/diff.mjs";
+import { pairHelpers, pairRuntimes } from "../src/compare.mjs";
+import { diffApplications, diffCaptures } from "../src/diff.mjs";
 import { evaluateComponent } from "../src/policy.mjs";
 
 export const at = (file, line, column = 0) => ({ file, line, column });
@@ -53,6 +54,7 @@ export const app = (overrides = {}) => ({
   stringLiterals: [],
   urlLiterals: [],
   bindingReads: [],
+  bindingDefinitions: [],
   htmlSinks: [],
   memberCalls: [],
   dynamicEvaluation: [],
@@ -64,7 +66,8 @@ export const side = (label, application, extra = {}) => ({
   label,
   target: { root: `/releases/${label}`, kind: "js-app" },
   app: application,
-  runtime: null,
+  runtimes: [],
+  runtimeStatus: { candidates: 0, failures: [] },
   helpers: [],
   capture: null,
   ...extra,
@@ -96,11 +99,8 @@ export const evaluate = (
     options: { vendorDomains: [], failOn: "high", ...options },
     diff: {
       app: diffApplications(left.app, right.app, aliases),
-      fuses: diffFuses(
-        left.runtime?.fuses ?? null,
-        right.runtime?.fuses ?? null,
-      ),
-      helpers,
+      runtimes: pairRuntimes(left, right),
+      helpers: helpers.length > 0 ? helpers : pairHelpers(left, right),
       capture: diffCaptures(left.capture, right.capture),
     },
   }).findings;

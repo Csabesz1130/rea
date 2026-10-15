@@ -11,9 +11,11 @@ import {
   sdkOf,
 } from "../catalog.mjs";
 import { scrubDeep } from "../redact.mjs";
+import { RELEASE_WATCH_LIMITS, coverageOf } from "./coverage.mjs";
+import { displaySetting } from "../rules/go.mjs";
 import { headerChanges } from "../rules/runtime.mjs";
 import { sdkUses } from "../surfaces.mjs";
-import { displayUrl } from "../urls.mjs";
+import { displayScript } from "../urls.mjs";
 
 const STATUS = {
   added: "added",
@@ -38,23 +40,34 @@ const section = (id, title, headers, rows) => ({
 });
 const noted = (note, entry) => ({ ...entry, note });
 
-const electronSections = ({ left, right, diff }) => {
-  const before = left.runtime?.fuses?.fuses ?? {};
-  const after = right.runtime?.fuses?.fuses ?? {};
-  const names = [...new Set([...Object.keys(before), ...Object.keys(after)])];
-  return [
-    section(
-      "fuses",
-      "Electron fuses",
-      ["Fuse", left.label, right.label],
-      names.map((name) => [
-        name,
+const fuseRows = ({ diff }) =>
+  diff.runtimes.flatMap((pair) => {
+    const before = pair.before?.fuses?.fuses ?? {};
+    const after = pair.after?.fuses?.fuses ?? {};
+    const prefix =
+      diff.runtimes.length > 1 || !pair.matched
+        ? `${pair.after?.name ?? pair.name}: `
+        : "";
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])].map(
+      (name) => [
+        `${prefix}${name}`,
         before[name] ?? "unknown",
         {
           text: after[name] ?? "unknown",
           flag: (before[name] ?? "unknown") !== (after[name] ?? "unknown"),
         },
-      ]),
+      ],
+    );
+  });
+
+const electronSections = (component) => {
+  const { left, right, diff } = component;
+  return [
+    section(
+      "fuses",
+      "Electron fuses",
+      ["Fuse", left.label, right.label],
+      fuseRows(component),
     ),
     section(
       "bridge",
@@ -69,8 +82,7 @@ const electronSections = ({ left, right, diff }) => {
   ];
 };
 
-const scriptUrl = (script) =>
-  displayUrl(script.startsWith("//") ? `https:${script}` : script);
+const scriptUrl = (script) => displayScript(script);
 
 const webSections = ({ diff }) => [
   section(
@@ -192,14 +204,15 @@ const runtimeSections = (component) => {
   const headerRows = capture.documents
     .filter((item) => item.left.length > 0 && item.right.length > 0)
     .flatMap((item) =>
-      headerChanges(item.left[0].data.headers, item.right[0].data.headers).map(
-        (change) => [
-          item.key,
-          change.name,
-          change.was,
-          { text: change.now ?? "(not sent)", flag: true },
-        ],
-      ),
+      headerChanges(
+        item.left[0].data.headers,
+        item.right.map((load) => load.data.headers),
+      ).map((change) => [
+        item.right[0].data.display_path ?? item.key,
+        change.name,
+        change.was,
+        { text: change.now ?? "(not sent)", flag: true },
+      ]),
     );
   return [
     noted(
@@ -285,9 +298,7 @@ const helperRows = ({ diff }) =>
       helper.relative,
       setting.key,
       "changed",
-      setting.key === "-ldflags"
-        ? "linker flags changed; see findings"
-        : `${setting.before ?? "—"} → ${setting.after ?? "—"}`,
+      `${displaySetting(setting.key, setting.before)} → ${displaySetting(setting.key, setting.after)}`,
     ]),
   ]);
 
@@ -370,75 +381,11 @@ export const componentSections = (component) => {
   ].filter((entry) => entry.rows.length > 0);
 };
 
-// What Release Watch itself never examines; true of every run.
-const RELEASE_WATCH_LIMITS = [
-  "Release Watch compares REA facts. It does not execute either release during comparison; captures come from a browser session recorded separately.",
-  '"New" means REA saw it only in the new release; REA\'s coverage of the old release does not prove it was absent.',
-  "Rules recognise known patterns. A pass means no rule matched in the examined code, not that the release is safe.",
-];
-
-const COMPARISON_NOTES = {
-  disabled:
-    "REA module pairing was turned off (--rea-compare never); renamed modules are paired by name only.",
-  "no-renames": null,
-  size: "REA module pairing was skipped because the Evidence is larger than 64 MB; renamed modules are paired by name only.",
-};
-
-// Specific gaps in what REA examined on one side, then REA's standing
-// limitations for the operations that ran.
-const sideCoverage = (side) => {
-  const gaps = [];
-  const limitations = [];
-  const app = side.app;
-  if (app) {
-    const { coverage } = app;
-    if (coverage.graph !== "complete")
-      gaps.push(`Application graph coverage: ${coverage.graph}.`);
-    if (coverage.semantic === "unavailable")
-      gaps.push(
-        "No semantic graph: requests, processes and literals were not examined.",
-      );
-    if (coverage.semantic_truncated)
-      gaps.push(
-        `Semantic graph truncated${coverage.semantic_limits.length ? ` (limits: ${coverage.semantic_limits.join(", ")})` : ""}.`,
-      );
-    if (coverage.semantic_ceiling_modules.length > 0)
-      gaps.push(
-        `Files at the per-file node ceiling: ${coverage.semantic_ceiling_modules.join(", ")}.`,
-      );
-    if (app.analysisFailures.length > 0)
-      gaps.push(
-        `REA could not analyze ${app.analysisFailures.length} file(s).`,
-      );
-    limitations.push(...app.limitations);
-  }
-  if (side.runtime?.fuses?.ambiguous)
-    gaps.push(
-      `${side.runtime.name}: several fuse wires, so no fuse state is established.`,
-    );
-  for (const helper of side.helpers)
-    if (helper.identified !== "go")
-      gaps.push(
-        `${helper.relative}: no Go build information (${helper.identified}).`,
-      );
-  if (side.capture) limitations.push(...side.capture.limitations);
-  if (side.runtime?.fuses) limitations.push(...side.runtime.fuses.limitations);
-  return { gaps: [...new Set(gaps)], limitations: [...new Set(limitations)] };
-};
-
-const coverageOf = (component) => ({
-  left: sideCoverage(component.left),
-  right: sideCoverage(component.right),
-  comparison: component.comparison?.error
-    ? `REA module pairing failed: ${component.comparison.error.message}`
-    : (COMPARISON_NOTES[component.comparison?.skipped] ?? null),
-  rea_comparison_limitations: component.comparison?.limitations ?? [],
-});
-
 const sideSummary = (side) => ({
   label: side.label,
   input: side.target?.root ?? null,
   kind: side.target?.kind ?? "missing",
+  present: side.target !== null,
   package: side.app?.package ?? null,
   surfaces: side.surfaces,
   application: side.app
@@ -452,16 +399,14 @@ const sideSummary = (side) => ({
         analysis_failures: side.app.analysisFailures.length,
       }
     : null,
-  runtime: side.runtime
-    ? {
-        name: side.runtime.name,
-        sha256: side.runtime.fuses.sha256,
-        evidence_id: side.runtime.fuses.evidence_id,
-        evidence_file: side.runtime.file,
-        ambiguous: side.runtime.fuses.ambiguous,
-        fuses: side.runtime.fuses.fuses,
-      }
-    : null,
+  runtimes: side.runtimes.map((runtime) => ({
+    name: runtime.name,
+    sha256: runtime.fuses.sha256,
+    evidence_id: runtime.fuses.evidence_id,
+    evidence_file: runtime.file,
+    ambiguous: runtime.fuses.ambiguous,
+    fuses: runtime.fuses.fuses,
+  })),
   helpers: side.helpers.map((helper) => ({
     relative: helper.relative,
     identified: helper.identified,
@@ -490,6 +435,7 @@ export const reportJson = (report) =>
     verdict: report.verdict,
     components: report.components.map((component) => ({
       name: component.name,
+      renamed: component.renamed ?? null,
       surfaces: component.surfaces,
       left: sideSummary(component.left),
       right: sideSummary(component.right),

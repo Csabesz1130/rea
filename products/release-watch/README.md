@@ -61,8 +61,10 @@ inside the release directory. For a single component, `--old-capture` and
 The command writes `report.html`, `report.md` (for CI and pull-request
 comments), `report.json`, and every REA Evidence record it used under
 `evidence/`. Exit status is `2` when a finding reaches `--fail-on` (default
-`high`), `1` when a component could not be analyzed and nothing reached the
-threshold, and `0` otherwise, so a CI job can gate the rollout.
+`high`); `1` when REA produced no facts at all for a component and no finding
+reached the threshold; and `0` otherwise, so a CI job can gate the rollout.
+Code REA examined only in part is not an error: it is reported as RW-C01,
+high when the unexamined code changed.
 
 | Option                                                                               | Effect                                                                                                                |
 | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
@@ -70,6 +72,7 @@ threshold, and `0` otherwise, so a CI job can gate the rollout.
 | `--fail-on <severity>`                                                               | `critical`, `high`, `medium`, `low` or `never`                                                                        |
 | `--rea-compare <auto\|always\|never>`                                                | When to ask REA to pair renamed modules; `auto` skips it when no file could be a rename or the Evidence exceeds 64 MB |
 | `--max-semantic-nodes <n>`, `--max-semantic-nodes-per-file <n>`, `--max-heap-mb <n>` | Passed to REA's JavaScript analysis when large bundles are truncated                                                  |
+| `--jobs <1\|2>`                                                                      | Analyze the two sides together (2, the default) or one at a time (1), which halves peak memory                        |
 | `--rea <path>`                                                                       | REA CLI to use (default: this checkout, then `rea` on `PATH`)                                                         |
 
 ### Recording a capture
@@ -146,39 +149,40 @@ which site is new.
 
 ## Findings
 
-| Rule   | Severity        | Trigger                                                                                                  |
-| ------ | --------------- | -------------------------------------------------------------------------------------------------------- |
-| RW-E01 | critical        | A new renderer API whose IPC handler reads a binding imported from a module with new process execution   |
-| RW-E02 | high / medium   | A `webPreferences` safeguard set to its unsafe value (high) or to a dynamic value (medium) in any window |
-| RW-E03 | high / medium   | A hardening fuse REA read as moved to its unsafe state                                                   |
-| RW-E04 | low             | A new renderer API                                                                                       |
-| RW-M01 | critical        | An MCP tool registration that reaches a process-execution site it did not reach before                   |
-| RW-M02 | medium          | More MCP tool registrations in a module of an MCP server                                                 |
-| RW-A01 | high            | A new AI provider host, titled "browser code" when browser code or a capture contacts it                 |
-| RW-A02 | critical / high | A credential-format string not shipped before, critical in browser code                                  |
-| RW-A03 | medium / low    | A new MCP server SDK (medium) or AI SDK (low)                                                            |
-| RW-A04 | low             | Changed prose assigned to a variable in AI code                                                          |
-| RW-A05 | medium          | A new HTML sink in browser code that fetches, in a component with an AI surface                          |
-| RW-W01 | high / medium   | A new third-party `<script src>` host                                                                    |
-| RW-W02 | medium          | A new service worker                                                                                     |
-| RW-W03 | low             | Source maps with original sources, when the old release shipped none                                     |
-| RW-W04 | low             | New direct `eval`                                                                                        |
-| RW-H02 | high / medium   | A security header the old capture sent is removed or changed                                             |
-| RW-H03 | critical / high | The browser sends a credential to another party, critical for an AI provider                             |
-| RW-H04 | medium          | A cookie's weakest `Set-Cookie` lost `HttpOnly`, `Secure` or `SameSite` strength                         |
-| RW-N01 | high / low      | A new destination host, third party (high) or vendor or deployment host (low)                            |
-| RW-N02 | medium          | More request sites without a known destination                                                           |
-| RW-N03 | medium          | A host now reached over `http://` or `ws://` that was reached only encrypted before                      |
-| RW-P01 | high            | Process execution no other rule explains                                                                 |
-| RW-G01 | high            | A Go helper's `-ldflags` sets a URL on a new third-party host                                            |
-| RW-G02 | medium          | A new Go module dependency, noting a missing checksum                                                    |
-| RW-G03 | low             | A Go helper lost `-trimpath`                                                                             |
-| RW-G04 | medium          | A new helper executable                                                                                  |
-| RW-D01 | low             | New third-party packages imported, one finding per component                                             |
-| RW-C01 | medium          | REA examined only part of the new release (truncated graph, failed files)                                |
-| RW-C02 | low             | A component, capture or module pairing available on one side only                                        |
-| RW-C03 | medium          | The old release's fuses were readable and the new release's are not                                      |
-| RW-C04 | medium          | A helper REA identified before is not identified now                                                     |
+| Rule   | Severity        | Trigger                                                                                                                              |
+| ------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| RW-E01 | critical        | A new renderer API whose IPC handler reads a binding imported from a module with new process execution                               |
+| RW-E02 | high / medium   | More windows in a file set a `webPreferences` safeguard to its unsafe (high) or a dynamic (medium) value                             |
+| RW-E03 | high / medium   | A hardening fuse REA read as unsafe in any executable; medium when its old state was not established                                 |
+| RW-E04 | low             | A new renderer API                                                                                                                   |
+| RW-M01 | critical        | An MCP tool registration that reaches more process execution of a kind than before, inline, imported or through a same-module helper |
+| RW-M02 | medium          | More MCP tool registration calls across an MCP server component                                                                      |
+| RW-A01 | high            | A new AI provider host, or one that browser code now calls when only server code did                                                 |
+| RW-A02 | critical / high | A credential-format string not shipped before, or one moved into browser code; critical in browser code                              |
+| RW-A03 | medium / low    | A new MCP server SDK (medium) or AI SDK (low)                                                                                        |
+| RW-A04 | low             | Changed prose assigned to a variable in AI code                                                                                      |
+| RW-A05 | medium          | A new HTML sink in browser code that fetches, in a component with an AI surface                                                      |
+| RW-W01 | high / medium   | A new third-party `<script src>` host                                                                                                |
+| RW-W02 | medium          | A new service worker                                                                                                                 |
+| RW-W03 | low             | Source maps with original sources, when the old release shipped none                                                                 |
+| RW-W04 | low             | New direct `eval`                                                                                                                    |
+| RW-H02 | high / medium   | A security header the old capture sent is removed or changed                                                                         |
+| RW-H03 | critical / high | The browser sends a credential to another party, critical for an AI provider                                                         |
+| RW-H04 | medium          | A cookie's weakest `Set-Cookie` lost `HttpOnly`, `Secure` or `SameSite` strength                                                     |
+| RW-N01 | high / low      | A new destination host, third party (high) or vendor or deployment host (low)                                                        |
+| RW-N02 | medium          | More request sites without a known destination                                                                                       |
+| RW-N03 | medium          | A host now reached over `http://` or `ws://` that was reached only encrypted before                                                  |
+| RW-P01 | high / low      | New process execution or a changed command (high); a site that moved with the same command (low)                                     |
+| RW-G01 | high            | A Go helper's `-ldflags` sets a URL on a new third-party host, also for a new or newly identified helper                             |
+| RW-G02 | medium          | A new Go module dependency, noting a missing checksum                                                                                |
+| RW-G03 | low             | A Go helper lost `-trimpath`                                                                                                         |
+| RW-G04 | medium          | A new helper executable                                                                                                              |
+| RW-D01 | low             | New third-party packages imported, one finding per component                                                                         |
+| RW-C01 | high / medium   | REA examined only part of the new release (truncation, files at the node ceiling, failed files); high when that code changed         |
+| RW-C02 | low             | A component, capture or module pairing available on one side only                                                                    |
+| RW-C03 | medium          | The old release's fuses were readable and the new release's are not                                                                  |
+| RW-C04 | medium          | A helper REA identified before is not identified now                                                                                 |
+| RW-C05 | low             | Modules import an HTTP client library and REA recognised no request site in them                                                     |
 
 Coverage findings exist because a rule that found nothing only means
 something for code REA examined; a truncated analysis is reviewed rather than
@@ -196,14 +200,22 @@ passed.
   loads it, an omitted `webPreferences` option relying on Electron's default.
 - A capture records one session. It does not show which code sent a request
   or what other paths contact.
+- REA reports strings assigned to variables and URLs it resolved. A key
+  written inline in a call or a header is not seen by RW-A02, and a request
+  that reads a URL variable is attributed to that URL even if it transforms
+  it first.
 - Static analysis does not prove runtime behaviour.
 
 ## Redaction
 
-Reports never contain credential values. Every report passes through one
-boundary (`src/redact.mjs`) that masks documented credential formats wherever
-they appear, replaces URL query values, user info and token-like path
-segments, and strips control characters; Markdown output is escaped so release
+Reports never contain credential values in the formats Release Watch knows.
+Every report passes through one boundary (`src/redact.mjs`) that masks
+documented credential formats wherever they appear, replaces URL query values,
+fragments, user info and token-like path segments with a short tag such as
+`‹3f9c›` (equal values share a tag), and strips control characters. Source
+lines shown next to evidence are scrubbed harder: escaped strings,
+credential-named fields, Bearer tokens and query pairs are masked, and on a
+line where REA reported a key every string is masked; Markdown output is escaped so release
 content cannot add headings, links or HTML to a pull-request comment. REA
 redacts transport credentials in captures itself. The saved Evidence under
 `evidence/` is REA's output verbatim and can hold the raw values a release
@@ -220,6 +232,12 @@ every 100 ms. No model is called, so no tokens are used.
 | Acme Notes Cloud (2 components, HAR)                           | 9.4–10.9 s | 27–30 s | 1.3 GB      |
 | Acme Notes Electron distribution                               | 7.5–7.9 s  | 24–25 s | 1.6 GB      |
 | `@modelcontextprotocol/server-everything` 2026.1.26 → 2026.7.4 | 14.4 s     | 30 s    | 0.9 GB      |
+| `swagger-ui-dist` 5.32.15 → 5.33.1 (12 MB of bundles)          | 238 s      | 9.3 min | 5.0 GB      |
+
+Each side's JavaScript analysis needs about 2.5 GB at the swagger-ui scale, so
+use `--jobs 1` on runners with less than 6 GB of memory; it roughly doubles
+wall time. Saved Evidence for such a release is about 600 MB. Neither side's
+Evidence is reused between runs yet.
 
 ## Tests
 

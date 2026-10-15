@@ -136,6 +136,12 @@ const readManifest = (root) => {
       cause: error,
     });
   }
+  if (
+    manifest === null ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest)
+  )
+    throw new Error(`${file} must be a JSON object with a "components" list`);
   if (!Array.isArray(manifest.components) || manifest.components.length === 0)
     throw new Error(`${file} must list at least one component`);
   const names = new Set();
@@ -152,11 +158,19 @@ const readManifest = (root) => {
       throw new Error(
         `${file}: component name ${JSON.stringify(component.name)} must be 1-64 letters, digits, ".", "_" or "-", starting with a letter or digit`,
       );
-    if (names.has(component.name))
+    // Names become Evidence file names, which some file systems compare without case.
+    if (names.has(component.name.toLowerCase()))
       throw new Error(
-        `${file}: component name ${component.name} is listed twice`,
+        `${file}: component name ${component.name} is listed twice (names are compared without case)`,
       );
-    names.add(component.name);
+    names.add(component.name.toLowerCase());
+    if (
+      component.capture !== undefined &&
+      typeof component.capture !== "string"
+    )
+      throw new Error(
+        `${file}: component ${component.name} has a "capture" that is not a path`,
+      );
     return {
       name: component.name,
       target: discoverTarget(inside(root, component.path, file), {

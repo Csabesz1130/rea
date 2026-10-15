@@ -1,27 +1,59 @@
 // Coverage rules: what REA or Release Watch could not examine. A rule that
 // found nothing only means something when the code was examined, so limits
 // on the new side become findings instead of a silent pass.
-import { SECURITY_HEADERS } from "../catalog.mjs";
-import { APP_SOURCE, cite, packResult, reported } from "./shared.mjs";
+import { SECURITY_HEADERS, isHttpClient, packageNameOf } from "../catalog.mjs";
+import { displayPath } from "../urls.mjs";
+import {
+  APP_SOURCE,
+  cite,
+  heuristic,
+  packResult,
+  reported,
+} from "./shared.mjs";
 
 const COMPONENT = "Release Watch";
+const FUSE_SOURCE = "REA inspect_electron_fuses";
 const MAX_FILES = 6;
 
+const listed = (files) =>
+  `${files.slice(0, MAX_FILES).join(", ")}${files.length > MAX_FILES ? ` and ${files.length - MAX_FILES} more` : ""}`;
+
+// Files whose content differs from the old release, or that are new there.
+const changedFiles = (context) => {
+  const before = new Map(
+    (context.left.app?.assets ?? []).map((asset) => [
+      asset.key,
+      asset.data.sha256,
+    ]),
+  );
+  const renamed = new Map(
+    [...context.aliases].map(([from, alias]) => [alias.path, from]),
+  );
+  return (file) => {
+    const old = before.get(file) ?? before.get(renamed.get(file));
+    const now = context.right.app.assets.find((asset) => asset.key === file)
+      ?.data.sha256;
+    return old === undefined || old !== now;
+  };
+};
+
+// What REA reported it could not examine in the new release: truncation,
+// files at the per-file ceiling, failed files, no semantic graph.
 const applicationGaps = (app) => {
   const { coverage } = app;
   const lines = [];
-  if (coverage.graph !== "complete" || coverage.graph_truncated)
-    lines.push(
-      reported(
-        `Application graph coverage is ${coverage.graph}${coverage.graph_omitted > 0 ? `, ${coverage.graph_omitted} items omitted` : ""}`,
-        "observed",
-        APP_SOURCE,
-      ),
-    );
   if (coverage.semantic === "unavailable")
     lines.push(
       reported(
         "REA produced no semantic graph, so requests, processes and literals were not examined",
+        "observed",
+        APP_SOURCE,
+      ),
+    );
+  if (coverage.graph_truncated || coverage.graph_omitted > 0)
+    lines.push(
+      reported(
+        `Application graph truncated, ${coverage.graph_omitted} items omitted`,
         "observed",
         APP_SOURCE,
       ),
@@ -34,11 +66,10 @@ const applicationGaps = (app) => {
         APP_SOURCE,
       ),
     );
-  const files = coverage.semantic_ceiling_modules;
-  if (files.length > 0)
+  if (coverage.semantic_ceiling_modules.length > 0)
     lines.push(
       reported(
-        `Files that reached REA's per-file node ceiling: ${files.slice(0, MAX_FILES).join(", ")}${files.length > MAX_FILES ? ` and ${files.length - MAX_FILES} more` : ""}`,
+        `Files that reached REA's per-file node ceiling: ${listed(coverage.semantic_ceiling_modules)}`,
         "derived",
         APP_SOURCE,
       ),
@@ -54,21 +85,52 @@ const applicationGaps = (app) => {
   return lines;
 };
 
-// RW-C01: the new side's code was only partly examined.
+/**
+ * RW-C01: part of the new release was not examined. High when the
+ * unexamined files changed since the old release, since a change there is
+ * exactly what this report cannot see; medium otherwise.
+ */
 const incompleteAnalysis = (context) => {
   const app = context.right.app;
-  if (!app) return [];
-  const evidence = applicationGaps(app);
+  const captureGaps = context.right.capture?.gaps ?? [];
+  const evidence = [
+    ...(app ? applicationGaps(app) : []),
+    ...captureGaps.map((gap) => reported(gap, "derived", COMPONENT)),
+  ];
   if (evidence.length === 0) return [];
+  const files = app
+    ? [
+        ...app.coverage.semantic_ceiling_modules,
+        ...app.analysisFailures
+          .map((failure) => failure.location?.file)
+          .filter(Boolean),
+      ]
+    : [];
+  const changed = app ? [...new Set(files.filter(changedFiles(context)))] : [];
+  const limited =
+    app &&
+    (app.coverage.semantic_truncated ||
+      app.coverage.semantic_ceiling_modules.length > 0);
   return [
     {
       rule: "RW-C01",
-      severity: "medium",
-      title: `Analysis of ${context.labels.right} is incomplete`,
-      summary: `REA examined only part of ${context.labels.right}'s code; findings in the unexamined part are missing from this report.`,
+      severity:
+        changed.length > 0 ||
+        (app?.coverage.semantic === "unavailable" && context.left.app)
+          ? "high"
+          : "medium",
+      title:
+        changed.length > 0
+          ? `Changed code in ${context.labels.right} was not examined`
+          : `Analysis of ${context.labels.right} is incomplete`,
+      summary:
+        changed.length > 0
+          ? `REA could not fully examine ${listed(changed)}, which changed since ${context.labels.left}; findings in the unexamined part are missing.`
+          : `REA examined only part of ${context.labels.right}; findings in the unexamined part are missing from this report.`,
       why: "A pass is meaningful only for code that was examined. Large bundles are where injected code hides most easily.",
-      recommendation:
-        "Re-run with higher REA limits (--max-semantic-nodes-per-file, --max-heap-mb), or review the listed files by other means.",
+      recommendation: limited
+        ? "Re-run with higher REA limits (--max-semantic-nodes-per-file, --max-heap-mb), or review the listed files by other means."
+        : "Review the listed files or captures by other means.",
       evidence,
       unknowns: ["Release Watch cannot tell what the unexamined code does."],
     },
@@ -88,20 +150,29 @@ const unmatchedPages = (context) =>
               ),
             ),
         )
-        .map((item) => item.key)
+        .map(
+          (item) =>
+            item.left[0].data.display_path ??
+            displayPath(item.left[0].data.path),
+        )
     : [];
+
+const COMPARISON_LINES = {
+  size: "REA's module pairing was skipped because the Evidence is larger than 64 MB; a renamed module may be reported as new code.",
+};
 
 // RW-C02: pieces that could only be seen on one side, so nothing was compared.
 const oneSided = (context) => {
   const { left, right, labels, comparison, name } = context;
+  const release = context.releaseLabels ?? labels;
   const lines = [];
   if (left.target === null)
     lines.push(
-      `Component ${name} is new in ${labels.right}; every fact in it is reported as not previously observed.`,
+      `Component ${name} is new in ${release.right}; it was compared with every component of ${release.left} together.`,
     );
   if (right.target === null)
     lines.push(
-      `Component ${name} is missing from ${labels.right}; nothing in it was compared.`,
+      `Component ${name} is missing from ${release.right}; nothing in it was compared.`,
     );
   if (
     left.target !== null &&
@@ -121,9 +192,17 @@ const oneSided = (context) => {
     lines.push(
       `REA could not pair renamed modules (${comparison.error.code ?? "error"}); a renamed bundle may be reported as new code.`,
     );
-  if (comparison?.skipped === "size")
+  if (COMPARISON_LINES[comparison?.skipped])
+    lines.push(COMPARISON_LINES[comparison.skipped]);
+  if (
+    left.runtimes.some(
+      (runtime) => runtime.fuses && !runtime.fuses.ambiguous,
+    ) &&
+    right.target &&
+    right.target.kind !== "electron-dist"
+  )
     lines.push(
-      `REA's module pairing was skipped because the Evidence is too large; a renamed bundle may be reported as new code.`,
+      `Fuses were not compared: ${labels.right} is a ${right.target.kind}, not an Electron distribution with executables.`,
     );
   if (lines.length === 0) return [];
   return [
@@ -141,39 +220,81 @@ const oneSided = (context) => {
   ];
 };
 
+// Why the new side's fuses are not readable, from how the inspection ended.
+const fuseGapLines = (context) => {
+  const { right, labels } = context;
+  const status = right.runtimeStatus;
+  if (status.candidates === 0)
+    return [
+      reported(
+        `${labels.right} has no executable at its root for REA to inspect`,
+        "derived",
+        COMPONENT,
+      ),
+    ];
+  const lines = status.failures.map((failure) =>
+    reported(
+      `REA's fuse inspection of ${failure.name} failed: ${failure.code ?? failure.message ?? "error"}`,
+      "observed",
+      FUSE_SOURCE,
+    ),
+  );
+  if (right.runtimes.length === 0 && status.failures.length < status.candidates)
+    lines.push(
+      reported(
+        `REA found no fuse wire in ${labels.right}'s root executables`,
+        "observed",
+        FUSE_SOURCE,
+      ),
+    );
+  for (const pair of context.diff.runtimes) {
+    if (
+      !pair.after?.fuses ||
+      !pair.before?.fuses ||
+      pair.before.fuses.ambiguous
+    )
+      continue;
+    if (pair.after.fuses.ambiguous)
+      lines.push(
+        reported(
+          `REA found ${pair.after.fuses.sentinel_count} fuse wires in ${pair.after.name}, so no fuse state is established`,
+          "observed",
+          FUSE_SOURCE,
+        ),
+      );
+    else
+      for (const change of pair.changes.filter(
+        (row) => row.after !== "enabled" && row.after !== "disabled",
+      ))
+        lines.push(
+          reported(
+            `${pair.after.name} ${change.name}: ${change.before} → ${change.after}`,
+            "observed",
+            FUSE_SOURCE,
+          ),
+        );
+  }
+  return lines;
+};
+
 // RW-C03: the old release had readable fuses and the new one does not.
 const fuseCoverage = (context) => {
-  const before = context.left.runtime?.fuses ?? null;
-  if (before === null || before.ambiguous) return [];
-  const after = context.right.runtime?.fuses ?? null;
-  const lost = context.diff.fuses.filter(
-    (change) => change.after !== "enabled" && change.after !== "disabled",
+  const readable = context.left.runtimes.some(
+    (runtime) => runtime.fuses && !runtime.fuses.ambiguous,
   );
-  const lines =
-    after === null
-      ? [
-          `REA found no Electron fuse wire in ${context.labels.right}'s executables`,
-        ]
-      : after.ambiguous
-        ? [
-            `REA found ${after.sentinel_count} fuse wires in ${context.right.runtime.name}, so no fuse state is established`,
-          ]
-        : lost.map(
-            (change) => `${change.name}: ${change.before} → ${change.after}`,
-          );
-  if (lines.length === 0) return [];
+  if (!readable || context.right.target?.kind !== "electron-dist") return [];
+  const evidence = fuseGapLines(context);
+  if (evidence.length === 0) return [];
   return [
     {
       rule: "RW-C03",
       severity: "medium",
       title: `Electron fuse state unknown in ${context.labels.right}`,
-      summary: `${context.labels.left}'s fuses were readable; ${context.labels.right}'s are not, so fuse regressions cannot be ruled out.`,
+      summary: `${context.labels.left}'s fuses were readable; some of ${context.labels.right}'s are not, so fuse regressions cannot be ruled out.`,
       why: "Fuses block well-known ways to run code inside a signed app; an unreadable wire may hide a regression.",
       recommendation:
         "Inspect the new executable's fuses with @electron/fuses or ask the vendor for the build configuration.",
-      evidence: lines.map((line) =>
-        reported(line, "observed", "REA inspect_electron_fuses"),
-      ),
+      evidence,
       unknowns: [],
     },
   ];
@@ -200,6 +321,55 @@ const helperCoverage = (context) =>
       unknowns: [],
     }));
 
+/**
+ * RW-C05: modules that import an HTTP client library and have no request
+ * site REA recognised. Their requests are not examined by the network rules.
+ */
+const unmodeledClients = (context) => {
+  const app = context.right.app;
+  if (!app) return [];
+  const requesting = new Set(
+    app.requests.map((request) => request.data.module),
+  );
+  const sites = app.imports.filter(
+    (fact) =>
+      isHttpClient(packageNameOf(fact.key)) &&
+      !requesting.has(fact.data.module),
+  );
+  const before = new Set(
+    (context.left.app?.imports ?? [])
+      .filter((fact) => isHttpClient(packageNameOf(fact.key)))
+      .map((fact) => `${fact.data.module}#${fact.key}`),
+  );
+  const fresh = sites.filter(
+    (fact) => !before.has(`${fact.data.module}#${fact.key}`),
+  );
+  if (fresh.length === 0) return [];
+  const clients = [...new Set(fresh.map((fact) => packageNameOf(fact.key)))];
+  return [
+    {
+      rule: "RW-C05",
+      severity: "low",
+      title: `Requests through ${clients.join(", ")} are not examined`,
+      summary: `${fresh.length} module${fresh.length === 1 ? "" : "s"} of ${context.labels.right} import${fresh.length === 1 ? "s" : ""} an HTTP client library and REA recognised no request site in ${fresh.length === 1 ? "it" : "them"}.`,
+      why: "Destinations reached through these libraries are invisible to the network rules, so a new third-party host there would not be reported.",
+      recommendation:
+        "Capture the release's traffic with release-watch record, or review these modules' requests.",
+      evidence: [
+        ...fresh
+          .slice(0, MAX_FILES)
+          .map((fact) =>
+            cite(`${fact.data.module} imports ${fact.key}`, fact, APP_SOURCE),
+          ),
+        heuristic(
+          "Release Watch lists HTTP client packages whose calls REA's request extraction may not model",
+        ),
+      ],
+      unknowns: [],
+    },
+  ];
+};
+
 /** Coverage rules. */
 export const coveragePack = (context) =>
   packResult([
@@ -207,4 +377,5 @@ export const coveragePack = (context) =>
     ...oneSided(context),
     ...fuseCoverage(context),
     ...helperCoverage(context),
+    ...unmodeledClients(context),
   ]);

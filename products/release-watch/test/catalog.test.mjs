@@ -30,9 +30,9 @@ describe("catalog", () => {
   });
 
   it("hides query values and user info in displayed URLs", () => {
-    assert.equal(
+    assert.match(
       displayUrl("https://user:pw@api.example.com/v1?key=AIzaSECRET&x=1"),
-      "https://api.example.com/v1?key=…&x=…",
+      /^https:\/\/api\.example\.com\/v1\?key=‹[0-9a-f]{4}›&x=‹[0-9a-f]{4}›$/,
     );
   });
 });

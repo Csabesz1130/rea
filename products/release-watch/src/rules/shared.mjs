@@ -28,9 +28,43 @@ export const newFacts = (items) =>
     })),
   );
 
+/**
+ * New or increased keys, one entry per key with all of its new-side facts,
+ * so a rule reports a key once. With `field`, a "changed" key counts too,
+ * with only the facts whose value the old side did not have (a command that
+ * became dynamic, a new literal command).
+ */
+export const newGroups = (items, { field = null } = {}) =>
+  items.flatMap((item) => {
+    const counts = { before: item.left.length, after: item.right.length };
+    if (isNew(item))
+      return [
+        {
+          key: item.key,
+          status: item.status,
+          counts,
+          facts: item.right,
+          left: item.left,
+        },
+      ];
+    if (field === null || item.status !== "changed") return [];
+    const remaining = item.left.map((fact) => fact.data[field]);
+    const facts = item.right.filter((fact) => {
+      const index = remaining.indexOf(fact.data[field]);
+      if (index === -1) return true;
+      remaining.splice(index, 1);
+      return false;
+    });
+    return facts.length > 0
+      ? [{ key: item.key, status: "changed", counts, facts, left: item.left }]
+      : [];
+  });
+
 /** How a claim's absence on the left side is known. */
 export const absencePhrase = (status, leftLabel, counts = null) => {
   if (status === "added") return `absent from ${leftLabel}`;
+  if (status === "changed")
+    return `the same number of sites as ${leftLabel}, with a different value`;
   if (status === "increased" && counts)
     return `${counts.after} such sites here, ${counts.before} in ${leftLabel}; Release Watch cannot tell which is new`;
   return `not observed in ${leftLabel}; REA coverage does not establish absence`;

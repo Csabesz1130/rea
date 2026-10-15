@@ -42,20 +42,35 @@ export const releaseBaseline = (leftSides) => ({
   sdks: new Set(leftSides.flatMap((side) => [...sdkUses(side.app).keys()])),
 });
 
-// A pairing Release Watch could not make limits every finding located in
-// that bundle.
-const ambiguityUnknowns = (finding, ambiguous) => {
+// What limits a finding located in a given file: a bundle Release Watch
+// could not pair with its old version, or an old file REA could not fully
+// analyze, so the "new" fact may have been there before.
+const locatedUnknowns = (finding, component) => {
   const files = [
     ...new Set(
-      finding.evidence
-        .map((item) => item.location?.file)
-        .filter((file) => ambiguous.has(file)),
+      finding.evidence.map((item) => item.location?.file).filter(Boolean),
     ),
   ];
-  return files.map(
-    (file) =>
-      `Several bundles share ${file}'s name without its content hash, so Release Watch could not pair it with its old version; what it reports here may predate this release.`,
-  );
+  const ambiguous = component.ambiguous ?? new Set();
+  const oldApp = component.left?.app;
+  const unexamined = new Set([
+    ...(oldApp?.analysisFailures ?? [])
+      .map((failure) => failure.location?.file)
+      .filter(Boolean),
+    ...(oldApp?.coverage.semantic_ceiling_modules ?? []),
+  ]);
+  return files.flatMap((file) => [
+    ...(ambiguous.has(file)
+      ? [
+          `Several bundles share ${file}'s name without its content hash, so Release Watch could not pair it with its old version; what it reports here may predate this release.`,
+        ]
+      : []),
+    ...(unexamined.has(file)
+      ? [
+          `REA could not fully analyze ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
+        ]
+      : []),
+  ]);
 };
 
 /** Findings for one component and the network view they were graded against. */
@@ -69,17 +84,13 @@ export const evaluateComponent = (component) => {
     claimed: { hosts: new Set(), nodes: new Set() },
   };
   const findings = [];
-  for (const pack of PACKS) {
+  for (const pack of component.coverageOnly ? [coveragePack] : PACKS) {
     const result = pack(context);
-    const ambiguous = component.ambiguous ?? new Set();
     findings.push(
       ...result.findings.map((finding) => ({
         component: component.name,
         ...finding,
-        unknowns: [
-          ...finding.unknowns,
-          ...ambiguityUnknowns(finding, ambiguous),
-        ],
+        unknowns: [...finding.unknowns, ...locatedUnknowns(finding, component)],
       })),
     );
     result.claims.hosts.forEach((host) => context.claimed.hosts.add(host));

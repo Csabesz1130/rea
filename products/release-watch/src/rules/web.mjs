@@ -1,12 +1,13 @@
 // Web build rules: third-party scripts in HTML, service workers, shipped
 // original sources and direct eval.
-import { displayUrl, scriptHostOf } from "../urls.mjs";
+import { displayScript, scriptHostOf } from "../urls.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
   cite,
   isVendorHost,
   newFacts,
+  newGroups,
   packResult,
 } from "./shared.mjs";
 
@@ -15,18 +16,15 @@ const scriptFindings = (context) => {
   const findings = [];
   const hosts = [];
   for (const { fact, status } of newFacts(context.diff.app.pageScripts)) {
-    if (fact.data.resolution_status !== "external") continue;
+    // External by the host a browser resolves, whatever REA's resolution
+    // status says about a source with surrounding whitespace.
     const host = scriptHostOf(fact.data.script_path);
     if (host === null) continue;
     hosts.push(host);
     if (isVendorHost(host, options.vendorDomains) || network.own.has(host))
       continue;
     const knownHost = network.known.has(host);
-    const source = displayUrl(
-      fact.data.script_path.startsWith("//")
-        ? `https:${fact.data.script_path}`
-        : fact.data.script_path,
-    );
+    const source = displayScript(fact.data.script_path);
     findings.push({
       rule: "RW-W01",
       severity: knownHost ? "medium" : "high",
@@ -73,9 +71,24 @@ const serviceWorkerFindings = (context) =>
 
 // Reported only when the old release shipped no original sources at all; a
 // release that already published them gains nothing new by adding files.
+// Bundler runtime and external-module stubs a source map lists, which are
+// not the product's own source files.
+const isStub = (original) =>
+  /^(webpack\/|external |\(webpack\)|\/?webpack\/bootstrap)/.test(original) ||
+  / external /.test(original);
+
 const embeddedSourceFindings = (context) => {
-  if ((context.left.app?.embeddedSources.length ?? 0) > 0) return [];
-  const added = newFacts(context.diff.app.embeddedSources);
+  // Unknown when REA could not analyze some old files: they may have shipped sources.
+  if ((context.left.app?.analysisFailures.length ?? 0) > 0) return [];
+  if (
+    (context.left.app?.embeddedSources ?? []).some(
+      (fact) => !isStub(fact.data.original),
+    )
+  )
+    return [];
+  const added = newFacts(context.diff.app.embeddedSources).filter(
+    ({ fact }) => !isStub(fact.data.original),
+  );
   if (added.length === 0) return [];
   return [
     {
@@ -101,24 +114,25 @@ const embeddedSourceFindings = (context) => {
 };
 
 const evalFindings = (context) =>
-  newFacts(context.diff.app.dynamicEvaluation).map(
-    ({ fact, status, counts }) => ({
+  newGroups(context.diff.app.dynamicEvaluation).map((group) => {
+    const [fact] = group.facts;
+    return {
       rule: "RW-W04",
       severity: "low",
       title: `New direct eval in ${fact.data.module}`,
-      summary: `${context.labels.right} evaluates code built at runtime in ${fact.data.module}.`,
+      summary: `${context.labels.right} evaluates code built at runtime in ${fact.data.module} (${absencePhrase(group.status, context.labels.left, group.counts)}).`,
       why: "eval turns any string that reaches it into running code and blocks a strict Content-Security-Policy.",
       recommendation: "Replace eval with explicit code paths.",
-      evidence: [
+      evidence: group.facts.map((site) =>
         cite(
-          `${fact.data.detail ?? "eval can declare bindings at runtime"} (${absencePhrase(status, context.labels.left, counts)})`,
-          fact,
+          site.data.detail ?? "eval can declare bindings at runtime",
+          site,
           APP_SOURCE,
         ),
-      ],
+      ),
       unknowns: ["REA does not resolve what string reaches eval."],
-    }),
-  );
+    };
+  });
 
 // Requests made inside a new service worker forward the page's own traffic;
 // RW-W02 explains them.

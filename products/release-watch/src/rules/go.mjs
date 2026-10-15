@@ -4,19 +4,60 @@
 import { displayUrl, hostOf, isUrl, urlsIn } from "../urls.mjs";
 import { GO_SOURCE, isVendorHost, packResult, reported } from "./shared.mjs";
 
-// `-X name=value` sets a string variable at link time. Values are shown as
-// display URLs or by length, never verbatim.
-const LINKER_VALUE = /(-X[=\s]+'?)([^=\s']+)=([^\s']*)/g;
+// `-X name=value` sets a string variable at link time. An operand may be
+// quoted and hold spaces. Values are shown as display URLs or by length,
+// never verbatim.
+const LINKER_VALUE =
+  /(?<flag>-X(?:=|\s+))(?:'(?<single>[^']*)'|"(?<double>[^"]*)"|(?<bare>\S+))/g;
+
+const maskedValue = (value) =>
+  isUrl(value) ? displayUrl(value) : `… (${value.length} characters)`;
 
 /** -ldflags for display, with every -X value masked. */
 export const displayLdflags = (flags) =>
   flags === null
     ? "not set"
-    : flags.replace(
-        LINKER_VALUE,
-        (_match, flag, name, value) =>
-          `${flag}${name}=${isUrl(value) ? displayUrl(value) : `… (${value.length} characters)`}`,
-      );
+    : flags.replace(LINKER_VALUE, (...match) => {
+        const { flag, single, double, bare } = match.at(-1);
+        const operand = single ?? double ?? bare;
+        const quote =
+          single !== undefined ? "'" : double !== undefined ? '"' : "";
+        const split = operand.indexOf("=");
+        const shown =
+          split === -1
+            ? operand
+            : `${operand.slice(0, split)}=${maskedValue(operand.slice(split + 1))}`;
+        return `${flag}${quote}${shown}${quote}`;
+      });
+
+// Build settings that describe the toolchain rather than carry values.
+const TOOLCHAIN_SETTINGS = new Set([
+  "-buildmode",
+  "-compiler",
+  "-trimpath",
+  "-race",
+  "-tags",
+  "CGO_ENABLED",
+  "GOARCH",
+  "GOOS",
+  "GOAMD64",
+  "GOARM",
+  "GOARM64",
+  "GO386",
+  "GOEXPERIMENT",
+  "DefaultGODEBUG",
+  "vcs",
+  "vcs.revision",
+  "vcs.time",
+  "vcs.modified",
+]);
+
+/** One build setting for display: toolchain settings verbatim, -ldflags masked, others by length. */
+export const displaySetting = (key, value) => {
+  if (value === null) return "not set";
+  if (key === "-ldflags") return displayLdflags(value);
+  return TOOLCHAIN_SETTINGS.has(key) ? value : `… (${value.length} characters)`;
+};
 
 const hostsIn = (flags) =>
   new Set(
@@ -32,8 +73,20 @@ const ldflagsFindings = (helper, change, context) => {
       !before.has(host) && !isVendorHost(host, context.options.vendorDomains),
   );
   if (fresh.length === 0) return [];
+  const oldLine = helper.before?.go
+    ? reported(
+        `${context.labels.left}: -ldflags ${displayLdflags(change.before)}`,
+        "observed",
+        GO_SOURCE,
+      )
+    : reported(
+        `${context.labels.left}: ${helper.before ? "REA found no Go build information" : "no such helper"}`,
+        "observed",
+        GO_SOURCE,
+      );
   return [
     {
+      hosts: fresh,
       rule: "RW-G01",
       severity: "high",
       title: `Build-time endpoint injected into ${helper.name}: ${fresh.join(", ")}`,
@@ -42,11 +95,7 @@ const ldflagsFindings = (helper, change, context) => {
       recommendation:
         "Ask the vendor which build step adds this flag and what the endpoint receives.",
       evidence: [
-        reported(
-          `${context.labels.left}: -ldflags ${displayLdflags(change.before)}`,
-          "observed",
-          GO_SOURCE,
-        ),
+        oldLine,
         reported(
           `${context.labels.right}: -ldflags ${displayLdflags(change.after)}`,
           "observed",
@@ -126,15 +175,6 @@ const newHelperFinding = (helper, context) => {
             "observed",
             GO_SOURCE,
           ),
-          ...Object.entries(go.settings)
-            .filter(([key]) => key === "-ldflags")
-            .map(([, value]) =>
-              reported(
-                `-ldflags ${displayLdflags(value)}`,
-                "observed",
-                GO_SOURCE,
-              ),
-            ),
         ]
       : [
           reported(
@@ -151,13 +191,41 @@ const newHelperFinding = (helper, context) => {
   };
 };
 
+// A helper with Go build information on the new side only (new, or not
+// identified before) is graded against nothing: every linker-set
+// third-party host the old release never contacted and every dependency
+// without a checksum counts.
+const firstLook = (helper, context) => {
+  const go = helper.after.go;
+  const change = {
+    key: "-ldflags",
+    before: null,
+    after: go.settings["-ldflags"] ?? null,
+  };
+  const known = context.network.known;
+  const ldflags =
+    change.after === null
+      ? []
+      : ldflagsFindings(helper, change, context).filter((finding) =>
+          finding.hosts.some((host) => !known.has(host)),
+        );
+  const dependencies = go.dependencies
+    .filter((dependency) => dependency.sum === null)
+    .flatMap((dependency) =>
+      dependencyFindings(helper, { right: [{ data: dependency }] }),
+    );
+  return [...ldflags, ...dependencies];
+};
+
 /** Findings for each helper paired across releases. */
 const helperFindings = (context) =>
   context.diff.helpers.flatMap((helper) => {
-    if (helper.before === null && helper.after !== null)
-      return [newHelperFinding(helper, context)];
-    if (helper.go === null) return [];
     const findings = [];
+    if (helper.before === null && helper.after !== null)
+      findings.push(newHelperFinding(helper, context));
+    if (helper.after?.go && !helper.before?.go)
+      return [...findings, ...firstLook(helper, context)];
+    if (helper.go === null) return findings;
     for (const change of helper.go.settings) {
       if (change.key === "-ldflags")
         findings.push(...ldflagsFindings(helper, change, context));
@@ -170,5 +238,8 @@ const helperFindings = (context) =>
     return findings;
   });
 
-/** Helper binary rules. */
-export const goPack = (context) => packResult(helperFindings(context));
+/** Helper binary rules. RW-G01 does not claim its hosts: a host the app's code also contacts keeps its RW-N01. */
+export const goPack = (context) =>
+  packResult(
+    helperFindings(context).map(({ hosts: _hosts, ...finding }) => finding),
+  );

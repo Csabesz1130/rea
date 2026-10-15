@@ -74,8 +74,8 @@ const captureSurfaces = (capture, surfaces) => {
 /** Surfaces of one side of a component: `{ electron, web, ai, mcp }`, each a list of reasons. */
 export const surfacesOf = (side) => {
   const surfaces = { electron: [], web: [], ai: [], mcp: [] };
-  if (side.runtime?.fuses)
-    reason(surfaces.electron, `Electron fuse wire in ${side.runtime.name}`);
+  for (const runtime of side.runtimes ?? [])
+    reason(surfaces.electron, `Electron fuse wire in ${runtime.name}`);
   if (side.app) appSurfaces(side.app, surfaces);
   if (side.capture) captureSurfaces(side.capture, surfaces);
   return Object.fromEntries(

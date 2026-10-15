@@ -34,6 +34,8 @@ release-watch.json manifest listing several components.
                           rename or the Evidence exceeds 64 MB)
   --max-semantic-nodes <n>, --max-semantic-nodes-per-file <n>, --max-heap-mb <n>
                           Passed to REA's JavaScript analysis for large bundles
+  --jobs <1|2>            Analyze the two sides one at a time (1) to halve peak
+                          memory on large apps, or together (2, the default)
 
 record: loads <url> in Chromium, runs the steps, and saves a HAR without
 response bodies.
@@ -83,6 +85,7 @@ const OPTIONS = {
   "max-semantic-nodes": { type: "string" },
   "max-semantic-nodes-per-file": { type: "string" },
   "max-heap-mb": { type: "string" },
+  jobs: { type: "string", default: "2" },
   step: { type: "string", multiple: true, default: [] },
   "settle-ms": { type: "string", default: "1000" },
   browser: { type: "string" },
@@ -144,6 +147,8 @@ const parse = () => {
     throw new Error("Expected: compare <old> <new>");
   if (values["fail-on"] !== "never" && !SEVERITIES.includes(values["fail-on"]))
     throw new Error(`--fail-on must be one of ${SEVERITIES.join(", ")}, never`);
+  if (!["1", "2"].includes(values.jobs))
+    throw new Error("--jobs must be 1 or 2");
   if (!["auto", "always", "never"].includes(values["rea-compare"]))
     throw new Error("--rea-compare must be one of auto, always, never");
   return {
@@ -158,6 +163,7 @@ const parse = () => {
       leftCapture: values["old-capture"] ?? null,
       rightCapture: values["new-capture"] ?? null,
       reaCompare: values["rea-compare"],
+      jobs: Number(values.jobs),
       analysisArgs: ANALYSIS_LIMITS.flatMap((name) => {
         if (values[name] === undefined) return [];
         if (!/^[1-9]\d*$/.test(values[name]))

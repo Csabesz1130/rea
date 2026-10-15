@@ -31,16 +31,28 @@ const location = (item) => {
   return ` ${code(`${where.file}${line}${record}`)}`;
 };
 
+// Gaps on both sides: the old side's bound every "new" claim, the new
+// side's bound every pass. Standing REA limitations are counted, not listed.
 const limitLines = (model) => {
   const notes = model.components.flatMap((component) => [
     ...component.coverage.right.gaps.map(
       (note) => `${component.name} ${component.right.label}: ${note}`,
     ),
+    ...component.coverage.left.gaps.map(
+      (note) => `${component.name} ${component.left.label}: ${note}`,
+    ),
     ...(component.coverage.comparison
       ? [`${component.name}: ${component.coverage.comparison}`]
       : []),
   ]);
-  if (notes.length === 0) return [];
+  const standing = model.components.reduce(
+    (total, component) =>
+      total +
+      component.coverage.right.limitations.length +
+      component.coverage.left.limitations.length,
+    0,
+  );
+  if (notes.length === 0 && standing === 0) return [];
   return [
     "**Coverage limits**",
     "",
@@ -48,6 +60,12 @@ const limitLines = (model) => {
     ...(notes.length > MAX_LIMITS
       ? [`- ${notes.length - MAX_LIMITS} more in report.json`]
       : []),
+    ...(standing > 0
+      ? [
+          `- ${standing} standing REA limitations (what its analyses never establish) in report.json and report.html`,
+        ]
+      : []),
+    ...model.limitations.map((note) => `- ${text(note)}`),
     "",
   ];
 };

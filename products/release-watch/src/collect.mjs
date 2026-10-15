@@ -37,24 +37,50 @@ const analyzeApp = async (scope) => {
   return { facts: applicationFacts(result.evidence), file };
 };
 
+/**
+ * Fuse wires of every root executable, and how the inspection ended:
+ * `{ runtimes, status: { candidates, failures } }`. An executable with no
+ * wire is not a runtime; its Evidence file is removed.
+ */
 const inspectFuses = async (scope) => {
-  for (const candidate of scope.target.runtimeCandidates) {
+  const runtimes = [];
+  const failures = [];
+  for (const [index, candidate] of scope.target.runtimeCandidates.entries()) {
     const name = path.basename(candidate);
-    const file = evidencePath(scope, "fuses");
+    const file = evidencePath(scope, `fuses-${index + 1}-${fileSafe(name)}`);
     const result = await scope.rea.run("inspect-electron-fuses", [candidate], {
       label: `fuses ${scope.label} ${name}`,
       saveTo: file,
     });
-    if (!result.ok) continue;
+    if (!result.ok) {
+      failures.push({
+        name,
+        code: result.error.code,
+        message: result.error.message,
+      });
+      continue;
+    }
     const fuses = fuseFacts(result.evidence);
     if (fuses === null) {
       rmSync(file, { force: true });
       continue;
     }
-    return { name, path: candidate, fuses, file: relative(scope, file) };
+    runtimes.push({
+      name,
+      path: candidate,
+      fuses,
+      file: relative(scope, file),
+    });
   }
-  return null;
+  return {
+    runtimes,
+    status: { candidates: scope.target.runtimeCandidates.length, failures },
+  };
 };
+
+// A file name for Evidence: letters, digits, dot, dash and underscore, at
+// most 48 characters, so an odd helper name cannot break or escape --out.
+const fileSafe = (name) => name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 48);
 
 // How REA identified a helper: "go" with build information, "not-go" when
 // REA read the file but found none, "failed" when the operation failed.
@@ -67,7 +93,7 @@ const inspectHelpers = async (scope) => {
     const name = path.basename(helper);
     // Helpers in different directories can share a name; the index keeps
     // their Evidence files apart.
-    const file = evidencePath(scope, `helper-${index + 1}-${name}`);
+    const file = evidencePath(scope, `helper-${index + 1}-${fileSafe(name)}`);
     const result = await scope.rea.run("inspect-go-binary", [helper], {
       label: `go ${scope.label} ${name}`,
       saveTo: file,
@@ -137,11 +163,11 @@ const inspectCapture = async (scope) => {
     path.basename(target.capture),
   );
   if (surface.error)
-    facts.limitations.push(
+    facts.gaps.push(
       `REA's api-surface view failed (${surface.error.message}); API endpoints were not compared.`,
     );
   if (surface.evidence?.normalized_result?.coverage?.exhausted === false)
-    facts.limitations.push(
+    facts.gaps.push(
       `Release Watch read the first ${API_SURFACE_PAGE} API groups of this capture; later groups are not compared.`,
     );
   return { ...facts, file: relative(scope, file) };
@@ -180,18 +206,10 @@ export const collectSide = async ({
       code: "no_analyzable_target",
       message: `Nothing to analyze at ${target.root}: ${target.reason}.`,
     });
-    return {
-      target,
-      app: null,
-      appFile: null,
-      appEvidence: null,
-      runtime: null,
-      helpers: [],
-      capture: null,
-    };
+    return emptyCollection(target);
   }
   const electron = target.kind === "electron-dist";
-  const [app, runtime, helpers, capture] = await Promise.all([
+  const [app, fuses, helpers, capture] = await Promise.all([
     analyzeApp(scope),
     electron ? inspectFuses(scope) : null,
     electron ? inspectHelpers(scope) : [],
@@ -216,8 +234,21 @@ export const collectSide = async ({
     app: app?.facts ?? null,
     appFile: app?.file ?? null,
     appEvidence: app ? relative(scope, app.file) : null,
-    runtime,
+    runtimes: fuses?.runtimes ?? [],
+    runtimeStatus: fuses?.status ?? { candidates: 0, failures: [] },
     helpers,
     capture,
   };
 };
+
+/** A side with nothing collected. */
+export const emptyCollection = (target = null) => ({
+  target,
+  app: null,
+  appFile: null,
+  appEvidence: null,
+  runtimes: [],
+  runtimeStatus: { candidates: 0, failures: [] },
+  helpers: [],
+  capture: null,
+});

@@ -1,6 +1,6 @@
 // Runtime capture rules, applied when both sides have a capture: security
 // header regressions, cookie attribute regressions and credentials that
-// browsers send to other parties. Header values are compared verbatim.
+// browsers send to other parties.
 import { SECURITY_HEADERS, aiProviderOf } from "../catalog.mjs";
 import {
   CAPTURE_SOURCE,
@@ -12,15 +12,43 @@ import {
   packResult,
 } from "./shared.mjs";
 
+// A header value as compared: per-response CSP nonces masked, whitespace
+// collapsed and policy directives in a stable order. Other values verbatim.
+const comparable = (name, value) => {
+  if (value === null) return null;
+  const collapsed = value
+    .replace(/'nonce-[^']*'/g, "'nonce-…'")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (name !== "content-security-policy") return collapsed;
+  return collapsed
+    .split(";")
+    .map((directive) => directive.trim())
+    .filter(Boolean)
+    .sort()
+    .join("; ");
+};
+
 /**
  * Security headers the old page sent that the new page dropped or changed,
- * with how much each change costs. Added headers are not changes.
+ * with how much each change costs. Added headers are not changes. `after`
+ * may list several loads of the page; the weakest wins: a load without the
+ * header, else one with a different value.
  */
 export const headerChanges = (before, after) =>
   Object.entries(SECURITY_HEADERS).flatMap(([name, header]) => {
     const was = before[name] ?? null;
-    const now = after[name] ?? null;
-    if (was === null || was === now) return [];
+    if (was === null) return [];
+    const loads = (Array.isArray(after) ? after : [after]).map(
+      (headers) => headers[name] ?? null,
+    );
+    const now = loads.includes(null)
+      ? null
+      : (loads.find(
+          (value) => comparable(name, value) !== comparable(name, was),
+        ) ?? was);
+    if (now !== null && comparable(name, now) === comparable(name, was))
+      return [];
     return [
       {
         name,
@@ -37,15 +65,22 @@ const headerFindings = (context) =>
     .filter((item) => item.left.length > 0 && item.right.length > 0)
     .flatMap((item) => {
       const [before] = item.left;
-      const [after] = item.right;
-      const changes = headerChanges(before.data.headers, after.data.headers);
+      const changes = headerChanges(
+        before.data.headers,
+        item.right.map((load) => load.data.headers),
+      );
       if (changes.length === 0) return [];
+      const page = item.right[0].data.display_path ?? item.right[0].data.path;
+      const after = (change) =>
+        item.right.find(
+          (load) => (load.data.headers[change.name] ?? null) === change.now,
+        ) ?? item.right[0];
       return [
         {
           rule: "RW-H02",
           severity: maxSeverity(changes.map((change) => change.severity)),
-          title: `Security headers removed or changed on ${after.data.path}`,
-          summary: `${changes.map((change) => change.header.label).join(", ")} differ between the two captures of ${after.data.path}.`,
+          title: `Security headers removed or changed on ${page}`,
+          summary: `${changes.map((change) => change.header.label).join(", ")} differ between the two captures of ${page}${item.right.length > 1 ? ` (${item.right.length} loads compared)` : ""}.`,
           why: "These headers stop script injection, clickjacking and protocol downgrades; losing or loosening one widens what an attacker can do on the page.",
           recommendation:
             "Restore the previous header values, or have the owner justify each change.",
@@ -54,18 +89,16 @@ const headerFindings = (context) =>
               `${captureLabel(context.left)}: ${change.header.label}: ${change.was}`,
               before,
               CAPTURE_SOURCE,
-              {
-                side: "left",
-              },
+              { side: "left" },
             ),
             cite(
               `${captureLabel(context.right)}: ${change.header.label}: ${change.now ?? "(not sent)"}`,
-              after,
+              after(change),
               CAPTURE_SOURCE,
             ),
           ]),
           unknowns: [
-            "Release Watch compares header values verbatim; it does not grade policy directives.",
+            "Release Watch compares header values after masking nonces and ordering directives; it does not grade policy directives.",
           ],
         },
       ];

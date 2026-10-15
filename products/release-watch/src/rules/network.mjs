@@ -1,5 +1,6 @@
 // Network destinations, keyed by host so renamed bundles and refactored
 // modules do not hide or invent a destination.
+import { isNamespaceHost } from "../catalog.mjs";
 import {
   displayUrl,
   hostOf,
@@ -14,7 +15,7 @@ import {
   cite,
   heuristic,
   isVendorHost,
-  newFacts,
+  newGroups,
   packResult,
   reported,
   within,
@@ -75,7 +76,8 @@ const appSources = (app, add) => {
 export const destinationsOf = (side, { includeCapture }) => {
   const hosts = new Map();
   const add = (host, source) => {
-    if (!host) return;
+    // XML namespace URLs in code are identifiers, not destinations.
+    if (!host || (source.kind !== "capture" && isNamespaceHost(host))) return;
     if (!hosts.has(host)) hosts.set(host, []);
     hosts.get(host).push(source);
   };
@@ -94,14 +96,45 @@ export const destinationsOf = (side, { includeCapture }) => {
   return hosts;
 };
 
-/** Hosts one old side is known to contact: destinations, captured hosts and HTML script hosts. */
+const HOSTNAME = /^(?=.{4,253}$)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
+
+/**
+ * Hosts one old side is known to contact or name: destinations, captured
+ * hosts, HTML script hosts, and bare host names REA reported as string
+ * literals (`https.request({ hostname: HOST })`).
+ */
 export const knownHosts = (side) =>
   new Set([
     ...destinationsOf(side, { includeCapture: true }).keys(),
     ...(side.app?.pageScripts ?? [])
       .map((script) => scriptHostOf(script.data.script_path))
       .filter(Boolean),
+    ...(side.app?.stringLiterals ?? [])
+      .map((literal) => literal.data.value)
+      .filter((value) => HOSTNAME.test(value))
+      .map((value) => value.toLowerCase()),
   ]);
+
+/** The module a destination source was seen in: the request's, the literal's, or the endpoint's location. */
+export const sourceModule = (source) =>
+  source.request?.data.module ??
+  source.fact?.data?.module ??
+  source.fact?.location?.file ??
+  null;
+
+/** Hosts one side contacts from browser code or a browser capture. */
+export const browserHosts = (side) =>
+  new Set(
+    [...destinationsOf(side, { includeCapture: true })]
+      .filter(([, sources]) =>
+        sources.some(
+          (source) =>
+            source.kind === "capture" ||
+            side.app?.browserModules.has(sourceModule(source)),
+        ),
+      )
+      .map(([host]) => host),
+  );
 
 /**
  * The network view shared by the network, AI and web packs: hosts the new
@@ -263,11 +296,7 @@ export const sourceUnknowns = (sources) => {
 // or user APIs they import.
 const contextEvidence = (sources, app) => {
   if (!app) return [];
-  const modules = new Set(
-    sources
-      .map((source) => source.request?.data.module ?? source.fact?.data?.module)
-      .filter(Boolean),
-  );
+  const modules = new Set(sources.map(sourceModule).filter(Boolean));
   const lines = [];
   for (const timer of app.timers)
     if (modules.has(timer.data.module))
@@ -302,7 +331,9 @@ const destinationFinding = (host, sources, context) => {
     rule: "RW-N01",
     severity: firstParty ? "low" : "high",
     title: `New ${firstParty ? "first-party" : "third-party"} destination: ${host}`,
-    summary: `${labels.right} sends requests to ${host}${runtime ? " (seen at runtime)" : ""}; it was ${hostAbsence(context)}.`,
+    summary: isGuess(sources)
+      ? `${labels.right} has a request with an unresolved destination in a module that also holds a URL for ${host}; the host was ${hostAbsence(context)}.`
+      : `${labels.right} sends requests to ${host}${runtime ? " (seen at runtime)" : ""}; it was ${hostAbsence(context)}.`,
     why: firstParty
       ? "New network behaviour on the vendor's own domain is usually a feature."
       : "Data leaving to a host the vendor never used before is the pattern seen in compromised updates and undisclosed data sharing.",
@@ -349,38 +380,47 @@ const candidateLines = (app, request) =>
 const unresolvedRequests = (context, explained) => {
   const before = unresolvedPerMethod(context.left.app);
   const after = unresolvedPerMethod(context.right.app);
-  return newFacts(context.diff.app.requests)
+  return newGroups(context.diff.app.requests)
+    .map((group) => ({
+      ...group,
+      facts: group.facts.filter(
+        (fact) =>
+          !fact.data.endpoint &&
+          !context.claimed.nodes.has(fact.node_id) &&
+          !explained.has(fact.node_id),
+      ),
+    }))
+    .filter((group) => group.facts.length > 0)
     .filter(
-      ({ fact }) =>
-        !fact.data.endpoint &&
-        !context.claimed.nodes.has(fact.node_id) &&
-        !explained.has(fact.node_id),
+      (group) =>
+        (after.get(group.facts[0].data.method) ?? 0) >
+        (before.get(group.facts[0].data.method) ?? 0),
     )
-    .filter(
-      ({ fact }) =>
-        (after.get(fact.data.method) ?? 0) >
-        (before.get(fact.data.method) ?? 0),
-    )
-    .map(({ fact }) => ({
-      rule: "RW-N02",
-      severity: "medium",
-      title: `New request with an unresolved destination in ${fact.data.module}`,
-      summary: `${context.labels.right} has more ${fact.data.method}() sites without a resolved destination than ${context.labels.left} (${before.get(fact.data.method) ?? 0} → ${after.get(fact.data.method)}).`,
-      why: "Unexplained outbound traffic is the main exfiltration path for compromised updates.",
-      recommendation:
-        "Capture the release's traffic or ask the vendor for the destination.",
-      evidence: [
-        cite(
-          `${fact.data.method}() request in ${fact.data.module}`,
-          fact,
-          APP_SOURCE,
-        ),
-        ...candidateLines(context.right.app, fact),
-      ],
-      unknowns: [
-        "REA did not resolve this request's destination, and Release Watch cannot tell which site is new.",
-      ],
-    }));
+    .map((group) => {
+      const [fact] = group.facts;
+      return {
+        rule: "RW-N02",
+        severity: "medium",
+        title: `New request with an unresolved destination in ${fact.data.module}`,
+        summary: `${context.labels.right} has more ${fact.data.method}() sites without a resolved destination than ${context.labels.left} (${before.get(fact.data.method) ?? 0} → ${after.get(fact.data.method)}).`,
+        why: "Unexplained outbound traffic is the main exfiltration path for compromised updates.",
+        recommendation:
+          "Capture the release's traffic or ask the vendor for the destination.",
+        evidence: [
+          ...group.facts.map((site) =>
+            cite(
+              `${site.data.method}() request in ${site.data.module}`,
+              site,
+              APP_SOURCE,
+            ),
+          ),
+          ...candidateLines(context.right.app, fact),
+        ],
+        unknowns: [
+          `REA did not resolve the destination${group.facts.length > 1 ? "s" : ""}${group.status === "increased" ? ", and Release Watch cannot tell which site is new" : ""}.`,
+        ],
+      };
+    });
 };
 
 const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1)$/;
@@ -392,8 +432,18 @@ const cleartextChannels = (context) =>
   [...context.network.current]
     .filter(([host]) => !LOCAL.test(host))
     .flatMap(([host, sources]) => {
-      const plain = sources.filter((source) =>
-        CLEARTEXT.has(schemeOf(source.url)),
+      // A URL that only shares a module with a request, or a capture
+      // request the server redirected (an http:// start upgraded to
+      // https://), is not a cleartext channel.
+      const plain = sources.filter(
+        (source) =>
+          CLEARTEXT.has(schemeOf(source.url)) &&
+          source.kind !== "module-literal" &&
+          !(
+            source.kind === "capture" &&
+            source.fact.data.status >= 300 &&
+            source.fact.data.status < 400
+          ),
       );
       if (plain.length === 0) return [];
       const before = context.network.leftSchemes.get(host) ?? new Set();

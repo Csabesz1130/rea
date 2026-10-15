@@ -6,9 +6,15 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { discoverRelease } from "../src/discover.mjs";
-import { markdownText, printable, scrubText } from "../src/redact.mjs";
+import {
+  markdownText,
+  printable,
+  scrubSource,
+  scrubText,
+} from "../src/redact.mjs";
 import { renderMarkdown } from "../src/report/markdown.mjs";
 import { displayLdflags } from "../src/rules/go.mjs";
+import { displayUrl } from "../src/urls.mjs";
 
 const key = "sk-proj-DEMO-not-a-real-key-000000000000000000";
 
@@ -26,14 +32,20 @@ describe("redaction", () => {
     assert.match(text, /sk-proj-…0000 \(46 characters\)/);
   });
 
-  it("masks every -X linker value", () => {
+  it("masks every -X linker value, including quoted values with spaces", () => {
     const flags = displayLdflags(
-      "-s -w -X main.endpoint=https://t.example.net/c?k=abc -X 'main.token=s3cr3t'",
+      "-s -w -X main.endpoint=https://t.example.net/c?k=abc -X 'main.token=Bearer s3cr3tvalue' -X \"main.mode=fast\"",
     );
-    assert.equal(
+    assert.match(
       flags,
-      "-s -w -X main.endpoint=https://t.example.net/c?k=… -X 'main.token=… (6 characters)'",
+      /^-s -w -X main\.endpoint=https:\/\/t\.example\.net\/c\?k=‹[0-9a-f]{4}› /,
     );
+    assert.ok(
+      flags.endsWith(
+        "-X 'main.token=… (18 characters)' -X \"main.mode=… (4 characters)\"",
+      ),
+    );
+    assert.ok(!flags.includes("s3cr3t"));
   });
 
   it("keeps terminal lines and Markdown free of controls and markup", () => {
@@ -124,6 +136,83 @@ describe("URL display", () => {
     assert.equal(
       scrubText("see https://app.example/cb#access_token=abc."),
       "see https://app.example/cb#….",
+    );
+  });
+});
+
+describe("source line scrubbing", () => {
+  it("masks secrets hidden by escapes, inline headers and query pairs outside absolute URLs", () => {
+    const lines = [
+      String.raw`const KEYS = "primary:\nsk-ant-api03-NEWLINEPRECEDEDSECRETNEWLINEPRE42";`,
+      `headers: { Authorization: "Bearer 9f8e7d6c5b4a39281706NONCATALOGBEARER" }`,
+      "fetch(`${BASE}/v1/search?apikey=7f3a9c2e5b1d4f6a8c0e2b4d6f8a0c2e&q=${q}`)",
+      `fetch("http://[fd00::17]:8080/api/v1/push?token=FAKEtoken0123456789")`,
+    ];
+    for (const line of lines)
+      assert.ok(
+        !/SECRET|NONCATALOG|7f3a9c2e|FAKEtoken/.test(scrubSource(line)),
+        scrubSource(line),
+      );
+    assert.equal(
+      scrubSource('const SYNC = "https://api.acmenotes.example/v2/sync";'),
+      'const SYNC = "https://api.acmenotes.example/v2/sync";',
+    );
+  });
+
+  it("keeps commit SHAs and tells masked values apart", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    assert.ok(
+      displayUrl(`https://raw.example.com/acme/w/${sha}/dist/w.js`).includes(
+        sha,
+      ),
+    );
+    assert.notEqual(
+      displayUrl("https://cdn.x/chart.js?v=4.4.1"),
+      displayUrl("https://cdn.x/chart.js?v=4.4.2"),
+    );
+    assert.ok(
+      !displayUrl(
+        "https://h.example/hook/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.abc123DEF456ghi789",
+      ).includes("eyJ"),
+    );
+  });
+});
+
+describe("manifest shapes", () => {
+  const write = (manifest) => {
+    const root = mkdtempSync(path.join(tmpdir(), "rw-shape-"));
+    mkdirSync(path.join(root, "web"));
+    writeFileSync(path.join(root, "web", "index.html"), "<!doctype html>");
+    writeFileSync(
+      path.join(root, "release-watch.json"),
+      JSON.stringify(manifest),
+    );
+    return root;
+  };
+
+  it("names the file for a null manifest and rejects a capture that is not a path or a name repeated in another case", () => {
+    assert.throws(
+      () => discoverRelease(write(null)),
+      /release-watch\.json must be a JSON object/,
+    );
+    assert.throws(
+      () =>
+        discoverRelease(
+          write({ components: [{ name: "web", path: "web", capture: 5 }] }),
+        ),
+      /capture.*not a path/,
+    );
+    assert.throws(
+      () =>
+        discoverRelease(
+          write({
+            components: [
+              { name: "web", path: "web" },
+              { name: "WEB", path: "web" },
+            ],
+          }),
+        ),
+      /listed twice/,
     );
   });
 });

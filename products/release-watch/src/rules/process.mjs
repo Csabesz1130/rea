@@ -1,13 +1,14 @@
-// Process execution not already explained by a more specific rule. Sites are
-// grouped by module and method, so a second exec() where one existed is
-// reported once, with both counts. When the component has no more sites of
-// that method than before and every command is unresolved or already used,
-// the site most likely moved; it is reported low, with the old locations.
+// Process execution not already explained by a more specific rule, one
+// finding per module and method. A key counts when it gained sites or when
+// a site's command differs from every old one. When the component has no
+// more sites of that method than before and every new command matches one
+// that disappeared, the site moved; it is reported low with the old
+// locations. An unresolved command never matches a resolved one.
 import {
   APP_SOURCE,
   absencePhrase,
   cite,
-  newFacts,
+  newGroups,
   packResult,
 } from "./shared.mjs";
 
@@ -18,28 +19,34 @@ const countByMethod = (facts) =>
     new Map(),
   );
 
-// Old-side sites of one method whose key no longer exists on the new side.
+// Old-side sites of one method whose key no longer has them on the new side.
 const vacated = (context, method) =>
   context.diff.app.childProcesses
-    .filter((item) => item.right.length === 0)
-    .flatMap((item) => item.left)
+    .filter((item) => item.left.length > item.right.length)
+    .flatMap((item) => item.left.slice(item.right.length))
     .filter((fact) => fact.data.method === method);
 
-const isMove = (context, entries, method) => {
+// Commands pair one to one; an unresolved command pairs only with another
+// unresolved one, since REA could not tell what either runs.
+const commandsMatch = (sites, old) => {
+  const remaining = old.map((fact) => fact.data.command);
+  return sites.every(({ data }) => {
+    const index = remaining.indexOf(data.command);
+    if (index === -1) return false;
+    remaining.splice(index, 1);
+    return true;
+  });
+};
+
+const isMove = (context, group, method) => {
   const before = countByMethod(context.left.app?.childProcesses ?? []);
   const after = countByMethod(context.right.app?.childProcesses ?? []);
-  const commands = new Set(
-    (context.left.app?.childProcesses ?? [])
-      .map((fact) => fact.data.command)
-      .filter(Boolean),
-  );
+  const old = vacated(context, method);
   return (
+    group.status !== "changed" &&
     (after.get(method) ?? 0) <= (before.get(method) ?? 0) &&
-    vacated(context, method).length > 0 &&
-    entries.every(
-      ({ fact }) =>
-        fact.data.command === null || commands.has(fact.data.command),
-    )
+    old.length > 0 &&
+    commandsMatch(group.facts, old)
   );
 };
 
@@ -55,25 +62,26 @@ const newFileNote = (context, modulePath) => {
     : "";
 };
 
-const finding = (context, entries) => {
-  const [{ fact, status, counts }] = entries;
-  const { method, module } = fact.data;
-  const sites = entries.map((entry) =>
-    cite(
-      `${entry.fact.data.method}() child-process creation`,
-      entry.fact,
-      APP_SOURCE,
-    ),
+const siteLine = (fact) =>
+  cite(
+    `${fact.data.method}() child-process creation${fact.data.command ? "" : " with a command REA did not resolve"}`,
+    fact,
+    APP_SOURCE,
   );
-  const unknowns = entries.some((entry) => entry.fact.data.command === null)
+
+const finding = (context, group) => {
+  const [fact] = group.facts;
+  const { method, module } = fact.data;
+  const sites = group.facts.map(siteLine);
+  const unknowns = group.facts.some((site) => site.data.command === null)
     ? ["REA did not resolve the command statically."]
     : [];
-  if (isMove(context, entries, method))
+  if (isMove(context, group, method))
     return {
       rule: "RW-P01",
       severity: "low",
       title: `Process execution moved: ${method}() now in ${module}`,
-      summary: `${context.labels.right} creates child processes from ${module}; ${context.labels.left} had as many ${method}() sites, in places that no longer have one.`,
+      summary: `${context.labels.right} creates child processes from ${module}; ${context.labels.left} had as many ${method}() sites with the same commands, in places that no longer have them.`,
       why: "Moved process execution is usually a refactor, but the new location may be reachable from different inputs.",
       recommendation:
         "Check that the moved call takes its command from the same source as before.",
@@ -90,30 +98,50 @@ const finding = (context, entries) => {
       ],
       unknowns: [
         ...unknowns,
-        "Release Watch pairs the sites by method and count; REA does not establish that they are the same call.",
+        "Release Watch pairs the sites by method, command and count; REA does not establish that they are the same call.",
       ],
     };
+  const changed = group.status === "changed";
   return {
     rule: "RW-P01",
     severity: "high",
-    title: `New process execution: ${method}() in ${module}`,
-    summary: `${context.labels.right} creates child processes from ${module}${newFileNote(context, module)} (${absencePhrase(status, context.labels.left, counts)}).`,
+    title: changed
+      ? `Process execution changed: ${method}() in ${module}`
+      : `New process execution: ${method}() in ${module}`,
+    summary: changed
+      ? `${context.labels.right} runs a different command from ${module} than ${context.labels.left} did.`
+      : `${context.labels.right} creates child processes from ${module}${newFileNote(context, module)} (${absencePhrase(group.status, context.labels.left, group.counts)}).`,
     why: "Process execution is a common step in supply-chain payloads and widens what the app can do on the machine it runs on.",
     recommendation:
       "Confirm the command source and that it cannot be influenced by web content, model output or network data.",
-    evidence: sites,
+    evidence: [
+      ...sites,
+      ...(changed
+        ? group.left.map((old) =>
+            cite(
+              `${context.labels.left}: ${method}() ran ${old.data.command ? "a resolved command" : "a command REA did not resolve"}`,
+              old,
+              APP_SOURCE,
+              {
+                side: "left",
+              },
+            ),
+          )
+        : []),
+    ],
     unknowns,
   };
 };
 
-export const processPack = (context) => {
-  const groups = new Map();
-  for (const entry of newFacts(context.diff.app.childProcesses)) {
-    if (context.claimed.nodes.has(entry.fact.node_id)) continue;
-    if (!groups.has(entry.fact.key)) groups.set(entry.fact.key, []);
-    groups.get(entry.fact.key).push(entry);
-  }
-  return packResult(
-    [...groups.values()].map((entries) => finding(context, entries)),
+export const processPack = (context) =>
+  packResult(
+    newGroups(context.diff.app.childProcesses, { field: "command" })
+      .map((group) => ({
+        ...group,
+        facts: group.facts.filter(
+          (fact) => !context.claimed.nodes.has(fact.node_id),
+        ),
+      }))
+      .filter((group) => group.facts.length > 0)
+      .map((group) => finding(context, group)),
   );
-};

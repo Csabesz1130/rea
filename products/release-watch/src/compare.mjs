@@ -9,13 +9,15 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { collectSide } from "./collect.mjs";
+import { credentialOf, credentialsIn } from "./catalog.mjs";
+import { collectSide, emptyCollection } from "./collect.mjs";
 import {
+  ambiguousBundles,
   diffApplications,
   diffCaptures,
   diffFuses,
   diffGo,
-  ambiguousBundles,
+  isScriptPath,
   moduleAliases,
 } from "./diff.mjs";
 import { discoverRelease } from "./discover.mjs";
@@ -25,9 +27,10 @@ import {
   releaseBaseline,
   verdictFor,
 } from "./policy.mjs";
-import { printable, scrubText } from "./redact.mjs";
+import { printable, scrubSource } from "./redact.mjs";
 import { openSources } from "./sources.mjs";
 import { surfaceNames, surfacesOf } from "./surfaces.mjs";
+import { maskTag } from "./urls.mjs";
 
 /** Two labels a reader can tell apart: equal versions gain "(old)" and "(new)". */
 const distinct = (left, right) =>
@@ -65,11 +68,7 @@ const releaseLabels = (leftRelease, rightRelease, collected) => {
 const MAX_COMPARISON_INPUT = 64 * 1024 * 1024;
 
 const scriptsOf = (app) =>
-  new Set(
-    app.assets
-      .map((asset) => asset.key)
-      .filter((key) => /\.(m?js|cjs)$/.test(key)),
-  );
+  new Set(app.assets.map((asset) => asset.key).filter(isScriptPath));
 
 // Whether REA's pairing can change anything: some script exists only on the
 // old side and some only on the new side.
@@ -148,36 +147,99 @@ const reaComparison = async ({ rea, component, left, right, outDir, mode }) => {
   };
 };
 
-const pairHelpers = (left, right) => {
-  const relatives = [
-    ...new Set(
-      [...left.helpers, ...right.helpers].map((helper) => helper.relative),
-    ),
-  ];
-  return relatives.sort().map((relative) => {
-    const before =
-      left.helpers.find((helper) => helper.relative === relative) ?? null;
-    const after =
-      right.helpers.find((helper) => helper.relative === relative) ?? null;
-    return {
-      relative,
-      name: path.basename(relative),
+// Pair items by a key, then pair what is left by a fallback key when it is
+// unique on both sides.
+const pairBy = (before, after, key, fallback) => {
+  const pairs = [];
+  const unmatchedAfter = new Set(after);
+  const unmatchedBefore = [];
+  for (const item of before) {
+    const match = after.find(
+      (candidate) =>
+        unmatchedAfter.has(candidate) && key(candidate) === key(item),
+    );
+    if (match) {
+      unmatchedAfter.delete(match);
+      pairs.push([item, match]);
+    } else unmatchedBefore.push(item);
+  }
+  for (const item of unmatchedBefore) {
+    const sameBefore = unmatchedBefore.filter(
+      (other) => fallback(other) === fallback(item),
+    );
+    const candidates = [...unmatchedAfter].filter(
+      (candidate) => fallback(candidate) === fallback(item),
+    );
+    if (
+      fallback(item) !== null &&
+      sameBefore.length === 1 &&
+      candidates.length === 1
+    ) {
+      unmatchedAfter.delete(candidates[0]);
+      pairs.push([item, candidates[0]]);
+    } else pairs.push([item, null]);
+  }
+  return [...pairs, ...[...unmatchedAfter].map((item) => [null, item])];
+};
+
+// Helpers pair by relative path, then by file name when it is unique, so a
+// helper that moved directory is compared with its old build.
+export const pairHelpers = (left, right) =>
+  pairBy(
+    left.helpers,
+    right.helpers,
+    (helper) => helper.relative,
+    (helper) => helper.name,
+  )
+    .map(([before, after]) => ({
+      relative: (after ?? before).relative,
+      name: (after ?? before).name,
       before,
       after,
       go: before?.go && after?.go ? diffGo(before.go, after.go) : null,
+    }))
+    .sort((a, b) => a.relative.localeCompare(b.relative));
+
+// Executables pair by name. A new executable is compared with the old
+// release's first one, so an unhardened executable added next to a hardened
+// one is still graded.
+export const pairRuntimes = (left, right) =>
+  pairBy(
+    left.runtimes,
+    right.runtimes,
+    (runtime) => runtime.name,
+    () => null,
+  ).map(([before, after]) => {
+    const baseline = before ?? (after ? (left.runtimes[0] ?? null) : null);
+    return {
+      name: (after ?? before).name,
+      before: baseline,
+      after,
+      matched: before !== null && after !== null,
+      changes:
+        baseline?.fuses && after?.fuses
+          ? diffFuses(baseline.fuses, after.fuses)
+          : [],
     };
   });
-};
 
 const MAX_LINE = 180;
 const LEAD = 60;
+const STRING = /(["'`])((?:[^"'`\\]|\\.)*)\1/g;
 
 // One source line for display: scrubbed as a whole first, so no window can
-// keep part of a credential, then cut to a window around the cited column.
-const displayLine = (text, column) => {
-  const scrubbed = printable(scrubText(text));
+// keep part of a secret, then cut to a window around the cited column. On a
+// line where REA reported a key-shaped string, every string is masked.
+const displayLine = (text, column, sensitive) => {
+  const source = sensitive
+    ? text.replace(
+        STRING,
+        (_match, quote, body) => `${quote}${maskTag(body)}${quote}`,
+      )
+    : text;
+  const scrubbed = printable(scrubSource(source));
   if (scrubbed.length <= MAX_LINE) return scrubbed.trim();
-  const position = scrubText(text.slice(0, column ?? 0)).length;
+  const position = scrubSource(source.slice(0, column ?? 0)).length;
   const start = Math.max(
     0,
     Math.min(position - LEAD, scrubbed.length - MAX_LINE),
@@ -185,11 +247,24 @@ const displayLine = (text, column) => {
   return `${start > 0 ? "…" : ""}${scrubbed.slice(start, start + MAX_LINE).trim()}…`;
 };
 
+// Lines where REA reported a string or resolved URL holding a key.
+const sensitiveLines = (app) =>
+  new Set(
+    [...app.stringLiterals, ...app.endpoints]
+      .filter(
+        (fact) =>
+          credentialOf(fact.data.value) ||
+          credentialsIn(fact.data.value).length > 0,
+      )
+      .map((fact) => `${fact.location?.file}:${fact.location?.line}`),
+  );
+
 // Source lines for display, attached only to evidence located in this side's
 // release and verified against REA's digest when one was recorded.
 const attachSources = (findings, side, sources, sideName) => {
   if (sources === null) return;
   const digests = new Set(side.app.assets.map((asset) => asset.data.sha256));
+  const sensitive = sensitiveLines(side.app);
   for (const finding of findings) {
     const shown = new Set();
     for (const item of finding.evidence) {
@@ -203,7 +278,11 @@ const attachSources = (findings, side, sources, sideName) => {
       if (snippet === null) continue;
       item.snippet = {
         line: snippet.line,
-        text: displayLine(snippet.text, item.location.column),
+        text: displayLine(
+          snippet.text,
+          item.location.column,
+          sensitive.has(where),
+        ),
         verified: snippet.verified,
         release: side.label,
       };
@@ -213,25 +292,14 @@ const attachSources = (findings, side, sources, sideName) => {
 };
 
 const openSide = (rea, side) => {
-  if (!side.app || side.target.app === null) return Promise.resolve(null);
+  if (!side.app || !side.target?.app) return Promise.resolve(null);
   const assets = new Map(
     side.app.assets.map((asset) => [asset.key, asset.data.sha256]),
   );
   return openSources(rea, side.target.app, assets, side.label);
 };
 
-const emptySide = () => ({
-  target: null,
-  app: null,
-  appFile: null,
-  appEvidence: null,
-  runtime: null,
-  helpers: [],
-  capture: null,
-  surfaces: { electron: [], web: [], ai: [], mcp: [] },
-});
-
-// Collect both sides of one component. Sides run in parallel.
+// Collect both sides of one component, in parallel unless jobs is 1.
 const collectComponent = async ({
   name,
   leftTarget,
@@ -243,7 +311,7 @@ const collectComponent = async ({
 }) => {
   const collect = (side, target) =>
     target === null
-      ? Promise.resolve(emptySide())
+      ? Promise.resolve(emptyCollection())
       : collectSide({
           rea,
           component: name,
@@ -254,6 +322,10 @@ const collectComponent = async ({
           errors,
           analysisArgs: options.analysisArgs ?? [],
         });
+  if (options.jobs === 1) {
+    const left = await collect("left", leftTarget);
+    return { name, left, right: await collect("right", rightTarget) };
+  }
   const [left, right] = await Promise.all([
     collect("left", leftTarget),
     collect("right", rightTarget),
@@ -261,29 +333,63 @@ const collectComponent = async ({
   return { name, left, right };
 };
 
-// A component side is named by its own package version, else the release's
-// label; a side the release does not have is "absent".
-const sideLabels = (collected, releaseLabels) => {
-  const label = (side, fallback) =>
-    side.target === null ? "absent" : versionLabel(side, fallback);
-  return distinct(
-    label(collected.left, releaseLabels.left),
-    label(collected.right, releaseLabels.right),
-  );
+// Several applications as one: every fact family concatenated, coverage the
+// weakest of them. Used as the old side of a component the old release did
+// not have, so code that moved between components is not new.
+const mergeApplications = (apps) => {
+  if (apps.length === 0) return null;
+  const merged = {};
+  for (const [key, value] of Object.entries(apps[0])) {
+    if (Array.isArray(value)) merged[key] = apps.flatMap((app) => app[key]);
+    else if (value instanceof Map)
+      merged[key] = new Map(apps.flatMap((app) => [...app[key]]));
+    else if (value instanceof Set)
+      merged[key] = new Set(apps.flatMap((app) => [...app[key]]));
+    else merged[key] = value;
+  }
+  // A version belongs to one component, not to the release as a whole.
+  merged.package = null;
+  const weakest = (field) =>
+    apps.every((app) => app.coverage[field] === "complete")
+      ? "complete"
+      : "partial";
+  merged.coverage = {
+    ...apps[0].coverage,
+    graph: weakest("graph"),
+    semantic: weakest("semantic"),
+    semantic_ceiling_modules: apps.flatMap(
+      (app) => app.coverage.semantic_ceiling_modules,
+    ),
+  };
+  return merged;
 };
+
+// A side failed when its target was analyzable but REA produced no facts.
+const failed = (side) =>
+  side.target !== null && side.target.app !== null && side.app === null;
 
 // Compare and grade one collected component against the release baseline.
 const finishComponent = async ({
   collected,
-  releaseLabels,
+  oldRelease,
+  releaseLabels: labelsOfRelease,
   baseline,
   rea,
   outDir,
   options,
 }) => {
   const { name } = collected;
-  const labels = sideLabels(collected, releaseLabels);
-  const left = { ...collected.left, label: labels.left };
+  // A component the old release lacks is compared with the whole old
+  // release; a missing side is named by its release.
+  const leftSide =
+    collected.left.target === null
+      ? { ...emptyCollection(), app: mergeApplications(oldRelease) }
+      : collected.left;
+  const labels = distinct(
+    versionLabel(leftSide, labelsOfRelease.left),
+    versionLabel(collected.right, labelsOfRelease.right),
+  );
+  const left = { ...leftSide, label: labels.left };
   const right = { ...collected.right, label: labels.right };
   left.surfaces = surfacesOf(left);
   right.surfaces = surfacesOf(right);
@@ -302,7 +408,7 @@ const finishComponent = async ({
   const aliases = moduleAliases(left.app, right.app, comparison?.pairs ?? []);
   const diff = {
     app: diffApplications(left.app, right.app, aliases),
-    fuses: diffFuses(left.runtime?.fuses ?? null, right.runtime?.fuses ?? null),
+    runtimes: pairRuntimes(left, right),
     helpers: pairHelpers(left, right),
     capture: diffCaptures(left.capture, right.capture),
   };
@@ -319,7 +425,10 @@ const finishComponent = async ({
     surfaces,
     options,
     labels,
-    releaseLabels,
+    releaseLabels: labelsOfRelease,
+    // Without an analyzed old side every fact would look new, so only
+    // coverage is graded and the analysis error decides the verdict.
+    coverageOnly: failed(collected.left),
   });
   try {
     attachSources(findings, right, rightSources, "right");
@@ -341,20 +450,36 @@ const finishComponent = async ({
   };
 };
 
-const pairComponents = (leftRelease, rightRelease) => {
-  const names = [
-    ...rightRelease.components.map((component) => component.name),
-    ...leftRelease.components.map((component) => component.name),
-  ].filter((name, index, all) => all.indexOf(name) === index);
-  const targetOf = (release, name) =>
-    release.components.find((component) => component.name === name)?.target ??
-    null;
-  return names.map((name) => ({
-    name,
-    leftTarget: targetOf(leftRelease, name),
-    rightTarget: targetOf(rightRelease, name),
-  }));
-};
+/**
+ * Components pair by manifest name. A component left unpaired on each side
+ * with the same kind of target is taken as renamed when it is the only such
+ * pair, so its captures are still compared.
+ */
+const pairComponents = (leftRelease, rightRelease) =>
+  pairBy(
+    leftRelease.components,
+    rightRelease.components,
+    (component) => component.name,
+    (component) => component.target.kind,
+  )
+    // In the new release's manifest order, removed components last.
+    .sort(
+      ([, a], [, b]) =>
+        (a === null ? Infinity : rightRelease.components.indexOf(a)) -
+        (b === null ? Infinity : rightRelease.components.indexOf(b)),
+    )
+    .map(([before, after]) => ({
+      name:
+        before && after && before.name !== after.name
+          ? `${before.name}-to-${after.name}`
+          : (after ?? before).name,
+      renamed:
+        before && after && before.name !== after.name
+          ? { from: before.name, to: after.name }
+          : null,
+      leftTarget: before?.target ?? null,
+      rightTarget: after?.target ?? null,
+    }));
 
 /** Compare two releases and return the complete report model. */
 export const compareReleases = async ({
@@ -375,27 +500,30 @@ export const compareReleases = async ({
   const errors = [];
   // Components are collected one after another, each with its two sides in
   // parallel, then graded against what the whole old release contained.
+  const pairs = pairComponents(leftRelease, rightRelease);
   const collected = [];
-  for (const pair of pairComponents(leftRelease, rightRelease))
-    collected.push(
-      await collectComponent({ ...pair, rea, outDir, options, errors }),
-    );
+  for (const pair of pairs)
+    collected.push({
+      ...(await collectComponent({ ...pair, rea, outDir, options, errors })),
+      renamed: pair.renamed,
+    });
   const labels = releaseLabels(leftRelease, rightRelease, collected);
-  const baseline = releaseBaseline(
-    collected.map((component) => component.left),
-  );
+  const oldSides = collected.map((component) => component.left);
+  const oldRelease = oldSides.map((side) => side.app).filter(Boolean);
+  const baseline = releaseBaseline(oldSides);
   const components = [];
-  for (const component of collected)
-    components.push(
-      await finishComponent({
-        collected: component,
-        releaseLabels: labels,
-        baseline,
-        rea,
-        outDir,
-        options,
-      }),
-    );
+  for (const component of collected) {
+    const finished = await finishComponent({
+      collected: component,
+      oldRelease,
+      releaseLabels: labels,
+      baseline,
+      rea,
+      outDir,
+      options,
+    });
+    components.push({ ...finished, renamed: component.renamed });
+  }
   const findings = numberFindings(
     components.flatMap((component) => component.findings),
   );
