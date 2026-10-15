@@ -1,5 +1,6 @@
 // RW-C01: what REA could not examine in the new release, graded by whether
 // that code changed since the old release.
+import { isScriptPath } from "../facts/modules.mjs";
 import { APP_SOURCE, cite, reported } from "./shared.mjs";
 
 const COMPONENT = "Release Watch";
@@ -72,10 +73,10 @@ const applicationGaps = (app) => {
         APP_SOURCE,
       ),
     );
-  if (coverage.semantic_cut_module)
+  if (coverage.semantic_global_limit_reached)
     lines.push(
       reported(
-        `REA's global node limit stopped its analysis partway through ${coverage.semantic_cut_module}`,
+        "REA reached its global node limit, so any analyzed file may have been examined only in part",
         "derived",
         APP_SOURCE,
       ),
@@ -217,8 +218,9 @@ export const incompleteAnalysis = (context) => {
     ? [
         ...app.coverage.semantic_ceiling_modules,
         ...(app.coverage.semantic_unreached_modules ?? []),
-        ...(app.coverage.semantic_cut_module
-          ? [app.coverage.semantic_cut_module]
+        // Any script file may be partial once the global limit is reached.
+        ...(app.coverage.semantic_global_limit_reached
+          ? app.assets.map((asset) => asset.key).filter(isScriptPath)
           : []),
         ...app.analysisFailures
           .map((failure) => failure.location?.file)

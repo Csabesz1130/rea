@@ -87,10 +87,13 @@ export const evaluate = (
     comparison = null,
     baseline = undefined,
     ambiguous = new Set(),
+    release = undefined,
+    name = "app",
   } = {},
 ) =>
   evaluateComponent({
-    name: "app",
+    name,
+    release,
     left,
     right,
     comparison,

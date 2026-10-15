@@ -21,20 +21,18 @@ const ceilingModules = (semantic) => {
     .sort();
 };
 
-// The file REA was projecting when the semantic graph reached its global
-// node ceiling: REA keeps nodes in projection order, so it is the module of
-// the last retained node. Null when the global ceiling was not reached.
-const cutModule = (semantic) => {
+// Whether the semantic graph reached REA's global node ceiling. REA builds
+// files in interleaved steps, so the retained nodes do not say which files
+// it cut short: any analyzed file may be partial then.
+const globalLimitReached = (semantic) => {
   const ceiling = semantic?.coverage?.limits?.find(
     (limit) => limit.name === "semantic_graph_node_ceiling",
   )?.value;
-  if (!semantic?.coverage?.truncated || !ceiling) return null;
-  if (semantic.nodes.length < ceiling) return null;
-  for (let index = semantic.nodes.length - 1; index >= 0; index -= 1) {
-    const modulePath = semantic.nodes[index].identity?.module_path;
-    if (modulePath) return modulePath;
-  }
-  return null;
+  return Boolean(
+    semantic?.coverage?.truncated &&
+    ceiling &&
+    semantic.nodes.length >= ceiling,
+  );
 };
 
 /** REA's coverage of both graphs, as Release Watch reports it. */
@@ -50,7 +48,7 @@ export const coverageOf = (graph, semantic) => ({
       `${limit.name} ${limit.value}${limit.unit === "items" ? "" : ` ${limit.unit}`}`,
   ),
   semantic_ceiling_modules: ceilingModules(semantic),
-  semantic_cut_module: cutModule(semantic),
+  semantic_global_limit_reached: globalLimitReached(semantic),
 });
 
 // Script files with no semantic node at all when REA truncated the semantic
