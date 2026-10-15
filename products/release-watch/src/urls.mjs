@@ -8,8 +8,13 @@ export const isUrl = (value) =>
   typeof value === "string" && /^(https?|wss?):\/\/[^\s"'`]+$/i.test(value);
 
 /** Every absolute URL inside a text. */
+// Sentence punctuation after a URL in prose or a header value is not part of it.
+const splitTail = (match) => /^(.*?)([.,;:!?]*)$/s.exec(match).slice(1);
+
 export const urlsIn = (text) =>
-  typeof text === "string" ? (text.match(URL_TEXT) ?? []) : [];
+  typeof text === "string"
+    ? (text.match(URL_TEXT) ?? []).map((match) => splitTail(match)[0])
+    : [];
 
 export const hostOf = (url) => {
   try {
@@ -58,8 +63,9 @@ export const displayPath = (pathname) =>
     .join("/");
 
 /**
- * A URL for display: user info is dropped, query values and token-like path
- * segments are replaced, so credentials in URLs never reach a report.
+ * A URL for display: user info is dropped, query values, fragments and
+ * token-like path segments are replaced, so credentials in URLs never reach
+ * a report. A URL with nothing to mask is returned exactly as given.
  */
 export const displayUrl = (url) => {
   let parsed;
@@ -68,13 +74,23 @@ export const displayUrl = (url) => {
   } catch {
     return url;
   }
+  const pathname = displayPath(parsed.pathname);
   const names = [...parsed.searchParams.keys()];
-  const base = `${parsed.protocol}//${parsed.host}${displayPath(parsed.pathname)}`;
-  return names.length === 0
-    ? base
-    : `${base}?${names.map((name) => `${name}=…`).join("&")}`;
+  const masked =
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    pathname !== parsed.pathname;
+  if (!masked) return url;
+  const query =
+    names.length === 0 ? "" : `?${names.map((name) => `${name}=…`).join("&")}`;
+  return `${parsed.protocol}//${parsed.host}${pathname}${query}${parsed.hash === "" ? "" : "#…"}`;
 };
 
 /** Apply displayUrl to every URL inside a text. */
 export const displayUrlsIn = (text) =>
-  text.replace(URL_TEXT, (url) => displayUrl(url));
+  text.replace(URL_TEXT, (match) => {
+    const [url, tail] = splitTail(match);
+    return `${displayUrl(url)}${tail}`;
+  });

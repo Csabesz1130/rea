@@ -112,3 +112,18 @@ describe("release manifests", () => {
     );
   });
 });
+
+describe("URL display", () => {
+  it("leaves URLs with nothing to mask exactly as written, including in header values", () => {
+    const csp = "script-src 'self' https://cdn.example.net; connect-src *";
+    assert.equal(scrubText(csp), csp);
+    assert.equal(
+      scrubText("POST https://api.openai.com carries x"),
+      "POST https://api.openai.com carries x",
+    );
+    assert.equal(
+      scrubText("see https://app.example/cb#access_token=abc."),
+      "see https://app.example/cb#….",
+    );
+  });
+});

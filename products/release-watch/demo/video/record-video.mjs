@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Record the Release Watch demo video from a real run:
-//   node capture-terminal.mjs RELEASES_DIR terminal.json BIN_DIR
-//   node record-video.mjs --releases RELEASES_DIR --terminal terminal.json --out demo.mp4
-// The terminal scene replays the captured output at its captured times; the
-// report scene shows the report that run wrote. Needs ffmpeg and Chromium.
+// Record the Release Watch demo video from two real runs in one directory:
+//   node capture-terminal.mjs DIR desktop.json acme-notes-1.4.0-linux-x64 acme-notes-1.5.0-linux-x64 report
+//   node capture-terminal.mjs DIR cloud.json acme-notes-cloud-2.3.0 acme-notes-cloud-2.4.0 cloud-report
+//   node record-video.mjs --releases DIR --desktop desktop.json --cloud cloud.json --out demo.mp4
+// Terminal scenes replay the captured output at its captured times; report
+// scenes show the reports those runs wrote. Needs ffmpeg and Chromium.
 import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
@@ -26,21 +27,27 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const { values } = parseArgs({
   options: {
     releases: { type: "string" },
-    terminal: { type: "string" },
+    desktop: { type: "string" },
+    cloud: { type: "string" },
     out: { type: "string", default: "release-watch-demo.mp4" },
     chromium: { type: "string", default: process.env.CHROMIUM_PATH },
   },
 });
-if (!values.releases || !values.terminal) {
+if (!values.releases || !values.desktop || !values.cloud) {
   console.error(
-    "Usage: record-video.mjs --releases DIR --terminal terminal.json [--out demo.mp4]",
+    "Usage: record-video.mjs --releases DIR --desktop desktop.json --cloud cloud.json [--out demo.mp4]",
   );
   process.exit(1);
 }
 const releases = path.resolve(values.releases);
-const terminal = JSON.parse(readFileSync(values.terminal, "utf8"));
-const report = JSON.parse(
-  readFileSync(path.join(releases, "report", "report.json"), "utf8"),
+const runs = Object.fromEntries(
+  ["desktop", "cloud"].map((name) => {
+    const terminal = JSON.parse(readFileSync(values[name], "utf8"));
+    const report = JSON.parse(
+      readFileSync(path.join(releases, terminal.report, "report.json"), "utf8"),
+    );
+    return [name, { terminal, report }];
+  }),
 );
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const escapeHtml = (text) =>
@@ -84,32 +91,42 @@ const megabytes = (bytes) =>
     ? `${(bytes / 1048576).toFixed(bytes > 1e8 ? 0 : 1)} MB`
     : `${Math.ceil(bytes / 1024)} KB`;
 const treeHtml = () => {
-  const release = path.join(releases, "acme-notes-1.5.0-linux-x64");
-  const size = (relative) =>
-    megabytes(statSync(path.join(release, relative)).size);
-  const runtimeFiles = readdirSync(release).length;
+  const desktop = path.join(releases, "acme-notes-1.5.0-linux-x64");
+  const size = (root, relative) =>
+    megabytes(statSync(path.join(root, relative)).size);
+  const electron = readFileSync(path.join(desktop, "version"), "utf8").trim();
+  const cloud = path.join(releases, "acme-notes-cloud-2.4.0");
   return [
-    `<div class="dir">acme-notes-1.4.0-linux-x64/</div>`,
-    `<div class="dir">acme-notes-1.5.0-linux-x64/</div>`,
-    `<div>  acme-notes <span class="note">Electron ${escapeHtml(readFileSync(path.join(release, "version"), "utf8").trim())}</span><span class="size">${size("acme-notes")}</span></div>`,
-    `<div>  resources/app.asar<span class="size">${size("resources/app.asar")}</span></div>`,
-    `<div>  resources/bin/acme-updater <span class="note">Go</span><span class="size">${size("resources/bin/acme-updater")}</span></div>`,
-    `<div class="note">  + ${runtimeFiles - 2} more runtime files</div>`,
+    `<div class="dir">acme-notes-1.5.0-linux-x64/ <span class="note">desktop</span></div>`,
+    `<div>  acme-notes <span class="note">Electron ${escapeHtml(electron)}</span><span class="size">${size(desktop, "acme-notes")}</span></div>`,
+    `<div>  resources/app.asar<span class="size">${size(desktop, "resources/app.asar")}</span></div>`,
+    `<div>  resources/bin/acme-updater <span class="note">Go</span><span class="size">${size(desktop, "resources/bin/acme-updater")}</span></div>`,
+    `<div class="note">  + ${readdirSync(desktop).length - 2} more runtime files</div>`,
+    `<div class="dir">acme-notes-cloud-2.4.0/ <span class="note">web + API</span></div>`,
+    `<div>  release-watch.json <span class="note">components</span></div>`,
+    `<div>  web/site/ <span class="note">built front end</span></div>`,
+    `<div>  web.har <span class="note">recorded session</span><span class="size">${size(cloud, "web.har")}</span></div>`,
+    `<div>  api/ <span class="note">Node.js, MCP server</span></div>`,
+    `<div class="note">  + 1.4.0 and 2.3.0, the versions in production</div>`,
   ].join("");
 };
 
 const yamlHtml = () =>
   [
-    `<span class="c"># .github/workflows/desktop-rollout.yml</span>`,
-    `- <span class="k">name:</span> Review candidate release`,
-    `  <span class="k">run:</span> release-watch compare current/ candidate/ \\`,
+    `<span class="c"># .github/workflows/release.yml</span>`,
+    `- <span class="k">name:</span> Record the staging session`,
+    `  <span class="k">run:</span> release-watch record https://staging.acmenotes.example \\`,
+    `       --out candidate/web.har --step 'click:#summarize'`,
+    `- <span class="k">name:</span> Review the release`,
+    `  <span class="k">run:</span> release-watch compare production/ candidate/ \\`,
     `       --vendor-domain acmenotes.example --out review`,
-    `- <span class="k">name:</span> Attach summary`,
+    `- <span class="k">name:</span> Comment on the pull request`,
     `  <span class="k">if:</span> always()`,
-    `  <span class="k">run:</span> cat review/report.md >> "$GITHUB_STEP_SUMMARY"`,
+    `  <span class="k">run:</span> gh pr comment --body-file review/report.md`,
   ].join("\n");
 
 const commentHtml = () => {
+  const { report } = runs.cloud;
   const { counts } = report.verdict;
   const top = report.findings
     .slice(0, 5)
@@ -118,15 +135,16 @@ const commentHtml = () => {
         `<li>${escapeHtml(finding.severity.toUpperCase())} · ${escapeHtml(finding.title)}</li>`,
     );
   return [
-    `<span class="who">Release Watch · ${escapeHtml(report.product)} ${escapeHtml(report.left.label)} → ${escapeHtml(report.right.label)}</span>`,
-    `<span class="block">BLOCK</span>`,
+    `<span class="who">Release Watch · ${escapeHtml(report.product)} ${escapeHtml(report.labels.left)} → ${escapeHtml(report.labels.right)}</span>`,
+    `<span class="block">${escapeHtml(report.verdict.decision.toUpperCase())}</span>`,
     `<span>${counts.critical} critical · ${counts.high} high · ${counts.medium} medium · ${counts.low} low</span>`,
     `<ul>${top.join("")}</ul>`,
     `<span class="who">${report.run.rea_calls.length} REA calls · ${(report.run.elapsed_ms / 1000).toFixed(1)} s · ${report.run.llm_tokens} LLM tokens</span>`,
   ].join("");
 };
 
-const terminalScene = async (page) => {
+const terminalScene = async (page, { terminal, report }, caption) => {
+  await page.evaluate(() => window.stage.clear());
   await page.evaluate(() => window.stage.show("terminal"));
   await sleep(500);
   await page.evaluate(() => window.stage.prompt());
@@ -145,97 +163,152 @@ const terminalScene = async (page) => {
     await page.evaluate((text) => window.stage.print(text), line.text);
   }
   await page.evaluate(
-    (seconds) =>
-      window.stage.caption(
-        `A real run: REA read both releases (app code, Electron fuses, Go helper) in ${seconds} s.`,
-      ),
-    (report.run.elapsed_ms / 1000).toFixed(1),
+    (text) => window.stage.caption(text),
+    caption((report.run.elapsed_ms / 1000).toFixed(1)),
   );
   await sleep(4200);
   await page.evaluate(() => window.stage.caption(null));
 };
 
-const REPORT_STEPS = [
+// Steps name findings by rule, so the scene follows the report's numbering.
+const DESKTOP_STEPS = [
   {
     at: "header",
-    hold: 4200,
+    hold: 4000,
     caption:
-      "Verdict first: block this update. Every finding below cites REA Evidence.",
+      "Verdict first: block this update. Every finding cites REA Evidence.",
   },
   {
-    at: "#F1",
-    spot: "#F1",
-    hold: 5600,
+    rule: "RW-E01",
+    hold: 5400,
     caption:
       "Critical: the new runDiagnostics() API lets any script in the window reach exec().",
   },
   {
-    at: "#F1 .unknowns",
+    rule: "RW-E01",
+    part: ".unknowns",
     offset: 360,
-    spot: "#F1 .unknowns",
-    hold: 5200,
+    hold: 5000,
     caption:
       "Each line says how it is known: observed, inferred or correlated. What is unproven is listed.",
   },
   {
-    at: "#F2",
-    spot: "#F2",
-    hold: 5200,
+    rule: "RW-N01",
+    severity: "high",
+    hold: 5000,
     caption:
-      "A new hourly request to a third-party host that 1.4.0 never used.",
+      "A new hourly request to a third-party host the old release never used.",
   },
   {
-    at: "#F4",
-    spot: "#F4",
-    hold: 5200,
+    rule: "RW-E03",
+    hold: 4800,
     caption:
       "Electron's hardening fuses were reset, so the signed app can run as plain Node.js again.",
   },
   {
-    at: "#F5",
-    spot: "#F5",
-    hold: 5200,
+    rule: "RW-G01",
+    hold: 4800,
     caption:
-      "Inside the Go updater: a linker-injected endpoint and a dependency with no checksum.",
+      "Inside the Go updater: a linker-injected endpoint, and a dependency with no checksum.",
   },
   {
-    at: "#F7",
-    spot: "#F7",
+    rule: "RW-N01",
+    severity: "low",
     hold: 4400,
     caption:
-      "The advertised sync feature is graded low: the vendor's own domain, an expected change.",
-  },
-  {
-    at: "main .wrap > section:nth-of-type(2)",
-    spot: null,
-    hold: 4600,
-    caption: "A full inventory of what changed between the two builds.",
-  },
-  {
-    at: "main .wrap > section:nth-of-type(3)",
-    spot: null,
-    hold: 4600,
-    caption:
-      "Complete REA Evidence ships with the report for audit. No data sent to a model.",
+      "The advertised sync feature is graded low: the vendor's own domain.",
   },
 ];
 
-const reportScene = async (page) => {
+const CLOUD_STEPS = [
+  {
+    at: "header",
+    hold: 4400,
+    caption:
+      "The web release: two components, a recorded browser session for each version.",
+  },
+  {
+    rule: "RW-A02",
+    hold: 5600,
+    caption:
+      "An OpenAI key shipped in the browser bundle. The report masks it, even in the source line.",
+  },
+  {
+    rule: "RW-H03",
+    hold: 5000,
+    caption:
+      "The recorded session shows browsers sending that credential straight to OpenAI.",
+  },
+  {
+    rule: "RW-M01",
+    hold: 5400,
+    caption:
+      "The API's new MCP server has a tool whose handler runs shell commands.",
+  },
+  {
+    rule: "RW-W01",
+    hold: 4600,
+    caption:
+      "A new third-party script: it runs with full access to the page and its users' sessions.",
+  },
+  {
+    rule: "RW-H02",
+    hold: 4800,
+    caption:
+      "The live site dropped HSTS and loosened its Content-Security-Policy.",
+  },
+  {
+    rule: "RW-A04",
+    hold: 4800,
+    caption:
+      "The summarizer's system prompt changed: it now asks for the author's email address.",
+  },
+  {
+    at: "#coverage",
+    hold: 4800,
+    caption:
+      "What REA could not examine is reported, so a pass is never silent.",
+  },
+  {
+    at: "#evidence",
+    hold: 4400,
+    caption:
+      "Complete REA Evidence ships with the report. No data was sent to a model.",
+  },
+];
+
+// The CSS selector of a step's target in the report.
+const targetOf = (report, step) => {
+  if (step.at) return step.at;
+  const finding = report.findings.find(
+    (candidate) =>
+      candidate.rule === step.rule &&
+      (!step.severity || candidate.severity === step.severity),
+  );
+  if (!finding)
+    throw new Error(`The report has no ${step.rule} finding for the video`);
+  return `#${finding.id}${step.part ? ` ${step.part}` : ""}`;
+};
+
+const reportScene = async (page, { report }, steps) => {
   await page.evaluate(() => window.stage.show("report"));
-  for (const step of REPORT_STEPS) {
-    await page.evaluate((spot) => window.stage.spotlight(spot), null);
+  for (const step of steps) {
+    const target = targetOf(report, step);
+    await page.evaluate(() => window.stage.spotlight(null));
     await page.evaluate(
       (caption) => window.stage.caption(caption),
       step.caption,
     );
-    if (step.at !== "header")
-      await page.evaluate(
-        ({ at, offset }) => window.stage.scrollReport(at, offset, 1000),
-        { at: step.at, offset: step.offset ?? 24 },
-      );
+    await page.evaluate(
+      ({ at, offset }) =>
+        at === "header"
+          ? window.stage.scrollReport("body", 0, 800)
+          : window.stage.scrollReport(at, offset, 1000),
+      { at: target, offset: step.offset ?? 24 },
+    );
     await page.evaluate(
       (spot) => window.stage.spotlight(spot),
-      step.spot ?? null,
+      target === "header" ? null : target,
     );
     await sleep(step.hold);
   }
@@ -304,6 +377,9 @@ const encode = ({ frames, ended }, out) => {
   }
 };
 
+const reportUrl = (base, name) =>
+  `${base}/${runs[name].terminal.report}/report.html`;
+
 const main = async () => {
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -325,7 +401,7 @@ const main = async () => {
     );
     await page.evaluate(
       (url) => window.stage.loadReport(url),
-      `${base}/report/report.html`,
+      reportUrl(base, "desktop"),
     );
     await page.evaluate(() => document.fonts.ready);
     await sleep(800);
@@ -333,11 +409,28 @@ const main = async () => {
     await page.evaluate(() => window.stage.show("title"));
     await sleep(4800);
     await page.evaluate(() => window.stage.show("context"));
-    await sleep(7200);
-    await terminalScene(page);
-    await reportScene(page);
+    await sleep(8200);
+    await terminalScene(
+      page,
+      runs.desktop,
+      (seconds) =>
+        `The desktop update: REA read the app code, Electron fuses and Go helper in ${seconds} s.`,
+    );
+    await reportScene(page, runs.desktop, DESKTOP_STEPS);
+    const loaded = page.evaluate(
+      (url) => window.stage.loadReport(url),
+      reportUrl(base, "cloud"),
+    );
+    await terminalScene(
+      page,
+      runs.cloud,
+      (seconds) =>
+        `The web and AI release: built site, API code and both browser sessions in ${seconds} s.`,
+    );
+    await loaded;
+    await reportScene(page, runs.cloud, CLOUD_STEPS);
     await page.evaluate(() => window.stage.show("ci"));
-    await sleep(7400);
+    await sleep(7600);
     await page.evaluate(() => window.stage.show("close"));
     await sleep(7600);
     const recording = await stop();

@@ -111,7 +111,20 @@ captures against a local HTTPS server. The Electron demo needs Linux x64, Go,
 `curl` and `unzip`; set `ELECTRON_ZIP` to reuse a downloaded
 `electron-v38.2.0-linux-x64.zip`.
 
-`demo/video/` records a demo video from a real run; see the scripts' headers.
+`demo/video/` records the demo video from two real runs in one directory that
+holds both Electron releases and copies of the two cloud releases. Terminal
+scenes replay the captured output at its captured times, and report scenes
+show the reports those runs wrote. It needs ffmpeg, Chromium (`CHROMIUM_PATH`)
+and this repository's `playwright-core` dev dependency.
+
+```bash
+node demo/video/capture-terminal.mjs "$dir" desktop.json \
+  acme-notes-1.4.0-linux-x64 acme-notes-1.5.0-linux-x64 report
+node demo/video/capture-terminal.mjs "$dir" cloud.json \
+  acme-notes-cloud-2.3.0 acme-notes-cloud-2.4.0 cloud-report
+node demo/video/record-video.mjs --releases "$dir" \
+  --desktop desktop.json --cloud cloud.json --out release-watch-demo.mp4
+```
 
 ## How it works
 

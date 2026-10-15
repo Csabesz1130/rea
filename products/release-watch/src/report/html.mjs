@@ -135,9 +135,9 @@ th, td { text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var
 th { font: 600 11px/1.2 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 td.mono, .mono { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
 .st { font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; }
-.st.added, .st.new, .st.changed { color: var(--high); }
+.st.added, .st.new, .st.more, .st.changed { color: var(--high); }
 .st.removed, .st.gone { color: var(--low); }
-.st.unchanged, .st.known { color: var(--muted); }
+.st.unchanged, .st.known, .st.renamed { color: var(--muted); }
 .regressed { color: var(--high); font-weight: 600; }
 .empty { color: var(--muted); font-style: italic; }
 footer { color: var(--muted); font-size: 13px; }
@@ -182,11 +182,13 @@ const findingRow = (finding, showComponent) => `
 const STATUS_CLASS = new Set([
   "added",
   "new",
+  "more",
   "changed",
   "removed",
   "gone",
   "unchanged",
   "known",
+  "renamed",
 ]);
 
 const cellHtml = (value) => {
@@ -210,7 +212,7 @@ const WIDE = new Set([
 ]);
 
 const inventorySection = (model) => `
-<section>
+<section id="inventory">
   <h2>What changed</h2>
   <p class="lede">Every capability REA recovered from both releases. "New" means REA saw it only in the new release but its coverage of the old one cannot prove it was absent.</p>
   ${model.components
@@ -236,7 +238,7 @@ const coverageSection = (model) => {
     ...scoped(component, component.left, component.coverage.left.limitations),
   ]);
   return `
-<section>
+<section id="coverage">
   <h2>Coverage and limits</h2>
   <p class="lede">What REA and Release Watch could not examine. Findings cover only the examined code and captures.</p>
   <ul class="limits">${model.limitations.map((note) => `<li>${escape(note)}</li>`).join("")}</ul>
@@ -311,7 +313,7 @@ const provenanceSection = (model) => {
     call.ok ? "ok" : "failed",
   ]);
   return `
-<section>
+<section id="evidence">
   <h2>Evidence and cost</h2>
   <p class="lede">Each finding links to complete REA Evidence saved next to this report under evidence/. The analysis is deterministic and sent no data to a model. The evidence directory keeps REA's records verbatim, including any credentials the releases contain; treat it as sensitive.</p>
   <div class="tables">
@@ -386,7 +388,7 @@ export const renderHtml = (report) => {
 </div></header>
 <main><div class="wrap">
   ${errors}
-  <section>
+  <section id="findings">
     <h2>Findings</h2>
     <p class="lede">Ordered by severity. Each line says whether REA observed it, REA inferred it, or Release Watch correlated it; what neither could establish is listed separately.</p>
     <div class="ledger">${report.findings.map((finding) => findingRow(finding, showComponent)).join("") || `<p class="empty">No findings.</p>`}</div>

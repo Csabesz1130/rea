@@ -355,8 +355,8 @@
       </svg>
       <h1>Release Watch</h1>
       <p class="lead">
-        See what a desktop-app update really changed before it reaches your
-        fleet.
+        See what a release really changed before it reaches your users: desktop
+        apps, web apps and AI apps.
       </p>
       <p class="base">
         Prototype built on REA, the open-source reverse-engineering evidence
@@ -367,11 +367,16 @@
     <section class="scene" id="context">
       <div class="left">
         <span class="eyebrow">The situation</span>
-        <h2>Acme Notes 1.5.0 is ready for 5,000 laptops.</h2>
-        <p class="notes">Vendor release notes: <b>“Adds cloud sync.”</b></p>
+        <h2>Two releases wait for approval today.</h2>
+        <p class="notes">
+          Acme Notes 1.5.0 for 5,000 laptops: <b>“Adds cloud sync.”</b>
+        </p>
+        <p class="notes">
+          Acme Notes Cloud 2.4.0, web and API: <b>“Adds AI summaries.”</b>
+        </p>
         <p class="lead muted">
-          Security has to decide today. There is no source code, only the
-          shipped builds.
+          No source code: only the shipped builds and a recorded browser session
+          of each version.
         </p>
       </div>
       <div class="tree" id="tree"></div>
@@ -392,8 +397,10 @@
 
     <section class="scene" id="ci">
       <div class="left">
-        <span class="eyebrow">In the rollout pipeline</span>
-        <h2>Exit code 2 stops the update. The summary lands in the ticket.</h2>
+        <span class="eyebrow">In the release pipeline</span>
+        <h2>
+          Exit code 2 stops the rollout. The summary lands in the pull request.
+        </h2>
         <div class="yaml" id="yaml"></div>
       </div>
       <div class="comment" id="comment"></div>
@@ -402,24 +409,28 @@
     <section class="scene" id="close">
       <span class="eyebrow">Release Watch · prototype</span>
       <h2>
-        Every update reviewed in seconds, with evidence an auditor can check.
+        Every release reviewed in seconds, with evidence an auditor can check.
       </h2>
       <div class="cols">
         <div class="col">
           <b>Who buys</b
           ><span
-            >IT security and vendor-risk teams that approve desktop
-            software</span
+            >Security, vendor-risk and AI-governance teams that approve desktop,
+            web and AI releases</span
           >
         </div>
         <div class="col">
           <b>Pricing to test</b
-          ><span>Per monitored app per year, with an on-premises option</span>
+          ><span
+            >Per monitored app per year, a CI tier per repository, and an
+            on-premises option</span
+          >
         </div>
         <div class="col">
           <b>Next</b
           ><span
-            >macOS and Windows builds, update-feed watching, SBOM export</span
+            >macOS and Windows builds, update-feed watching, SBOM export,
+            model-provider policies</span
           >
         </div>
       </div>

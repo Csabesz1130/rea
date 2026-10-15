@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Run the real CLI once in RELEASES_DIR and record each output line with its
-// arrival time, for the terminal scene of the demo video.
-//   node capture-terminal.mjs RELEASES_DIR terminal.json
+// Run the real CLI once and record each output line with its arrival time,
+// for a terminal scene of the demo video.
+//   node capture-terminal.mjs CWD OUT.json OLD NEW REPORT_DIR
+// OLD, NEW and REPORT_DIR are relative to CWD, so the replayed command reads
+// the way a person would type it.
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
@@ -11,19 +13,19 @@ const cli = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../bin/release-watch.mjs",
 );
-const [cwd, out] = process.argv.slice(2);
-if (!cwd || !out) {
-  console.error("Usage: capture-terminal.mjs RELEASES_DIR terminal.json");
+const [cwd, out, left, right, report] = process.argv.slice(2);
+if (!cwd || !out || !left || !right || !report) {
+  console.error("Usage: capture-terminal.mjs CWD OUT.json OLD NEW REPORT_DIR");
   process.exit(1);
 }
 const args = [
   "compare",
-  "acme-notes-1.4.0-linux-x64",
-  "acme-notes-1.5.0-linux-x64",
+  left,
+  right,
   "--vendor-domain",
   "acmenotes.example",
   "--out",
-  "report",
+  report,
 ];
 const started = performance.now();
 const child = spawn(process.execPath, [cli, ...args], {
@@ -50,7 +52,7 @@ child.on("close", (code) => {
   const command = `release-watch ${args.join(" ")}`;
   writeFileSync(
     out,
-    `${JSON.stringify({ command, exit: code, lines }, null, 2)}\n`,
+    `${JSON.stringify({ command, report, exit: code, lines }, null, 2)}\n`,
   );
   console.log(`exit ${code}, ${lines.length} lines, ${elapsed()} ms`);
 });
