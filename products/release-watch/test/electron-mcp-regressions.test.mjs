@@ -199,7 +199,7 @@ describe("BrowserWindow pairing", () => {
 
 describe("MCP tool reachability", () => {
   const server = "src/server.js";
-  const mcpApp = ({ execs, definitions = [], reads = [] }) =>
+  const mcpApp = ({ execs, callables = [], reads = [] }) =>
     app({
       imports: [
         fact(
@@ -223,7 +223,7 @@ describe("MCP tool reachability", () => {
         ),
       ],
       childProcesses: execs,
-      bindingDefinitions: definitions,
+      callables,
       bindingReads: reads,
     });
   const exec = (module, line, command = null) =>
@@ -236,12 +236,8 @@ describe("MCP tool reachability", () => {
   it("follows a tool handler into a function defined in the same module", () => {
     const helper = mcpApp({
       execs: [exec(server, 40)],
-      definitions: [
-        fact(
-          `${server}#runCommand`,
-          { module: server, name: "runCommand", range: range(38, 0, 42, 1) },
-          at(server, 38),
-        ),
+      callables: [
+        { module: server, name: "runCommand", range: range(38, 0, 42, 1) },
       ],
       reads: [
         fact(
@@ -258,13 +254,22 @@ describe("MCP tool reachability", () => {
     assert.deepEqual(rules(findings), ["RW-M01"]);
     assert.match(
       findings[0].evidence[2].claim,
-      /a function defined in the same module/,
+      /a function in the same module whose body holds/,
     );
   });
 
   it("does not call a tool's exec new when it only moved into a helper module", () => {
-    const inline = mcpApp({ execs: [exec(server, 15)] });
-    const moved = mcpApp({ execs: [exec("src/shell.js", 3)] });
+    const inline = mcpApp({ execs: [exec(server, 15, "git gc --auto")] });
+    const moved = mcpApp({
+      execs: [exec("src/shell.js", 3, "git gc --auto")],
+      callables: [
+        {
+          module: "src/shell.js",
+          name: "runCommand",
+          range: range(1, 0, 5, 1),
+        },
+      ],
+    });
     moved.modules = new Map([
       [
         server,

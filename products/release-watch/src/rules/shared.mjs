@@ -64,7 +64,9 @@ export const newGroups = (items, { field = null } = {}) =>
 export const absencePhrase = (status, leftLabel, counts = null) => {
   if (status === "added") return `absent from ${leftLabel}`;
   if (status === "changed")
-    return `the same number of sites as ${leftLabel}, with a different value`;
+    return counts && counts.before !== counts.after
+      ? `${counts.after} sites here, ${counts.before} in ${leftLabel}, with a value ${leftLabel} did not have`
+      : `as many sites as ${leftLabel}, with a value ${leftLabel} did not have`;
   if (status === "increased" && counts)
     return `${counts.after} such sites here, ${counts.before} in ${leftLabel}; Release Watch cannot tell which is new`;
   return `not observed in ${leftLabel}; REA coverage does not establish absence`;

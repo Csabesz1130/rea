@@ -85,10 +85,17 @@ const toolExecution = (context) => {
       recommendation:
         "Remove the tool or restrict it to an allow-list of fixed commands, and require human confirmation for each call.",
       evidence: [
-        cite(`${call.data.member}() call`, call, APP_SOURCE),
+        // Every registration with this capability: Release Watch cannot tell which one is new.
+        ...[
+          ...new Set(
+            pairs.filter((pair) => pair.key === key).map((pair) => pair.call),
+          ),
+        ].map((registration) =>
+          cite(`${registration.data.member}() call`, registration, APP_SOURCE),
+        ),
         SERVER,
         heuristic(
-          reachClaim(path, exec, "The call"),
+          reachClaim(path, exec, "the registration call"),
           path.read?.location ?? exec.location,
         ),
         cite(

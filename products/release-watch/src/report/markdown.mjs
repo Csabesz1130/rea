@@ -81,7 +81,7 @@ export const renderMarkdown = (model) => {
     "",
     ...model.components.map(
       (component) =>
-        `- ${code(component.name)} ${text(component.left.label)} → ${text(component.right.label)}${component.surfaces.length ? ` · ${component.surfaces.join(", ")}` : ""}`,
+        `- ${code(component.name)} ${component.left.present === false ? `${text(component.right.label)}, new component` : component.right.present === false ? `${text(component.left.label)}, removed` : `${text(component.left.label)} → ${text(component.right.label)}`}${component.surfaces.length ? ` · ${component.surfaces.join(", ")}` : ""}`,
     ),
     "",
   ];

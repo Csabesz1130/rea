@@ -28,6 +28,9 @@ import {
   packResult,
 } from "./shared.mjs";
 
+const BROWSER_LIMIT =
+  "Release Watch classifies browser code by what HTML pages and service workers load; dedicated workers and scripts loaded at runtime are not classified, so the old placement may also have been in the browser.";
+
 const BROWSER_CODE = heuristic(
   "Release Watch treats scripts an HTML page or service worker loads, and the modules they import, as browser code",
 );
@@ -54,13 +57,15 @@ const providerFindings = (context) => {
     hosts.push(host);
     findings.push({
       rule: "RW-A01",
-      severity: "high",
+      // Only the browser placement is new when the host was known; that
+      // placement is Release Watch's classification, so it reviews, not blocks.
+      severity: fresh ? "high" : "medium",
       title: fromBrowser
         ? `Browser code calls ${provider} directly (${host})`
         : `New AI provider receives data: ${provider} (${host})`,
       summary: fresh
         ? `${labels.right} sends requests to ${provider}; ${host} was ${hostAbsence(context)}.`
-        : `${labels.right} calls ${provider} from browser code; ${labels.left} contacted ${host} only from code that does not run in the browser.`,
+        : `${labels.right} calls ${provider} from code Release Watch classifies as browser code; no module of ${labels.left} that contacted ${host} was classified that way.`,
       why: fromBrowser
         ? `Prompts and user data now go to ${provider} straight from users' browsers. A browser cannot authenticate to ${provider} without a credential anyone can read, unless the vendor issues short-lived tokens.`
         : `Prompts and user data now go to ${provider}. That is a new processor for privacy, contract and AI-governance reviews.`,
@@ -74,7 +79,7 @@ const providerFindings = (context) => {
       unknowns: [
         ...sourceUnknowns(sources),
         "Release Watch does not see what the requests contain.",
-        ...(fresh ? absenceUnknowns(context) : []),
+        ...(fresh ? absenceUnknowns(context) : [BROWSER_LIMIT]),
       ],
     });
   }
@@ -150,10 +155,10 @@ const credentialFindings = (context) => {
           : "";
         return {
           rule: "RW-A02",
-          severity: inBrowser ? "critical" : "high",
+          severity: inBrowser && !moved ? "critical" : "high",
           title: `${token.kind} ${moved ? "moved into" : "shipped in"} ${inBrowser ? "browser code" : "code"}: ${carrier.module}`,
           summary: moved
-            ? `${labels.right} ships a ${token.kind} in browser code that ${labels.left} kept in code that does not run in the browser.`
+            ? `${labels.right} ships a ${token.kind} in code Release Watch classifies as browser code; ${labels.left} had the same key only in code it did not classify that way.`
             : `${labels.right} contains a string with the format of a ${token.kind}${binding}.`,
           why: inBrowser
             ? "Anyone who opens the site can read this key and use the account it belongs to."
@@ -169,6 +174,7 @@ const credentialFindings = (context) => {
             ...(inBrowser ? [BROWSER_CODE] : []),
           ],
           unknowns: [
+            ...(moved ? [BROWSER_LIMIT] : []),
             "Release Watch matched a documented key format; it cannot tell whether the key is live.",
             "REA reports strings assigned to variables and URLs it resolved; a key written inline in a call or header is not seen.",
             "The raw value remains in the saved REA Evidence under evidence/; treat that directory as sensitive.",

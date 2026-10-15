@@ -98,21 +98,13 @@ export const destinationsOf = (side, { includeCapture }) => {
 
 const HOSTNAME = /^(?=.{4,253}$)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
 
-/**
- * Hosts one old side is known to contact or name: destinations, captured
- * hosts, HTML script hosts, and bare host names REA reported as string
- * literals (`https.request({ hostname: HOST })`).
- */
+/** Hosts one old side is known to contact: destinations, captured hosts and HTML script hosts. */
 export const knownHosts = (side) =>
   new Set([
     ...destinationsOf(side, { includeCapture: true }).keys(),
     ...(side.app?.pageScripts ?? [])
       .map((script) => scriptHostOf(script.data.script_path))
       .filter(Boolean),
-    ...(side.app?.stringLiterals ?? [])
-      .map((literal) => literal.data.value)
-      .filter((value) => HOSTNAME.test(value))
-      .map((value) => value.toLowerCase()),
   ]);
 
 /** The module a destination source was seen in: the request's, the literal's, or the endpoint's location. */
@@ -121,6 +113,15 @@ export const sourceModule = (source) =>
   source.fact?.data?.module ??
   source.fact?.location?.file ??
   null;
+
+/** Bare host names one side's code holds as string literals (`hostname: HOST`, a block list). */
+export const namedHosts = (side) =>
+  new Set(
+    (side.app?.stringLiterals ?? [])
+      .map((literal) => literal.data.value)
+      .filter((value) => HOSTNAME.test(value))
+      .map((value) => value.toLowerCase()),
+  );
 
 /** Hosts one side contacts from browser code or a browser capture. */
 export const browserHosts = (side) =>
@@ -142,12 +143,26 @@ export const browserHosts = (side) =>
  * component), and the deployment's own host (the first page each capture
  * loaded).
  */
-export const networkView = (left, right, baseline = { hosts: new Set() }) => {
+export const networkView = (
+  left,
+  right,
+  baseline = { hosts: new Set() },
+  { ignoreCapture = false, vendorDomains = [] } = {},
+) => {
   const leftDestinations = destinationsOf(left, { includeCapture: true });
   const known = new Set([...knownHosts(left), ...baseline.hosts]);
-  const current = destinationsOf(right, { includeCapture: true });
+  // Without a readable old capture, hosts seen only at runtime cannot be compared.
+  const current = destinationsOf(right, { includeCapture: !ignoreCapture });
+  // The deployment: the hosts each capture started on. With vendor domains
+  // given, only those of them on a vendor domain, so a session that starts
+  // at a third-party sign-in page does not make that provider "own".
+  const started = [
+    ...(left.capture?.startHosts ?? []),
+    ...(right.capture?.startHosts ?? []),
+  ];
+  const vendor = started.filter((host) => isVendorHost(host, vendorDomains));
   const own = new Set(
-    [left.capture?.mainHost, right.capture?.mainHost].filter(Boolean),
+    vendorDomains.length > 0 && vendor.length > 0 ? vendor : started,
   );
   // The deployment's own origin is the site itself, not a destination.
   const fresh = new Map(
@@ -159,7 +174,7 @@ export const networkView = (left, right, baseline = { hosts: new Set() }) => {
       new Set(sources.map((source) => schemeOf(source.url))),
     ]),
   );
-  return { known, current, fresh, own, leftSchemes };
+  return { known, named: namedHosts(left), current, fresh, own, leftSchemes };
 };
 
 /** The old release, named as a whole: hosts are compared across all its components. */
@@ -326,10 +341,12 @@ const isFirstParty = (host, context) =>
 const destinationFinding = (host, sources, context) => {
   const { labels } = context;
   const firstParty = isFirstParty(host, context);
+  // The old code held the host name, but REA saw no request to it.
+  const named = context.network.named.has(host);
   const runtime = sources.some((source) => source.kind === "capture");
   return {
     rule: "RW-N01",
-    severity: firstParty ? "low" : "high",
+    severity: firstParty ? "low" : named ? "medium" : "high",
     title: `New ${firstParty ? "first-party" : "third-party"} destination: ${host}`,
     summary: isGuess(sources)
       ? `${labels.right} has a request with an unresolved destination in a module that also holds a URL for ${host}; the host was ${hostAbsence(context)}.`
@@ -344,7 +361,15 @@ const destinationFinding = (host, sources, context) => {
       ...sourceEvidence(sources, labels),
       ...contextEvidence(sources, context.right.app),
     ],
-    unknowns: [...sourceUnknowns(sources), ...absenceUnknowns(context)],
+    unknowns: [
+      ...sourceUnknowns(sources),
+      ...absenceUnknowns(context),
+      ...(named
+        ? [
+            `${context.labels.left}'s code held the name ${host} as a string, so it may have contacted it in a way REA did not see.`,
+          ]
+        : []),
+    ],
   };
 };
 
@@ -378,8 +403,15 @@ const candidateLines = (app, request) =>
 // of that method than before, so code that moved between modules is not
 // reported as new.
 const unresolvedRequests = (context, explained) => {
-  const before = unresolvedPerMethod(context.left.app);
-  const after = unresolvedPerMethod(context.right.app);
+  // Across the release when known, so a request that moved between
+  // components is not new.
+  const release = context.release?.counts.requests;
+  const before = release
+    ? new Map([...release].map(([method, entry]) => [method, entry.before]))
+    : unresolvedPerMethod(context.left.app);
+  const after = release
+    ? new Map([...release].map(([method, entry]) => [method, entry.after]))
+    : unresolvedPerMethod(context.right.app);
   return newGroups(context.diff.app.requests)
     .map((group) => ({
       ...group,

@@ -75,7 +75,9 @@ describe("compare: Electron app directories", { skip }, () => {
     const finding = run1.report.findings.find(
       (candidate) => candidate.rule === "RW-E01",
     );
-    const exec = finding.evidence.find((item) => /exec\(\)/.test(item.claim));
+    const exec = finding.evidence.find((item) =>
+      item.claim.startsWith("exec() creates"),
+    );
     assert.equal(exec.location.file, "lib/diagnostics.js");
     assert.equal(exec.snippet.verified, true);
   });

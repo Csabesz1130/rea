@@ -15,7 +15,9 @@ const scriptFindings = (context) => {
   const { labels, options, network } = context;
   const findings = [];
   const hosts = [];
-  for (const { fact, status } of newFacts(context.diff.app.pageScripts)) {
+  // One finding per script, whatever the number of pages that load it.
+  for (const { facts, status } of newGroups(context.diff.app.pageScripts)) {
+    const [fact] = facts;
     // External by the host a browser resolves, whatever REA's resolution
     // status says about a source with surrounding whitespace.
     const host = scriptHostOf(fact.data.script_path);
@@ -35,13 +37,13 @@ const scriptFindings = (context) => {
       why: "A third-party script runs with full access to the page, its data and its users' sessions. The 2024 polyfill.io takeover used exactly this path.",
       recommendation:
         "Self-host the script or pin it with Subresource Integrity, and confirm what data the vendor collects.",
-      evidence: [
+      evidence: facts.map((page) =>
         cite(
           `HTML script reference to ${source} (${absencePhrase(status, labels.left)})`,
-          fact,
+          page,
           APP_SOURCE,
         ),
-      ],
+      ),
       unknowns: [
         "REA does not report integrity or crossorigin attributes, so Release Watch cannot tell whether the script is pinned.",
       ],
@@ -74,8 +76,10 @@ const serviceWorkerFindings = (context) =>
 // Bundler runtime and external-module stubs a source map lists, which are
 // not the product's own source files.
 const isStub = (original) =>
-  /^(webpack\/|external |\(webpack\)|\/?webpack\/bootstrap)/.test(original) ||
-  / external /.test(original);
+  /external (commonjs|commonjs2|module|amd|var|root|umd|node-commonjs|import)/.test(
+    original,
+  ) ||
+  /(^|\/)\(webpack\)|webpack\/(bootstrap|runtime)|^webpack\//.test(original);
 
 const embeddedSourceFindings = (context) => {
   // Unknown when REA could not analyze some old files: they may have shipped sources.

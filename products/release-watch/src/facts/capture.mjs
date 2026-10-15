@@ -96,18 +96,48 @@ const credentialsOf = (capture, record, url) => {
   );
 };
 
+// A cookie's scope: its Domain attribute without the leading dot, else the
+// host that set it.
+const cookieDomain = (cookie, url) =>
+  typeof cookie.domain === "string" && cookie.domain !== ""
+    ? cookie.domain.replace(/^\./, "").toLowerCase()
+    : url.hostname;
+
 const cookiesOf = (capture, record, url) =>
   (record.reported.response?.cookies ?? [])
     .filter((cookie) => typeof cookie.name === "string")
     .map((cookie) =>
-      recordFact(capture, record, `${url.hostname}#${cookie.name}`, {
-        host: url.hostname,
-        name: cookie.name,
-        http_only: cookie.httpOnly === true,
-        secure: cookie.secure === true,
-        same_site: cookie.sameSite ?? null,
-      }),
+      recordFact(
+        capture,
+        record,
+        `${cookieDomain(cookie, url)}#${cookie.name}`,
+        {
+          host: url.hostname,
+          domain: cookieDomain(cookie, url),
+          name: cookie.name,
+          http_only: cookie.httpOnly === true,
+          secure: cookie.secure === true,
+          same_site: cookie.sameSite ?? null,
+        },
+      ),
     );
+
+// Where a redirect response points, from the HAR's redirectURL or Location.
+const redirectHost = (record, url) => {
+  const response = record.reported.response ?? {};
+  if (!(response.status >= 300 && response.status < 400)) return null;
+  const location =
+    response.redirectURL ||
+    (response.headers ?? []).find(
+      (header) => String(header.name).toLowerCase() === "location",
+    )?.value;
+  if (!location) return null;
+  try {
+    return new URL(location, url).hostname;
+  } catch {
+    return null;
+  }
+};
 
 const exchangeFact = (capture, record, url) =>
   recordFact(capture, record, url.hostname, {
@@ -148,9 +178,29 @@ const apiGroupFact = (capture, view, group) => {
       method: group.method,
       origin: group.origin,
       path_template: group.path_template,
+      display: `${group.method} ${group.origin}${displayPath(group.path_template)}`,
       statuses: group.statuses ?? [],
     },
   };
+};
+
+// Pages and cookies of the deployment pair by path and name, so a staging
+// host can be compared with production; those of other hosts (iframes,
+// third parties) keep their host.
+const keyByDeployment = (facts) => {
+  const own = new Set(facts.startHosts);
+  const ownScope = (domain) =>
+    [...own].some((host) => host === domain || host.endsWith(`.${domain}`));
+  for (const document of facts.documents)
+    if (!own.has(document.data.host)) {
+      document.key = `${document.data.host}${document.data.path}`;
+      document.label = document.key;
+    }
+  for (const cookie of facts.cookies)
+    if (ownScope(cookie.data.domain)) {
+      cookie.key = cookie.data.name;
+      cookie.label = cookie.key;
+    }
 };
 
 /**
@@ -183,9 +233,8 @@ export const captureFacts = (evidence, apiSurface, name) => {
     cookies: [],
     credentials: [],
     apiGroups: [],
-    // The host the session started on: the deployment itself, even when it
-    // redirects to a sign-in provider first.
-    mainHost: null,
+    // The hosts the session started on, in redirect order: the deployment.
+    startHosts: [],
     // What Release Watch itself could not examine in this capture.
     gaps: [],
   };
@@ -193,25 +242,19 @@ export const captureFacts = (evidence, apiSurface, name) => {
     const url = parseUrl(record.reported?.request?.url);
     if (url === null) continue;
     facts.exchanges.push(exchangeFact(capture, record, url));
-    facts.mainHost ??= url.hostname;
+    // The session starts at the first request; its redirects (an apex to
+    // www, a sign-in hop) stay part of the deployment.
+    if (facts.startHosts.length === 0) facts.startHosts.push(url.hostname);
+    const next = facts.startHosts.includes(url.hostname)
+      ? redirectHost(record, url)
+      : null;
+    if (next && !facts.startHosts.includes(next)) facts.startHosts.push(next);
     if (isDocument(record))
       facts.documents.push(documentFact(capture, record, url));
     facts.cookies.push(...cookiesOf(capture, record, url));
     facts.credentials.push(...credentialsOf(capture, record, url));
   }
-  // Pages and cookies of the deployment pair by path and name, so a staging
-  // host can be compared with production; those of other hosts (iframes,
-  // sign-in, third parties) keep their host.
-  for (const document of facts.documents)
-    if (document.data.host !== facts.mainHost) {
-      document.key = `${document.data.host}${document.data.path}`;
-      document.label = document.key;
-    }
-  for (const cookie of facts.cookies)
-    if (cookie.data.host === facts.mainHost) {
-      cookie.key = cookie.data.name;
-      cookie.label = cookie.key;
-    }
+  keyByDeployment(facts);
   if (apiSurface)
     for (const group of apiSurface.normalized_result?.groups ?? [])
       facts.apiGroups.push(apiGroupFact(capture, apiSurface, group));

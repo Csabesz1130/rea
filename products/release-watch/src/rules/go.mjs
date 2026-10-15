@@ -8,7 +8,7 @@ import { GO_SOURCE, isVendorHost, packResult, reported } from "./shared.mjs";
 // quoted and hold spaces. Values are shown as display URLs or by length,
 // never verbatim.
 const LINKER_VALUE =
-  /(?<flag>-X(?:=|\s+))(?:'(?<single>[^']*)'|"(?<double>[^"]*)"|(?<bare>\S+))/g;
+  /(?<field>["'])-X=(?<whole>.*?)\k<field>|(?<flag>-X(?:=|\s+))(?:'(?<single>[^']*)'|"(?<double>[^"]*)"|(?<bare>\S+))/g;
 
 const maskedValue = (value) =>
   isUrl(value) ? displayUrl(value) : `… (${value.length} characters)`;
@@ -18,7 +18,12 @@ export const displayLdflags = (flags) =>
   flags === null
     ? "not set"
     : flags.replace(LINKER_VALUE, (...match) => {
-        const { flag, single, double, bare } = match.at(-1);
+        const { field, whole, flag, single, double, bare } = match.at(-1);
+        // A quoted whole field: "-X=name=value with spaces".
+        if (field !== undefined) {
+          const split = whole.indexOf("=");
+          return `${field}-X=${split === -1 ? whole : `${whole.slice(0, split)}=${maskedValue(whole.slice(split + 1))}`}${field}`;
+        }
         const operand = single ?? double ?? bare;
         const quote =
           single !== undefined ? "'" : double !== undefined ? '"' : "";
@@ -80,8 +85,8 @@ const ldflagsFindings = (helper, change, context) => {
         GO_SOURCE,
       )
     : reported(
-        `${context.labels.left}: ${helper.before ? "REA found no Go build information" : "no such helper"}`,
-        "observed",
+        `${context.labels.left}: ${!helper.before ? "no such helper" : helper.before.identified === "failed" ? "REA could not inspect the helper" : "REA found no Go build information"}`,
+        helper.before?.identified === "failed" ? "unknown" : "observed",
         GO_SOURCE,
       );
   return [

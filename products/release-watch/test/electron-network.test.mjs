@@ -66,6 +66,14 @@ const exposed = () =>
         at("main.js", 19),
       ),
     ],
+    // REA links runDiagnostics to the function whose body holds exec().
+    callables: [
+      {
+        module: "lib/diagnostics.js",
+        name: "runDiagnostics",
+        range: range(3, 0, 9, 1),
+      },
+    ],
     childProcesses: [
       fact(
         "lib/diagnostics.js#exec",

@@ -222,7 +222,7 @@ const runtimeSections = (component) => {
         "API endpoints seen at runtime",
         ["Endpoint", "Status"],
         visible(capture.apiGroups).map((item) => [
-          item.key,
+          factOf(item).data.display ?? item.key,
           statusOf(item.status),
         ]),
       ),

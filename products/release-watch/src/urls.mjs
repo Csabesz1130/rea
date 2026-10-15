@@ -1,6 +1,6 @@
 // URL helpers shared by facts, rules and reports. URLs here are values REA
 // reported; parsing them with WHATWG URL reads no source.
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 // An absolute URL in text, including a bracketed IPv6 host.
 const URL_TEXT =
@@ -21,7 +21,7 @@ export const urlsIn = (text) =>
 
 export const hostOf = (url) => {
   try {
-    return new URL(url).hostname.toLowerCase();
+    return new URL(url).hostname.toLowerCase() || null;
   } catch {
     return null;
   }
@@ -34,7 +34,12 @@ export const hostOf = (url) => {
  */
 export const scriptSourceUrl = (source) => {
   if (typeof source !== "string") return null;
-  const trimmed = source.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+  // As a browser parses it: ASCII tab and newline removed anywhere, other
+  // surrounding whitespace trimmed.
+  const trimmed = source
+    .replace(/[\t\n\r]/g, "")
+    .replace(/^[\f ]+|[\f ]+$/g, "");
+  if (/^(data|blob|javascript):/i.test(trimmed)) return null;
   const absolute = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
   return hostOf(absolute) === null ? null : absolute;
 };
@@ -52,16 +57,28 @@ export const schemeOf = (url) => {
 };
 
 const MASKED = /^…?‹[0-9a-f]{4}›$/;
+// A key made fresh for every run: equal values share a tag within a report,
+// and a tag cannot be matched against guesses offline.
+const RUN_KEY = randomBytes(32);
 
 /**
- * A short tag that tells two masked values apart without revealing either.
- * Masking a masked value returns it unchanged, so a value scrubbed twice
- * keeps one tag.
+ * A short tag that tells two masked values apart within one report without
+ * revealing either. Masking a masked value returns it unchanged.
  */
 export const maskTag = (value) =>
   MASKED.test(String(value))
     ? String(value)
-    : `‹${createHash("sha256").update(String(value)).digest("hex").slice(0, 4)}›`;
+    : `‹${createHmac("sha256", RUN_KEY).update(String(value)).digest("hex").slice(0, 4)}›`;
+
+// A parsed path as written: percent-encoding of characters such as { } and
+// of mask tags undone for display.
+const readable = (pathname) => {
+  try {
+    return decodeURI(pathname);
+  } catch {
+    return pathname;
+  }
+};
 
 const decoded = (segment) => {
   try {
@@ -71,35 +88,52 @@ const decoded = (segment) => {
   }
 };
 
-// Commit SHAs and content digests identify content; they are not secrets.
+// Commit SHAs and content digests identify content when a file follows
+// them in the path; elsewhere a hex run may be a webhook secret.
 const DIGEST = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const TOKEN_PART = /^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9_\-+=~%]{20,}$/;
+const TOKEN_PART = /^[A-Za-z0-9_\-+=~%]{20,}$/;
 const EXTENSION = /^[A-Za-z0-9]{1,5}$/;
+// File names whose hash part is a content hash: bundles, styles, maps, fonts.
+const HASHED_ASSET =
+  /\.(m?js|cjs|css|map|wasm|woff2?|ttf|svg|png|jpe?g|webp)$/i;
 
-// A path segment that carries a token: a bot token, a JWT, or a long run of
-// letters and digits, also between dots, other than a file extension.
-const isTokenSegment = (segment) => {
+const tokenLike = (part) =>
+  TOKEN_PART.test(part) && /\d/.test(part) && /[A-Za-z]/.test(part);
+
+/** A path segment that carries a token: a bot token, a JWT, or a long run of letters and digits other than a file extension. */
+export const isTokenSegment = (segment) => {
   const value = decoded(segment);
   if (/^bot\d+:/.test(value) || /^eyJ[\w-]*\.[\w-]*\.?[\w-]*$/.test(value))
     return true;
+  if (HASHED_ASSET.test(value)) return false;
   const parts = value.split(".");
   const named =
     parts.length > 1 && EXTENSION.test(parts.at(-1))
       ? parts.slice(0, -1)
       : parts;
-  return named.some((part) => TOKEN_PART.test(part) && !DIGEST.test(part));
+  return named.some(tokenLike);
 };
 
-/** A path for display: token-like segments are masked. */
-export const displayPath = (pathname) =>
-  pathname
-    .split("/")
-    .map((segment) => (isTokenSegment(segment) ? maskTag(segment) : segment))
+/** A path for display: token-like segments are masked; a digest before a file name is kept. */
+export const displayPath = (pathname) => {
+  const segments = pathname.split("/");
+  const fileAtEnd =
+    HASHED_ASSET.test(segments.at(-1) ?? "") ||
+    /\.[A-Za-z0-9]{1,5}$/.test(segments.at(-1) ?? "");
+  return segments
+    .map((segment, index) =>
+      fileAtEnd && index < segments.length - 1 && DIGEST.test(segment)
+        ? segment
+        : isTokenSegment(segment)
+          ? maskTag(segment)
+          : segment,
+    )
     .join("/");
+};
 
 // Masking by pattern, for text WHATWG URL cannot parse (a relative source,
 // a template fragment): user info, query values and fragments.
-const maskLoosely = (text) =>
+export const maskLoosely = (text) =>
   text
     .replace(/\/\/[^/@\s]*@/, "//")
     .replace(/([?&][^=&#\s]*=)([^&#\s"'`]*)/g, (_match, name, value) =>
@@ -136,7 +170,7 @@ export const displayUrl = (url) => {
   const query = [...parsed.searchParams].map(([name, value]) =>
     value === "" ? name : `${name}=${maskTag(value)}`,
   );
-  return `${parsed.protocol}//${parsed.host}${pathname}${query.length ? `?${query.join("&")}` : ""}${parsed.hash === "" ? "" : "#…"}`;
+  return `${parsed.protocol}//${parsed.host}${readable(pathname)}${query.length ? `?${query.join("&")}` : ""}${parsed.hash === "" ? "" : "#…"}`;
 };
 
 /** A script source as a comparison key: absolute sources normalized as a browser would, relative ones trimmed. */

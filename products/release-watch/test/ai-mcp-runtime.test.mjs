@@ -146,7 +146,7 @@ describe("MCP rules", () => {
 describe("runtime capture rules", () => {
   const capture = (headers, cookie, credentials = []) => ({
     name: "web.har",
-    mainHost: "app.example",
+    startHosts: ["app.example"],
     limitations: [],
     exchanges: [],
     documents: [

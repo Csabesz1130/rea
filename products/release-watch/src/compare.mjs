@@ -27,10 +27,9 @@ import {
   releaseBaseline,
   verdictFor,
 } from "./policy.mjs";
-import { printable, scrubSource } from "./redact.mjs";
+import { sourceLine } from "./source-line.mjs";
 import { openSources } from "./sources.mjs";
 import { surfaceNames, surfacesOf } from "./surfaces.mjs";
-import { maskTag } from "./urls.mjs";
 
 /** Two labels a reader can tell apart: equal versions gain "(old)" and "(new)". */
 const distinct = (left, right) =>
@@ -223,30 +222,6 @@ export const pairRuntimes = (left, right) =>
     };
   });
 
-const MAX_LINE = 180;
-const LEAD = 60;
-const STRING = /(["'`])((?:[^"'`\\]|\\.)*)\1/g;
-
-// One source line for display: scrubbed as a whole first, so no window can
-// keep part of a secret, then cut to a window around the cited column. On a
-// line where REA reported a key-shaped string, every string is masked.
-const displayLine = (text, column, sensitive) => {
-  const source = sensitive
-    ? text.replace(
-        STRING,
-        (_match, quote, body) => `${quote}${maskTag(body)}${quote}`,
-      )
-    : text;
-  const scrubbed = printable(scrubSource(source));
-  if (scrubbed.length <= MAX_LINE) return scrubbed.trim();
-  const position = scrubSource(source.slice(0, column ?? 0)).length;
-  const start = Math.max(
-    0,
-    Math.min(position - LEAD, scrubbed.length - MAX_LINE),
-  );
-  return `${start > 0 ? "…" : ""}${scrubbed.slice(start, start + MAX_LINE).trim()}…`;
-};
-
 // Lines where REA reported a string or resolved URL holding a key.
 const sensitiveLines = (app) =>
   new Set(
@@ -256,7 +231,15 @@ const sensitiveLines = (app) =>
           credentialOf(fact.data.value) ||
           credentialsIn(fact.data.value).length > 0,
       )
-      .map((fact) => `${fact.location?.file}:${fact.location?.line}`),
+      .flatMap((fact) => {
+        // A key in a multi-line literal marks every line of it.
+        const first = fact.location?.line;
+        const last = fact.data.range?.end?.line ?? first;
+        return Array.from(
+          { length: Math.max(1, last - first + 1) },
+          (_value, offset) => `${fact.location?.file}:${first + offset}`,
+        );
+      }),
   );
 
 // Source lines for display, attached only to evidence located in this side's
@@ -278,9 +261,9 @@ const attachSources = (findings, side, sources, sideName) => {
       if (snippet === null) continue;
       item.snippet = {
         line: snippet.line,
-        text: displayLine(
+        text: sourceLine(
           snippet.text,
-          item.location.column,
+          item.location.column ?? 0,
           sensitive.has(where),
         ),
         verified: snippet.verified,
@@ -333,78 +316,37 @@ const collectComponent = async ({
   return { name, left, right };
 };
 
-// Several applications as one: every fact family concatenated, coverage the
-// weakest of them. Used as the old side of a component the old release did
-// not have, so code that moved between components is not new.
-const mergeApplications = (apps) => {
-  if (apps.length === 0) return null;
-  const merged = {};
-  for (const [key, value] of Object.entries(apps[0])) {
-    if (Array.isArray(value)) merged[key] = apps.flatMap((app) => app[key]);
-    else if (value instanceof Map)
-      merged[key] = new Map(apps.flatMap((app) => [...app[key]]));
-    else if (value instanceof Set)
-      merged[key] = new Set(apps.flatMap((app) => [...app[key]]));
-    else merged[key] = value;
-  }
-  // A version belongs to one component, not to the release as a whole.
-  merged.package = null;
-  const weakest = (field) =>
-    apps.every((app) => app.coverage[field] === "complete")
-      ? "complete"
-      : "partial";
-  merged.coverage = {
-    ...apps[0].coverage,
-    graph: weakest("graph"),
-    semantic: weakest("semantic"),
-    semantic_ceiling_modules: apps.flatMap(
-      (app) => app.coverage.semantic_ceiling_modules,
-    ),
-  };
-  return merged;
-};
-
 // A side failed when its target was analyzable but REA produced no facts.
 const failed = (side) =>
   side.target !== null && side.target.app !== null && side.app === null;
+const captureFailed = (side) =>
+  side.target !== null && side.target.capture !== null && side.capture === null;
 
-// Compare and grade one collected component against the release baseline.
-const finishComponent = async ({
+// Labels, surfaces, REA pairing and the diff of one collected component.
+const prepareComponent = async ({
   collected,
-  oldRelease,
   releaseLabels: labelsOfRelease,
-  baseline,
   rea,
   outDir,
   options,
 }) => {
   const { name } = collected;
-  // A component the old release lacks is compared with the whole old
-  // release; a missing side is named by its release.
-  const leftSide =
-    collected.left.target === null
-      ? { ...emptyCollection(), app: mergeApplications(oldRelease) }
-      : collected.left;
   const labels = distinct(
-    versionLabel(leftSide, labelsOfRelease.left),
+    versionLabel(collected.left, labelsOfRelease.left),
     versionLabel(collected.right, labelsOfRelease.right),
   );
-  const left = { ...leftSide, label: labels.left };
+  const left = { ...collected.left, label: labels.left };
   const right = { ...collected.right, label: labels.right };
   left.surfaces = surfacesOf(left);
   right.surfaces = surfacesOf(right);
-  const [comparison, rightSources, leftSources] = await Promise.all([
-    reaComparison({
-      rea,
-      component: name,
-      left,
-      right,
-      outDir,
-      mode: options.reaCompare ?? "auto",
-    }),
-    openSide(rea, right),
-    openSide(rea, left),
-  ]);
+  const comparison = await reaComparison({
+    rea,
+    component: name,
+    left,
+    right,
+    outDir,
+    mode: options.reaCompare ?? "auto",
+  });
   const aliases = moduleAliases(left.app, right.app, comparison?.pairs ?? []);
   const diff = {
     app: diffApplications(left.app, right.app, aliases),
@@ -412,7 +354,71 @@ const finishComponent = async ({
     helpers: pairHelpers(left, right),
     capture: diffCaptures(left.capture, right.capture),
   };
-  const surfaces = surfaceNames(left.surfaces, right.surfaces);
+  return {
+    name,
+    renamed: collected.renamed,
+    left,
+    right,
+    labels,
+    comparison,
+    aliases,
+    diff,
+  };
+};
+
+const unresolved = (facts) => facts.filter((fact) => !fact.data.endpoint);
+
+const tally = (prepared, family, keep = (facts) => facts) => {
+  const totals = new Map();
+  for (const component of prepared)
+    for (const [side, facts] of [
+      ["before", keep(component.left.app?.[family] ?? [])],
+      ["after", keep(component.right.app?.[family] ?? [])],
+    ])
+      for (const fact of facts) {
+        const entry = totals.get(fact.data.method) ?? { before: 0, after: 0 };
+        entry[side] += 1;
+        totals.set(fact.data.method, entry);
+      }
+  return totals;
+};
+
+/**
+ * What the whole release lost and how many sites of each kind it has, so a
+ * site that moved between components is recognised as a move.
+ */
+const releaseContext = (prepared) => ({
+  vacated: {
+    childProcesses: prepared.flatMap((component) =>
+      component.diff.app.childProcesses
+        .filter((item) => item.left.length > item.right.length)
+        .flatMap((item) =>
+          item.left
+            .slice(item.right.length)
+            .map((fact) => ({ component: component.name, fact })),
+        ),
+    ),
+  },
+  counts: {
+    childProcesses: tally(prepared, "childProcesses"),
+    requests: tally(prepared, "requests", unresolved),
+  },
+});
+
+// Grade one prepared component and attach source lines.
+const gradeComponent = async ({
+  component,
+  release,
+  releaseLabels: labelsOfRelease,
+  baseline,
+  rea,
+  options,
+}) => {
+  const { name, left, right, labels, comparison, aliases, diff } = component;
+  const [rightSources, leftSources] = await Promise.all([
+    openSide(rea, right),
+    openSide(rea, left),
+  ]);
   const { findings, network } = evaluateComponent({
     name,
     left,
@@ -422,13 +428,16 @@ const finishComponent = async ({
     aliases,
     ambiguous: ambiguousBundles(left.app, right.app, aliases),
     baseline,
-    surfaces,
+    release,
+    surfaces: surfaceNames(left.surfaces, right.surfaces),
     options,
     labels,
     releaseLabels: labelsOfRelease,
     // Without an analyzed old side every fact would look new, so only
     // coverage is graded and the analysis error decides the verdict.
-    coverageOnly: failed(collected.left),
+    coverageOnly: failed(left),
+    // Without a readable old capture, runtime facts cannot be compared.
+    captureBaselineFailed: captureFailed(left),
   });
   try {
     attachSources(findings, right, rightSources, "right");
@@ -438,13 +447,8 @@ const finishComponent = async ({
     leftSources?.close();
   }
   return {
-    name,
-    left,
-    right,
-    comparison,
-    diff,
-    surfaces,
-    aliases,
+    ...component,
+    surfaces: surfaceNames(left.surfaces, right.surfaces),
     network,
     findings,
   };
@@ -508,22 +512,33 @@ export const compareReleases = async ({
       renamed: pair.renamed,
     });
   const labels = releaseLabels(leftRelease, rightRelease, collected);
-  const oldSides = collected.map((component) => component.left);
-  const oldRelease = oldSides.map((side) => side.app).filter(Boolean);
-  const baseline = releaseBaseline(oldSides);
+  const baseline = releaseBaseline(
+    collected.map((component) => component.left),
+  );
+  const prepared = [];
+  for (const component of collected)
+    prepared.push(
+      await prepareComponent({
+        collected: component,
+        releaseLabels: labels,
+        rea,
+        outDir,
+        options,
+      }),
+    );
+  const release = releaseContext(prepared);
   const components = [];
-  for (const component of collected) {
-    const finished = await finishComponent({
-      collected: component,
-      oldRelease,
-      releaseLabels: labels,
-      baseline,
-      rea,
-      outDir,
-      options,
-    });
-    components.push({ ...finished, renamed: component.renamed });
-  }
+  for (const component of prepared)
+    components.push(
+      await gradeComponent({
+        component,
+        release,
+        releaseLabels: labels,
+        baseline,
+        rea,
+        options,
+      }),
+    );
   const findings = numberFindings(
     components.flatMap((component) => component.findings),
   );

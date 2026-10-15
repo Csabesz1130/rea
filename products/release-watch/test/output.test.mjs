@@ -6,12 +6,8 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { discoverRelease } from "../src/discover.mjs";
-import {
-  markdownText,
-  printable,
-  scrubSource,
-  scrubText,
-} from "../src/redact.mjs";
+import { markdownText, printable, scrubText } from "../src/redact.mjs";
+import { sourceLine } from "../src/source-line.mjs";
 import { renderMarkdown } from "../src/report/markdown.mjs";
 import { displayLdflags } from "../src/rules/go.mjs";
 import { displayUrl } from "../src/urls.mjs";
@@ -150,11 +146,11 @@ describe("source line scrubbing", () => {
     ];
     for (const line of lines)
       assert.ok(
-        !/SECRET|NONCATALOG|7f3a9c2e|FAKEtoken/.test(scrubSource(line)),
-        scrubSource(line),
+        !/SECRET|NONCATALOG|7f3a9c2e|FAKEtoken/.test(sourceLine(line)),
+        sourceLine(line),
       );
     assert.equal(
-      scrubSource('const SYNC = "https://api.acmenotes.example/v2/sync";'),
+      sourceLine('const SYNC = "https://api.acmenotes.example/v2/sync";'),
       'const SYNC = "https://api.acmenotes.example/v2/sync";',
     );
   });

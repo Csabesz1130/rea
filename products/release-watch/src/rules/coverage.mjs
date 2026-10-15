@@ -19,7 +19,9 @@ const listed = (files) =>
   `${files.slice(0, MAX_FILES).join(", ")}${files.length > MAX_FILES ? ` and ${files.length - MAX_FILES} more` : ""}`;
 
 // Files whose content differs from the old release, or that are new there.
+// Unknown without an analyzed old side: nothing is called changed then.
 const changedFiles = (context) => {
+  if (!context.left.app) return () => false;
   const before = new Map(
     (context.left.app?.assets ?? []).map((asset) => [
       asset.key,
@@ -66,6 +68,14 @@ const applicationGaps = (app) => {
         APP_SOURCE,
       ),
     );
+  if ((coverage.semantic_unreached_modules ?? []).length > 0)
+    lines.push(
+      reported(
+        `Script files with no semantic facts after REA's global node limit: ${listed(coverage.semantic_unreached_modules)}`,
+        "derived",
+        APP_SOURCE,
+      ),
+    );
   if (coverage.semantic_ceiling_modules.length > 0)
     lines.push(
       reported(
@@ -101,6 +111,7 @@ const incompleteAnalysis = (context) => {
   const files = app
     ? [
         ...app.coverage.semantic_ceiling_modules,
+        ...(app.coverage.semantic_unreached_modules ?? []),
         ...app.analysisFailures
           .map((failure) => failure.location?.file)
           .filter(Boolean),
@@ -183,6 +194,10 @@ const oneSided = (context) => {
       left.capture
         ? `Only ${labels.left} has a runtime capture, so runtime rules did not run for ${labels.right}.`
         : `Only ${labels.right} has a runtime capture, so header and cookie changes were not compared.`,
+    );
+  if (context.captureBaselineFailed)
+    lines.push(
+      `REA could not read ${labels.left}'s capture, so runtime findings were not compared.`,
     );
   for (const path of unmatchedPages(context))
     lines.push(
@@ -341,17 +356,23 @@ const unmodeledClients = (context) => {
       .filter((fact) => isHttpClient(packageNameOf(fact.key)))
       .map((fact) => `${fact.data.module}#${fact.key}`),
   );
+  // New imports, and modules that changed although they imported the
+  // client before: their requests may be new too.
+  const changed = context.left.app ? changedFiles(context) : () => true;
   const fresh = sites.filter(
-    (fact) => !before.has(`${fact.data.module}#${fact.key}`),
+    (fact) =>
+      !before.has(`${fact.data.module}#${fact.key}`) ||
+      changed(fact.data.module),
   );
   if (fresh.length === 0) return [];
   const clients = [...new Set(fresh.map((fact) => packageNameOf(fact.key)))];
+  const moduleCount = new Set(fresh.map((fact) => fact.data.module)).size;
   return [
     {
       rule: "RW-C05",
       severity: "low",
-      title: `Requests through ${clients.join(", ")} are not examined`,
-      summary: `${fresh.length} module${fresh.length === 1 ? "" : "s"} of ${context.labels.right} import${fresh.length === 1 ? "s" : ""} an HTTP client library and REA recognised no request site in ${fresh.length === 1 ? "it" : "them"}.`,
+      title: `Requests through ${clients.join(", ")} in new or changed code are not examined`,
+      summary: `${moduleCount} module${moduleCount === 1 ? "" : "s"} of ${context.labels.right} import${moduleCount === 1 ? "s" : ""} an HTTP client library and REA recognised no request site in ${moduleCount === 1 ? "it" : "them"}.`,
       why: "Destinations reached through these libraries are invisible to the network rules, so a new third-party host there would not be reported.",
       recommendation:
         "Capture the release's traffic with release-watch record, or review these modules' requests.",

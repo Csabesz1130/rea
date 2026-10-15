@@ -19,19 +19,33 @@ const countByMethod = (facts) =>
     new Map(),
   );
 
-// Old-side sites of one method whose key no longer has them on the new side.
+// Old-side sites of one method whose key lost them on the new side, in this
+// component and, through the release context, in every other component.
 const vacated = (context, method) =>
-  context.diff.app.childProcesses
-    .filter((item) => item.left.length > item.right.length)
-    .flatMap((item) => item.left.slice(item.right.length))
-    .filter((fact) => fact.data.method === method);
+  [
+    ...context.diff.app.childProcesses
+      .filter((item) => item.left.length > item.right.length)
+      .flatMap((item) => item.left.slice(item.right.length)),
+    ...(context.release?.vacated.childProcesses
+      .filter((fact) => fact.component !== context.name)
+      .map((fact) => fact.fact) ?? []),
+  ].filter((fact) => fact.data.method === method);
 
-// Commands pair one to one; an unresolved command pairs only with another
-// unresolved one, since REA could not tell what either runs.
+// Site counts of one method before and after, across the release when known.
+const counts = (context, method) =>
+  context.release?.counts.childProcesses.get(method) ?? {
+    before:
+      countByMethod(context.left.app?.childProcesses ?? []).get(method) ?? 0,
+    after:
+      countByMethod(context.right.app?.childProcesses ?? []).get(method) ?? 0,
+  };
+
+// Resolved commands pair one to one. An unresolved command never pairs:
+// REA could not tell what either call runs.
 const commandsMatch = (sites, old) => {
-  const remaining = old.map((fact) => fact.data.command);
+  const remaining = old.map((fact) => fact.data.command).filter(Boolean);
   return sites.every(({ data }) => {
-    const index = remaining.indexOf(data.command);
+    const index = data.command === null ? -1 : remaining.indexOf(data.command);
     if (index === -1) return false;
     remaining.splice(index, 1);
     return true;
@@ -39,12 +53,11 @@ const commandsMatch = (sites, old) => {
 };
 
 const isMove = (context, group, method) => {
-  const before = countByMethod(context.left.app?.childProcesses ?? []);
-  const after = countByMethod(context.right.app?.childProcesses ?? []);
+  const { before, after } = counts(context, method);
   const old = vacated(context, method);
   return (
     group.status !== "changed" &&
-    (after.get(method) ?? 0) <= (before.get(method) ?? 0) &&
+    after <= before &&
     old.length > 0 &&
     commandsMatch(group.facts, old)
   );
@@ -102,6 +115,17 @@ const finding = (context, group) => {
       ],
     };
   const changed = group.status === "changed";
+  const gone = vacated(context, method).filter(
+    (site) => site.data.command === null,
+  );
+  if (
+    !changed &&
+    gone.length > 0 &&
+    group.facts.every((site) => site.data.command === null)
+  )
+    unknowns.push(
+      `${context.labels.left} had a ${method}() with an unresolved command in ${gone[0].data.module} that is gone now; this may be the same call, moved.`,
+    );
   return {
     rule: "RW-P01",
     severity: "high",

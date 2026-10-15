@@ -2,6 +2,7 @@
 // facts Release Watch compares. This module never reads application source.
 import { HTML_SINKS } from "../catalog.mjs";
 import { isUrl, scriptKey } from "../urls.mjs";
+import { callGraph } from "./calls.mjs";
 import {
   edgeFact,
   firstObservation,
@@ -302,7 +303,7 @@ const SEMANTIC_PROJECTIONS = {
     if (typeof value !== "string") return;
     const modulePath = node.identity?.module_path ?? null;
     const binding = scope.definedBinding.get(node.node_id) ?? null;
-    const data = { module: modulePath, value, binding };
+    const data = { module: modulePath, value, binding, range: rangeOf(node) };
     scope.facts.stringLiterals.push(
       semanticFact(
         node,
@@ -342,24 +343,8 @@ const bindingRelations = (semantic, facts, contexts) => {
   for (const relation of semantic.relations) {
     const source = byId.get(relation.source_node_id);
     const target = byId.get(relation.target_node_id);
-    if (relation.relation === "defines" && target?.kind === "binding") {
+    if (relation.relation === "defines" && target?.kind === "binding")
       definedBinding.set(relation.source_node_id, target.label ?? null);
-      // The expression that defines a binding, with its range: a function
-      // declaration's range holds the function body.
-      if (rangeOf(source ?? {}) !== null)
-        facts.bindingDefinitions.push(
-          semanticFact(
-            source,
-            contexts,
-            `${target.identity?.module_path ?? null}#${target.label}`,
-            {
-              module: target.identity?.module_path ?? null,
-              name: target.label ?? null,
-              range: rangeOf(source),
-            },
-          ),
-        );
-    }
     const readsBinding =
       relation.relation === "reads" && source?.kind === "binding";
     if (!readsBinding || !rangeOf(target ?? {})) continue;
@@ -429,7 +414,6 @@ const semanticFacts = (semantic) => {
     stringLiterals: [],
     urlLiterals: [],
     bindingReads: [],
-    bindingDefinitions: [],
     htmlSinks: [],
     memberCalls: [],
     dynamicEvaluation: [],
@@ -501,17 +485,37 @@ const coverageOf = (graph, semantic) => ({
   semantic_ceiling_modules: ceilingModules(semantic),
 });
 
+// Script files with no semantic node at all when REA truncated the semantic
+// graph: the global ceiling left them unexamined.
+const unreachedModules = (semantic, assets) => {
+  if (!semantic?.coverage?.truncated) return [];
+  const reached = new Set(
+    semantic.nodes.map((node) => node.identity?.module_path).filter(Boolean),
+  );
+  return assets
+    .map((asset) => asset.key)
+    .filter(
+      (key) =>
+        /\.(m?js|cjs|jsx|ts|mts|cts|tsx)$/.test(key) && !reached.has(key),
+    )
+    .sort();
+};
+
 /** Capability facts from one `analyze_javascript_application` Evidence record. */
 export const applicationFacts = (evidence) => {
   const result = evidence.normalized_result;
   const graph = result.graph;
   const semantic = result.semantic_graph ?? null;
   const { modules, imports } = importIndex(graph);
+  const graphPart = graphFacts(graph);
   return {
     evidence_id: evidence.evidence_id,
     root_sha256: result.root_artifact_sha256,
     format: result.format,
-    coverage: coverageOf(graph, semantic),
+    coverage: {
+      ...coverageOf(graph, semantic),
+      semantic_unreached_modules: unreachedModules(semantic, graphPart.assets),
+    },
     summary: result.summary ?? null,
     limitations: [
       ...(graph.limitations ?? []),
@@ -520,7 +524,8 @@ export const applicationFacts = (evidence) => {
     modules,
     imports,
     browserModules: browserModules(graph, modules),
-    ...graphFacts(graph),
+    ...graphPart,
     ...semanticFacts(semantic),
+    ...callGraph(semantic),
   };
 };

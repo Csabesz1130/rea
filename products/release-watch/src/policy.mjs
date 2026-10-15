@@ -40,6 +40,11 @@ export const releaseBaseline = (leftSides) => ({
     leftSides.flatMap((side) => [...packagesOf(side.app).keys()]),
   ),
   sdks: new Set(leftSides.flatMap((side) => [...sdkUses(side.app).keys()])),
+  credentials: new Set(
+    leftSides.flatMap((side) =>
+      (side.capture?.credentials ?? []).map((fact) => fact.key),
+    ),
+  ),
 });
 
 // What limits a finding located in a given file: a bundle Release Watch
@@ -80,7 +85,10 @@ export const evaluateComponent = (component) => {
     ...component,
     baseline,
     aliases: component.aliases ?? new Map(),
-    network: networkView(component.left, component.right, baseline),
+    network: networkView(component.left, component.right, baseline, {
+      ignoreCapture: component.captureBaselineFailed === true,
+      vendorDomains: component.options?.vendorDomains ?? [],
+    }),
     claimed: { hosts: new Set(), nodes: new Set() },
   };
   const findings = [];

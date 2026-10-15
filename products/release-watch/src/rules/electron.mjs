@@ -18,7 +18,7 @@ const FUSE_SOURCE = "REA inspect_electron_fuses";
 const execEvidence = (group, labels) =>
   group.facts.map((exec) =>
     cite(
-      `${exec.data.method}() creates a child process in ${exec.data.module}${exec.data.command ? "" : " with a command REA did not resolve"} (${absencePhrase(group.status, labels.left, group.counts)})`,
+      `${exec.data.method}() creates a child process in ${exec.data.module}${exec.data.command ? "" : " with a command REA did not resolve"} (${group.status === "existing" ? `also in ${labels.left}` : absencePhrase(group.status, labels.left, group.counts)})`,
       exec,
       APP_SOURCE,
     ),
@@ -39,7 +39,22 @@ const rendererProcessExecution = (context) => {
   const handlers = new Map(
     app.ipcHandlers.map((handler) => [handler.data.channel, handler]),
   );
-  const groups = newGroups(diff.app.childProcesses, { field: "command" });
+  // New and changed exec sites, then existing ones: a new renderer API that
+  // reaches an exec site the old release already had is still new reach.
+  const fresh = newGroups(diff.app.childProcesses, { field: "command" });
+  const freshKeys = new Set(fresh.map((group) => group.key));
+  const groups = [
+    ...fresh,
+    ...diff.app.childProcesses
+      .filter((item) => item.right.length > 0 && !freshKeys.has(item.key))
+      .map((item) => ({
+        key: item.key,
+        status: "existing",
+        counts: { before: item.left.length, after: item.right.length },
+        facts: item.right,
+        left: item.left,
+      })),
+  ];
   for (const { fact: member, status: memberStatus } of newFacts(
     diff.app.bridgeMembers,
   )) {
@@ -70,7 +85,7 @@ const rendererProcessExecution = (context) => {
           APP_SOURCE,
         ),
         heuristic(
-          reachClaim(path, exec, "The handler"),
+          reachClaim(path, exec, "the handler"),
           path.read?.location ?? exec.location,
         ),
         ...execEvidence(group, labels),
@@ -86,7 +101,7 @@ const rendererProcessExecution = (context) => {
       findings.push({
         rule: "RW-E01",
         severity: "critical",
-        title: `Renderer can reach new process execution via "${member.data.channel}"`,
+        title: `Renderer can reach ${group.status === "existing" ? "" : "new "}process execution via "${member.data.channel}"`,
         summary: `${labels.right} exposes ${member.data.member}() to web content; its handler reaches ${exec.data.method}() in ${exec.data.module}.`,
         why: "Any script running in the window, including injected content, could ask the main process to start programs with the user's privileges.",
         recommendation:
@@ -207,6 +222,65 @@ const beforeLines = (context, { name, rule, windows, file }) =>
  * a file that is new counts only when the component as a whole has more
  * such windows, so a window that moved file with its options is not new.
  */
+const byLine = (windows) =>
+  [...windows].sort(
+    (a, b) => (a.location?.line ?? 0) - (b.location?.line ?? 0),
+  );
+
+/**
+ * Regressing windows in one file. With as many windows as before, windows
+ * pair by position, so a swap (one window made unsafe, another made safe)
+ * is still seen. Otherwise windows are counted, and a file that gained
+ * windows counts only when the component as a whole has more such windows,
+ * so a window that moved in with its options is not new.
+ */
+const fileRegressions = (context, { name, rule, old, windows }) => {
+  const { left, right } = context;
+  const state = (window) =>
+    stateOf(window.data.web_preferences[name] ?? null, rule);
+  if (old.length === windows.length && old.length > 0) {
+    const pairs = byLine(old).map((was, index) => [
+      was,
+      byLine(windows)[index],
+    ]);
+    const unsafe = pairs.filter(
+      ([was, now]) => state(now) === "unsafe" && state(was) !== "unsafe",
+    );
+    if (unsafe.length > 0)
+      return {
+        known: true,
+        offending: unsafe.map(([, now]) => now),
+        oldDynamic: unsafe.some(([was]) => state(was) === "dynamic"),
+      };
+    const dynamic = pairs.filter(
+      ([was, now]) =>
+        state(now) === "dynamic" && !["dynamic", "unsafe"].includes(state(was)),
+    );
+    return dynamic.length > 0
+      ? {
+          known: false,
+          offending: dynamic.map(([, now]) => now),
+          oldDynamic: false,
+        }
+      : null;
+  }
+  const gained = windows.length > old.length;
+  const grew = (target) =>
+    count(windows, name, rule, target) > count(old, name, rule, target) &&
+    (!gained ||
+      count(right.app.windows, name, rule, target) >
+        count(left.app.windows, name, rule, target));
+  const known = grew("unsafe");
+  if (!known && !grew("dynamic")) return null;
+  return {
+    known,
+    offending: windows.filter(
+      (window) => state(window) === (known ? "unsafe" : "dynamic"),
+    ),
+    oldDynamic: known && count(old, name, rule, "dynamic") > 0,
+  };
+};
+
 const webPreferenceRegressions = (context) => {
   const { left, right } = context;
   if (!left.app || !right.app) return [];
@@ -215,28 +289,19 @@ const webPreferenceRegressions = (context) => {
   return Object.entries(WEB_PREFERENCES).flatMap(([name, rule]) =>
     [...after].flatMap(([file, windows]) => {
       const old = before.get(file) ?? [];
-      const grew = (state) =>
-        count(windows, name, rule, state) > count(old, name, rule, state) &&
-        (old.length > 0 ||
-          count(right.app.windows, name, rule, state) >
-            count(left.app.windows, name, rule, state));
-      const known = grew("unsafe");
-      if (!known && !grew("dynamic")) return [];
-      const offending = windows.filter(
-        (window) =>
-          stateOf(window.data.web_preferences[name] ?? null, rule) ===
-          (known ? "unsafe" : "dynamic"),
-      );
-      const oldDynamic = known && count(old, name, rule, "dynamic") > 0;
+      const regression = fileRegressions(context, { name, rule, old, windows });
+      if (regression === null) return [];
+      const { known, offending, oldDynamic } = regression;
       const shown = offending[0].data.web_preferences[name];
+      const verb = rule.safe === true ? "turned off" : "turned on";
       return [
         {
           rule: "RW-E02",
           severity: known && !oldDynamic ? "high" : "medium",
           title: known
-            ? `${rule.label} turned off (${name}: ${JSON.stringify(shown.value)})`
+            ? `${rule.label} ${verb} (${name}: ${JSON.stringify(shown.value)})`
             : `${rule.label} no longer statically known (${name})`,
-          summary: `${offending.length} BrowserWindow${offending.length === 1 ? "" : "s"} in ${file} set ${name} to ${known ? "the unsafe value" : "a dynamic value"} in ${context.labels.right}, more than in ${context.labels.left}.`,
+          summary: `${offending.length} BrowserWindow${offending.length === 1 ? "" : "s"} in ${file} set ${name} to ${known ? "the unsafe value" : "a dynamic value"} in ${context.labels.right}, where ${context.labels.left} did not.`,
           why: "This removes a layer that contains compromised or untrusted web content.",
           recommendation:
             "Ask the vendor to restore the setting or document the compensating control.",
@@ -250,7 +315,7 @@ const webPreferenceRegressions = (context) => {
             }),
             ...offending.map((window) =>
               cite(
-                `${context.labels.right}: BrowserWindow in ${file}: ${settingText(name, shown)}`,
+                `${context.labels.right}: BrowserWindow in ${file}: ${settingText(name, window.data.web_preferences[name] ?? null)}`,
                 window,
                 APP_SOURCE,
               ),
@@ -344,6 +409,8 @@ const fuseRegressions = (context) =>
     const after = pair.after?.fuses;
     if (!after || after.ambiguous) return [];
     const before = pair.before?.fuses ?? null;
+    // The old release had executables REA tried to read, without a result.
+    const oldInspected = (context.left.runtimeStatus?.candidates ?? 0) > 0;
     const unknowns = new Set();
     const rows = Object.entries(FUSES).flatMap(([name, fuse]) => {
       const now = after.fuses[name];
@@ -353,7 +420,7 @@ const fuseRegressions = (context) =>
           ? (before.fuses[name] ?? "unknown")
           : "unknown";
       if (was !== fuse.safe && was !== "unknown") return [];
-      if (before === null) return [];
+      if (before === null && !oldInspected) return [];
       const established = was === fuse.safe;
       return [
         {
@@ -370,16 +437,20 @@ const fuseRegressions = (context) =>
     if (rows.length === 0) return [];
     if (rows.some((row) => !row.established))
       unknowns.add(
-        `REA did not establish the old state of every fuse in ${pair.before.name} (${before.ambiguous ? "several fuse wires" : "fuse missing"}).`,
+        before === null
+          ? `REA could not read ${context.labels.left}'s fuses (${context.left.runtimeStatus.failures.length > 0 ? "the inspection failed" : "no fuse wire found"}), so the old state is not established.`
+          : `REA did not establish the old state of every fuse in ${pair.before.name} (${before.ambiguous ? "several fuse wires" : "fuse missing"}).`,
       );
-    const where = pair.matched
-      ? pair.after.name
-      : `${pair.after.name}, a new executable compared with ${pair.before.name}`;
+    const established = rows.every((row) => row.established);
+    const where =
+      pair.matched || pair.before === null
+        ? pair.after.name
+        : `${pair.after.name}, a new executable compared with ${pair.before.name}`;
     return [
       {
         rule: "RW-E03",
         severity: maxSeverity(rows.map((row) => row.severity)),
-        title: `Electron hardening fuses removed (${rows.length})${pair.matched ? "" : ` in new executable ${pair.after.name}`}`,
+        title: `Electron hardening fuses ${established ? "removed" : "in the unsafe state"} (${rows.length})${pair.matched || pair.before === null ? "" : ` in new executable ${pair.after.name}`}`,
         summary: `${where}: ${rows.map((row) => row.name).join(", ")} ${rows.length === 1 ? "is" : "are"} in the unsafe state.`,
         why: "Fuses are compiled-in switches that block well-known ways to run code inside a trusted, signed app. Losing them usually means the release pipeline changed.",
         recommendation:

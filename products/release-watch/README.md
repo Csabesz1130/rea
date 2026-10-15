@@ -200,6 +200,15 @@ passed.
   loads it, an omitted `webPreferences` option relying on Electron's default.
 - A capture records one session. It does not show which code sent a request
   or what other paths contact.
+- A process site whose command REA did not resolve is never taken as moved:
+  a refactor that relocates one is reported high, with a note that it may be
+  the same call.
+- Browser code is classified from what HTML pages and service workers load.
+  Dedicated workers and scripts loaded at runtime are not classified, so a
+  call that moved from a worker into page code is reported at medium.
+- REA does not report MCP tool names, so Release Watch counts registration
+  calls; tools that moved from one registration API to another can read as
+  new registrations.
 - REA reports strings assigned to variables and URLs it resolved. A key
   written inline in a call or a header is not seen by RW-A02, and a request
   that reads a URL variable is attributed to that URL even if it transforms

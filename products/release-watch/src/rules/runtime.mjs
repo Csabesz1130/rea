@@ -21,10 +21,14 @@ const comparable = (name, value) => {
     .replace(/\s+/g, " ")
     .trim();
   if (name !== "content-security-policy") return collapsed;
+  // Directives in a stable order, and each directive's sources too.
   return collapsed
     .split(";")
-    .map((directive) => directive.trim())
-    .filter(Boolean)
+    .map((directive) => directive.trim().split(" ").filter(Boolean))
+    .filter((parts) => parts.length > 0)
+    .map(([directive, ...sources]) =>
+      [directive.toLowerCase(), ...sources.sort()].join(" "),
+    )
     .sort()
     .join("; ");
 };
@@ -105,8 +109,11 @@ const headerFindings = (context) =>
     });
 
 const SAME_SITE_ORDER = { strict: 2, lax: 1, none: 0 };
+// An unset SameSite is Lax in current browsers.
 const sameSiteRank = (value) =>
-  SAME_SITE_ORDER[String(value ?? "").toLowerCase()] ?? null;
+  value === null || value === undefined || value === ""
+    ? SAME_SITE_ORDER.lax
+    : (SAME_SITE_ORDER[String(value).toLowerCase()] ?? null);
 
 // The weakest protection any response in one capture gave a cookie: a
 // browser keeps whichever Set-Cookie arrived last, so one weak response is
@@ -121,6 +128,7 @@ const weakest = (facts) => {
   return {
     http_only: facts.every((fact) => fact.data.http_only),
     secure: facts.every((fact) => fact.data.secure),
+    same_site_rank: lowest,
     // The value as the capture recorded it, from the weakest response.
     same_site:
       lowest === null ? null : facts[ranks.indexOf(lowest)].data.same_site,
@@ -131,7 +139,7 @@ const weakest = (facts) => {
 };
 
 const attributes = (cookie) =>
-  `HttpOnly ${cookie.http_only}, Secure ${cookie.secure}, SameSite ${cookie.same_site ?? "unset or mixed"}`;
+  `HttpOnly ${cookie.http_only}, Secure ${cookie.secure}, SameSite ${cookie.same_site ?? "unset (Lax in current browsers)"}`;
 
 const cookieFindings = (context) =>
   context.diff.capture.cookies
@@ -143,11 +151,11 @@ const cookieFindings = (context) =>
       if (before.http_only && !after.http_only) lost.push("HttpOnly");
       if (before.secure && !after.secure) lost.push("Secure");
       if (
-        before.same_site !== null &&
-        after.same_site !== null &&
-        sameSiteRank(after.same_site) < sameSiteRank(before.same_site)
+        before.same_site_rank !== null &&
+        after.same_site_rank !== null &&
+        after.same_site_rank < before.same_site_rank
       )
-        lost.push(`SameSite=${before.same_site}`);
+        lost.push(`SameSite=${before.same_site ?? "Lax"}`);
       if (lost.length === 0) return [];
       return [
         {
@@ -179,7 +187,13 @@ const cookieFindings = (context) =>
 
 const credentialFindings = (context) => {
   const { options, network } = context;
+  // A component new in this release is compared with every old capture.
+  const known =
+    context.left.capture === null
+      ? (context.baseline?.credentials ?? new Set())
+      : new Set();
   return newFacts(context.diff.capture.credentials).flatMap(({ fact }) => {
+    if (known.has(fact.key)) return [];
     const { host, name, field, redacted_by_rea: redacted } = fact.data;
     const provider = aiProviderOf(host);
     const firstParty =
@@ -218,7 +232,8 @@ const credentialFindings = (context) => {
  * release has a capture; header and cookie regressions need both.
  */
 export const runtimePack = (context) => {
-  if (context.diff.capture === null) return packResult();
+  if (context.diff.capture === null || context.captureBaselineFailed)
+    return packResult();
   const compared =
     context.left.capture === null
       ? []
