@@ -2,6 +2,7 @@
 // modules do not hide or invent a destination.
 import { movedFrom } from "../moves.mjs";
 import { isNamespaceHost } from "../catalog.mjs";
+import { captureUnread } from "../facts/capture.mjs";
 import {
   displayUrl,
   hostOf,
@@ -141,30 +142,18 @@ export const browserHosts = (side) =>
 /**
  * The network view shared by the network, AI and web packs: hosts the new
  * side contacts that nothing REA saw in the old release references (in any
- * component), and the deployment's own host (the first page each capture
- * loaded).
+ * component), and `own`, the deployment's hosts (`deploymentHosts`).
  */
 export const networkView = (
   left,
   right,
   baseline = { hosts: new Set() },
-  { ignoreCapture = false, vendorDomains = [] } = {},
+  { ignoreCapture = false, own = new Set() } = {},
 ) => {
   const leftDestinations = destinationsOf(left, { includeCapture: true });
   const known = new Set([...knownHosts(left), ...baseline.hosts]);
   // Without a readable old capture, hosts seen only at runtime cannot be compared.
   const current = destinationsOf(right, { includeCapture: !ignoreCapture });
-  // The deployment: the hosts each capture started on. With vendor domains
-  // given, only those of them on a vendor domain, so a session that starts
-  // at a third-party sign-in page does not make that provider "own".
-  const started = [
-    ...(left.capture?.startHosts ?? []),
-    ...(right.capture?.startHosts ?? []),
-  ];
-  const vendor = started.filter((host) => isVendorHost(host, vendorDomains));
-  const own = new Set(
-    vendorDomains.length > 0 && vendor.length > 0 ? vendor : started,
-  );
   // The deployment's own origin is the site itself, not a destination.
   const fresh = new Map(
     [...current].filter(([host]) => !known.has(host) && !own.has(host)),
@@ -196,7 +185,9 @@ export const absenceUnknowns = (context) => [
       ]),
   ...(context.left.capture === null && context.right.capture !== null
     ? [
-        `No capture of ${oldRelease(context)} was provided, so the host may have been contacted at runtime before.`,
+        captureUnread(context.left)
+          ? `REA could not read the capture given for ${context.labels.left}, so the host may have been contacted at runtime before.`
+          : `No capture of ${oldRelease(context)} was provided, so the host may have been contacted at runtime before.`,
       ]
     : []),
 ];
@@ -433,24 +424,27 @@ const unresolvedRequests = (context, explained) =>
 const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1)$/;
 const CLEARTEXT = new Set(["http", "ws"]);
 
+// A captured GET the server redirected is navigation, such as an http://
+// address upgraded to https://. A redirected POST still sent its body in
+// cleartext.
+const isUpgradeRedirect = (source) =>
+  source.kind === "capture" &&
+  source.fact.data.method === "GET" &&
+  source.fact.data.status >= 300 &&
+  source.fact.data.status < 400;
+
 // A host the new side reaches over http:// or ws:// that the old side never
 // reached in cleartext.
 const cleartextChannels = (context) =>
   [...context.network.current]
     .filter(([host]) => !LOCAL.test(host))
     .flatMap(([host, sources]) => {
-      // A URL that only shares a module with a request, or a capture
-      // request the server redirected (an http:// start upgraded to
-      // https://), is not a cleartext channel.
+      // A URL that only shares a module with a request is not a channel.
       const plain = sources.filter(
         (source) =>
           CLEARTEXT.has(schemeOf(source.url)) &&
           source.kind !== "module-literal" &&
-          !(
-            source.kind === "capture" &&
-            source.fact.data.status >= 300 &&
-            source.fact.data.status < 400
-          ),
+          !isUpgradeRedirect(source),
       );
       if (plain.length === 0) return [];
       const before = context.network.leftSchemes.get(host) ?? new Set();

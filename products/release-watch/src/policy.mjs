@@ -1,4 +1,5 @@
 // Turns a component diff into graded findings, and findings into a verdict.
+import { deploymentHosts } from "./facts/capture.mjs";
 import { aiPack, shippedTokens } from "./rules/ai.mjs";
 import { coveragePack } from "./rules/coverage.mjs";
 import { dependencyPack, packagesOf } from "./rules/dependencies.mjs";
@@ -128,6 +129,13 @@ const locatedUnknowns = (finding, component) => {
 /** Findings for one component and the network view they were graded against. */
 export const evaluateComponent = (component) => {
   const baseline = component.baseline ?? releaseBaseline([component.left]);
+  // Captures are keyed by the deployment when the component is prepared.
+  const own =
+    component.deployment ??
+    deploymentHosts(
+      [component.left.capture, component.right.capture],
+      component.options?.vendorDomains ?? [],
+    );
   const context = {
     ...component,
     baseline,
@@ -137,7 +145,7 @@ export const evaluateComponent = (component) => {
     aliases: component.aliases ?? new Map(),
     network: networkView(component.left, component.right, baseline, {
       ignoreCapture: component.captureBaselineFailed === true,
-      vendorDomains: component.options?.vendorDomains ?? [],
+      own,
     }),
     claimed: { hosts: new Set(), nodes: new Set() },
   };

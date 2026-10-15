@@ -19,6 +19,7 @@ import {
   moduleAliases,
 } from "./diff.mjs";
 import { discoverRelease } from "./discover.mjs";
+import { deploymentOf } from "./facts/capture.mjs";
 import { pairComponents, pairHelpers, pairRuntimes } from "./pairing.mjs";
 import { connectionTotals, registrationTotals } from "./rules/mcp.mjs";
 import {
@@ -274,6 +275,11 @@ const prepareComponent = async ({
     mode: options.reaCompare ?? "auto",
   });
   const aliases = moduleAliases(left.app, right.app, comparison?.pairs ?? []);
+  const deployment = deploymentOf(
+    left.capture,
+    right.capture,
+    options.vendorDomains ?? [],
+  );
   const diff = {
     app: diffApplications(left.app, right.app, aliases, {
       leftKnown: !failed(left),
@@ -287,6 +293,7 @@ const prepareComponent = async ({
     renamed: collected.renamed,
     left,
     right,
+    deployment,
     labels,
     comparison,
     aliases,
@@ -328,7 +335,8 @@ const gradeComponent = async ({
   rea,
   options,
 }) => {
-  const { name, left, right, labels, comparison, aliases, diff } = component;
+  const { name, left, right, labels, comparison, aliases, diff, deployment } =
+    component;
   const [rightSources, leftSources] = await Promise.all([
     openSide(rea, right),
     openSide(rea, left),
@@ -339,6 +347,7 @@ const gradeComponent = async ({
     right,
     comparison,
     diff,
+    deployment,
     aliases,
     ambiguous: ambiguousBundles(left.app, right.app, aliases),
     baseline,

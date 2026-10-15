@@ -6,31 +6,96 @@ import {
   CAPTURE_SOURCE,
   captureLabel,
   cite,
+  heuristic,
   isVendorHost,
   maxSeverity,
   newFacts,
   packResult,
 } from "./shared.mjs";
 
-// A header value as compared: per-response CSP nonces masked, whitespace
-// collapsed and policy directives in a stable order. Other values verbatim.
-const comparable = (name, value) => {
-  if (value === null) return null;
-  const collapsed = value
-    .replace(/'nonce-[^']*'/g, "'nonce-…'")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (name !== "content-security-policy") return collapsed;
-  // Directives in a stable order, and each directive's sources too.
-  return collapsed
+// Directives whose value is a source list, in which keywords, schemes and
+// hosts match ASCII case-insensitively.
+const SOURCE_LISTS = new Set([
+  "base-uri",
+  "child-src",
+  "connect-src",
+  "default-src",
+  "fenced-frame-src",
+  "font-src",
+  "form-action",
+  "frame-ancestors",
+  "frame-src",
+  "img-src",
+  "manifest-src",
+  "media-src",
+  "navigate-to",
+  "object-src",
+  "prefetch-src",
+  "script-src",
+  "script-src-attr",
+  "script-src-elem",
+  "style-src",
+  "style-src-attr",
+  "style-src-elem",
+  "worker-src",
+]);
+
+// One source expression as browsers match it: a keyword, scheme or host in
+// lower case. A hash keeps its case-sensitive digest and a host its path.
+const sourceExpression = (source) => {
+  const hash = /^'(sha256|sha384|sha512)-(.*)'$/i.exec(source);
+  if (hash) return `'${hash[1].toLowerCase()}-${hash[2]}'`;
+  if (source.startsWith("'")) return source.toLowerCase();
+  const authority = /^[^/]*(\/\/[^/]*)?/.exec(source)[0];
+  return `${authority.toLowerCase()}${source.slice(authority.length)}`;
+};
+
+// A policy as browsers apply it: the first of repeated directives, each
+// directive's values as a set, per-response nonces masked.
+const policyComparable = (value) => {
+  const directives = new Map();
+  for (const directive of value
+    .replace(/'nonce-[^']*'/gi, "'nonce-…'")
+    .split(";")) {
+    const [name, ...values] = directive.trim().split(" ").filter(Boolean);
+    if (name === undefined || directives.has(name.toLowerCase())) continue;
+    const key = name.toLowerCase();
+    const normal = SOURCE_LISTS.has(key)
+      ? values.map(sourceExpression)
+      : values;
+    directives.set(key, [key, ...[...new Set(normal)].sort()].join(" "));
+  }
+  return [...directives.values()].sort().join("; ");
+};
+
+// HSTS directives are case-insensitive and unordered; max-age may be quoted.
+const hstsComparable = (value) =>
+  value
     .split(";")
-    .map((directive) => directive.trim().split(" ").filter(Boolean))
-    .filter((parts) => parts.length > 0)
-    .map(([directive, ...sources]) =>
-      [directive.toLowerCase(), ...sources.sort()].join(" "),
-    )
+    .map((directive) => directive.trim().toLowerCase())
+    .filter(Boolean)
+    .map((directive) => {
+      const [name, ...rest] = directive.split("=");
+      const setting = rest
+        .join("=")
+        .trim()
+        .replace(/^"(.*)"$/, "$1");
+      return rest.length > 0 ? `${name.trim()}=${setting}` : name.trim();
+    })
     .sort()
     .join("; ");
+
+const NORMALIZED = {
+  "content-security-policy": policyComparable,
+  "strict-transport-security": hstsComparable,
+};
+
+// A header value as compared: whitespace collapsed, and a policy in the
+// form browsers apply. Other values verbatim.
+const comparable = (name, value) => {
+  if (value === null) return null;
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return NORMALIZED[name] ? NORMALIZED[name](collapsed) : collapsed;
 };
 
 /**
@@ -64,6 +129,19 @@ export const headerChanges = (before, after) =>
     ];
   });
 
+// Pages and cookies of the deployment pair by path and name across hosts,
+// a staging host with production: Release Watch's reading, not REA's.
+const pairedAcross = (what, hosts) => {
+  const distinct = [...new Set(hosts)];
+  return distinct.length > 1
+    ? [
+        heuristic(
+          `Release Watch compares ${what} across ${distinct.join(" and ")} because each serves the deployment in its capture`,
+        ),
+      ]
+    : [];
+};
+
 const headerFindings = (context) =>
   context.diff.capture.documents
     .filter((item) => item.left.length > 0 && item.right.length > 0)
@@ -88,58 +166,97 @@ const headerFindings = (context) =>
           why: "These headers stop script injection, clickjacking and protocol downgrades; losing or loosening one widens what an attacker can do on the page.",
           recommendation:
             "Restore the previous header values, or have the owner justify each change.",
-          evidence: changes.flatMap((change) => [
-            cite(
-              `${captureLabel(context.left)}: ${change.header.label}: ${change.was}`,
-              before,
-              CAPTURE_SOURCE,
-              { side: "left" },
+          evidence: [
+            ...changes.flatMap((change) => [
+              cite(
+                `${captureLabel(context.left)}: ${change.header.label}: ${change.was}`,
+                before,
+                CAPTURE_SOURCE,
+                { side: "left" },
+              ),
+              cite(
+                `${captureLabel(context.right)}: ${change.header.label}: ${change.now ?? "(not sent)"}`,
+                after(change),
+                CAPTURE_SOURCE,
+              ),
+            ]),
+            ...pairedAcross(
+              `${page} as one page`,
+              [...item.left, ...item.right].map((load) => load.data.host),
             ),
-            cite(
-              `${captureLabel(context.right)}: ${change.header.label}: ${change.now ?? "(not sent)"}`,
-              after(change),
-              CAPTURE_SOURCE,
-            ),
-          ]),
+          ],
           unknowns: [
-            "Release Watch compares header values after masking nonces and ordering directives; it does not grade policy directives.",
+            "Release Watch compares header values after masking CSP nonces, ignoring the order, case and repetition that browsers ignore in CSP and HSTS; it does not grade policy directives.",
           ],
         },
       ];
     });
 
-const SAME_SITE_ORDER = { strict: 2, lax: 1, none: 0 };
-// An unset SameSite is Lax in current browsers.
-const sameSiteRank = (value) =>
-  value === null || value === undefined || value === ""
-    ? SAME_SITE_ORDER.lax
-    : (SAME_SITE_ORDER[String(value).toLowerCase()] ?? null);
+// SameSite strength as the [weakest, strongest] browsers give it. Without
+// the attribute, browsers differ: Chrome treats the cookie as Lax after a
+// short grace period, while others may send it cross-site as with None.
+const SAME_SITE = { strict: [2, 2], lax: [1, 1], none: [0, 0] };
+const UNSET = [0, 1];
+const isUnset = (value) =>
+  value === null || value === undefined || value === "";
+const sameSiteRange = (value) =>
+  isUnset(value) ? UNSET : (SAME_SITE[String(value).toLowerCase()] ?? null);
+
+const BROWSER_DEFAULT =
+  "Browsers differ on a cookie without SameSite: Chrome treats it as Lax after a short grace period, while other browsers may send it on cross-site requests as with None.";
 
 // The weakest protection any response in one capture gave a cookie: a
 // browser keeps whichever Set-Cookie arrived last, so one weak response is
-// enough to expose it.
+// enough to expose it. An unrecognised SameSite value leaves it unknown.
 const weakest = (facts) => {
-  const ranks = facts.map((fact) => sameSiteRank(fact.data.same_site));
-  const known = ranks.filter((rank) => rank !== null);
-  const lowest =
-    known.length === ranks.length && known.length > 0
-      ? Math.min(...known)
-      : null;
+  const responses = facts.map((fact) => ({
+    value: isUnset(fact.data.same_site) ? null : fact.data.same_site,
+    range: sameSiteRange(fact.data.same_site),
+  }));
+  const unrecognised = responses.find(({ range }) => range === null);
+  const [weakestResponse] = unrecognised
+    ? [unrecognised]
+    : [...responses].sort(
+        (a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1],
+      );
   return {
     http_only: facts.every((fact) => fact.data.http_only),
     secure: facts.every((fact) => fact.data.secure),
-    same_site_rank: lowest,
+    same_site_range: unrecognised
+      ? null
+      : [0, 1].map((bound) =>
+          Math.min(...responses.map(({ range }) => range[bound])),
+        ),
     // The value as the capture recorded it, from the weakest response.
-    same_site:
-      lowest === null ? null : facts[ranks.indexOf(lowest)].data.same_site,
+    same_site: weakestResponse.value,
     fact:
       facts.find((fact) => !fact.data.http_only || !fact.data.secure) ??
       facts[0],
   };
 };
 
+// True when some browser protects the cookie less after than before.
+const lostSameSite = (before, after) =>
+  before.same_site_range !== null &&
+  after.same_site_range !== null &&
+  [0, 1].some(
+    (bound) => after.same_site_range[bound] < before.same_site_range[bound],
+  );
+
 const attributes = (cookie) =>
-  `HttpOnly ${cookie.http_only}, Secure ${cookie.secure}, SameSite ${cookie.same_site ?? "unset (Lax in current browsers)"}`;
+  `HttpOnly ${cookie.http_only}, Secure ${cookie.secure}, SameSite ${cookie.same_site_range === null ? `${cookie.same_site} (not recognised)` : (cookie.same_site ?? "not set")}`;
+
+const lostAttributes = (before, after) => [
+  ...(before.http_only && !after.http_only ? ["HttpOnly"] : []),
+  ...(before.secure && !after.secure ? ["Secure"] : []),
+  ...(lostSameSite(before, after)
+    ? [
+        isUnset(before.same_site)
+          ? "browser-default SameSite"
+          : `SameSite=${before.same_site}`,
+      ]
+    : []),
+];
 
 const cookieFindings = (context) =>
   context.diff.capture.cookies
@@ -147,15 +264,7 @@ const cookieFindings = (context) =>
     .flatMap((item) => {
       const before = weakest(item.left);
       const after = weakest(item.right);
-      const lost = [];
-      if (before.http_only && !after.http_only) lost.push("HttpOnly");
-      if (before.secure && !after.secure) lost.push("Secure");
-      if (
-        before.same_site_rank !== null &&
-        after.same_site_rank !== null &&
-        after.same_site_rank < before.same_site_rank
-      )
-        lost.push(`SameSite=${before.same_site ?? "Lax"}`);
+      const lost = lostAttributes(before, after);
       if (lost.length === 0) return [];
       return [
         {
@@ -179,8 +288,16 @@ const cookieFindings = (context) =>
               after.fact,
               CAPTURE_SOURCE,
             ),
+            ...pairedAcross(
+              `the ${item.key} cookie`,
+              [...item.left, ...item.right].map((cookie) => cookie.data.domain),
+            ),
           ],
-          unknowns: [],
+          unknowns:
+            lostSameSite(before, after) &&
+            (isUnset(before.same_site) || isUnset(after.same_site))
+              ? [BROWSER_DEFAULT]
+              : [],
         },
       ];
     });

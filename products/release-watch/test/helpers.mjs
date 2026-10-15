@@ -1,6 +1,7 @@
 // Synthetic REA facts and a one-component policy run for rule tests.
 import { pairHelpers, pairRuntimes } from "../src/pairing.mjs";
 import { diffApplications, diffCaptures } from "../src/diff.mjs";
+import { deploymentOf } from "../src/facts/capture.mjs";
 import { evaluateComponent } from "../src/policy.mjs";
 
 export const at = (file, line, column = 0) => ({ file, line, column });
@@ -99,6 +100,11 @@ export const evaluate = (
     surfaces,
     labels: { left: left.label, right: right.label },
     options: { vendorDomains: [], failOn: "high", ...options },
+    deployment: deploymentOf(
+      left.capture,
+      right.capture,
+      options.vendorDomains ?? [],
+    ),
     diff: {
       app: diffApplications(left.app, right.app, aliases),
       runtimes: pairRuntimes(left, right),

@@ -1,7 +1,10 @@
 // Coverage rules: what REA or Release Watch could not examine. A rule that
 // found nothing only means something when the code was examined, so limits
 // on the new side become findings instead of a silent pass.
+import path from "node:path";
+
 import { SECURITY_HEADERS, isHttpClient, packageNameOf } from "../catalog.mjs";
+import { captureUnread } from "../facts/capture.mjs";
 import { displayPath } from "../urls.mjs";
 import {
   APP_SOURCE,
@@ -14,6 +17,13 @@ import {
 const COMPONENT = "Release Watch";
 const FUSE_SOURCE = "REA inspect_electron_fuses";
 const MAX_FILES = 6;
+
+// An unread capture, by its side's label and its file name; a capture
+// compared on its own is labelled by its file name already.
+const unreadCapture = (side, label) => {
+  const name = path.basename(side.target.capture);
+  return label === name ? name : `the capture given for ${label} (${name})`;
+};
 
 const listed = (files) =>
   `${files.slice(0, MAX_FILES).join(", ")}${files.length > MAX_FILES ? ` and ${files.length - MAX_FILES} more` : ""}`;
@@ -260,6 +270,35 @@ const COMPARISON_LINES = {
   size: "REA's module pairing was skipped because the Evidence is larger than 64 MB; a renamed module may be reported as new code.",
 };
 
+// Why runtime facts were not compared: a capture REA could not read, or,
+// for a component both releases have, a capture given for one side only.
+const captureLines = ({ left, right, labels }) => {
+  const unread = [
+    ...(captureUnread(left)
+      ? [
+          `REA could not read ${unreadCapture(left, labels.left)}, so runtime findings were not compared.`,
+        ]
+      : []),
+    ...(captureUnread(right)
+      ? [
+          `REA could not read ${unreadCapture(right, labels.right)}, so runtime rules did not run for ${labels.right}.`,
+        ]
+      : []),
+  ];
+  if (
+    unread.length > 0 ||
+    left.target === null ||
+    right.target === null ||
+    (left.capture === null) === (right.capture === null)
+  )
+    return unread;
+  return [
+    left.capture
+      ? `Only ${labels.left} has a runtime capture, so runtime rules did not run for ${labels.right}.`
+      : `Only ${labels.right} has a runtime capture, so header and cookie changes were not compared.`,
+  ];
+};
+
 // RW-C02: pieces that could only be seen on one side, so nothing was compared.
 const oneSided = (context) => {
   const { left, right, labels, comparison, name } = context;
@@ -273,23 +312,10 @@ const oneSided = (context) => {
     lines.push(
       `Component ${name} is missing from ${release.right}; nothing in it was compared.`,
     );
-  if (
-    left.target !== null &&
-    right.target !== null &&
-    (left.capture === null) !== (right.capture === null)
-  )
+  lines.push(...captureLines(context));
+  for (const page of unmatchedPages(context))
     lines.push(
-      left.capture
-        ? `Only ${labels.left} has a runtime capture, so runtime rules did not run for ${labels.right}.`
-        : `Only ${labels.right} has a runtime capture, so header and cookie changes were not compared.`,
-    );
-  if (context.captureBaselineFailed)
-    lines.push(
-      `REA could not read ${labels.left}'s capture, so runtime findings were not compared.`,
-    );
-  for (const path of unmatchedPages(context))
-    lines.push(
-      `The ${labels.right} capture has no page at ${path} to compare with ${labels.left}'s security headers.`,
+      `The ${labels.right} capture has no page at ${page} to compare with ${labels.left}'s security headers.`,
     );
   if (comparison?.error)
     lines.push(

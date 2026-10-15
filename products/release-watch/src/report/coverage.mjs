@@ -1,5 +1,8 @@
 // Coverage and limits for the report: what each side's analysis could not
 // examine, and what Release Watch and REA never establish.
+import path from "node:path";
+
+import { captureUnread } from "../facts/capture.mjs";
 
 // What Release Watch itself never examines; true of every run.
 export const RELEASE_WATCH_LIMITS = [
@@ -71,6 +74,10 @@ const sideCoverage = (side) => {
       gaps.push(
         `${helper.relative}: no Go build information (${helper.identified}).`,
       );
+  if (captureUnread(side))
+    gaps.push(
+      `REA could not read the capture ${path.basename(side.target.capture)}; no runtime facts from it were compared.`,
+    );
   if (side.capture) {
     gaps.push(...side.capture.gaps);
     limitations.push(...side.capture.limitations);
