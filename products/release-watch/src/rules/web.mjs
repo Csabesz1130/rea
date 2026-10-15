@@ -1,6 +1,6 @@
 // Web build rules: third-party scripts in HTML, service workers, shipped
 // original sources and direct eval.
-import { displayScript, scriptHostOf } from "../urls.mjs";
+import { displayScript, isEmbeddedScript, scriptHostOf } from "../urls.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
@@ -11,6 +11,27 @@ import {
   packResult,
 } from "./shared.mjs";
 
+// A script whose code travels in its URL: REA does not analyze that code.
+const embeddedScript = (context, { facts, status }) => ({
+  rule: "RW-W01",
+  severity: "high",
+  title: "New script embedded in a data: or javascript: URL",
+  summary: `${context.labels.right}'s HTML runs script code embedded in the URL of a script tag, which REA does not analyze.`,
+  why: "Code in a data: URL runs with full access to the page and escapes review of the site's script files.",
+  recommendation:
+    "Move the code into a reviewed script file, or decode and review it before release.",
+  evidence: facts.map((page) =>
+    cite(
+      `HTML script reference with embedded code (${absencePhrase(status, context.labels.left)})`,
+      page,
+      APP_SOURCE,
+    ),
+  ),
+  unknowns: [
+    "REA does not analyze code embedded in a script URL, so what it does is not examined.",
+  ],
+});
+
 const scriptFindings = (context) => {
   const { labels, options, network } = context;
   const findings = [];
@@ -20,6 +41,10 @@ const scriptFindings = (context) => {
     const [fact] = facts;
     // External by the host a browser resolves, whatever REA's resolution
     // status says about a source with surrounding whitespace.
+    if (isEmbeddedScript(fact.data.script_path)) {
+      findings.push(embeddedScript(context, { facts, status }));
+      continue;
+    }
     const host = scriptHostOf(fact.data.script_path);
     if (host === null) continue;
     hosts.push(host);

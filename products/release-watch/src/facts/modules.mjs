@@ -16,6 +16,10 @@ export const modulePathOf = (node) => {
   return null;
 };
 
+/** True for the file names REA analyzes as JavaScript or TypeScript modules. */
+export const isScriptPath = (modulePath) =>
+  /\.(m?js|cjs|jsx|ts|mts|cts|tsx)$/.test(modulePath);
+
 const externalSpecifierOf = (edge, target) => {
   const properties = firstObservation(target)?.properties ?? {};
   if (properties.resolution_status !== "external") return null;

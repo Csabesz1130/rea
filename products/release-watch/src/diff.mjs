@@ -1,6 +1,7 @@
 // Keyed comparison of capability facts across two releases. Absence counts as
 // "added"/"removed" only when the other side's REA coverage is complete;
 // otherwise the item stays "not-previously-observed"/"no-longer-observed".
+import { isScriptPath } from "./facts/modules.mjs";
 
 const groupByKey = (facts) => {
   const groups = new Map();
@@ -139,10 +140,6 @@ const HASHED_NAME = [
 const withoutHash = (modulePath) =>
   HASHED_NAME.reduce((name, pattern) => name.replace(pattern, ""), modulePath);
 
-/** True for the file names REA analyzes as JavaScript or TypeScript modules. */
-export const isScriptPath = (modulePath) =>
-  /\.(m?js|cjs|jsx|ts|mts|cts|tsx)$/.test(modulePath);
-
 const scriptPaths = (app) =>
   app.assets.map((asset) => asset.key).filter(isScriptPath);
 
@@ -270,6 +267,45 @@ const rekey = (facts, aliases) =>
         };
       });
 
+// Bundle names several unpaired files share once their content hash is
+// removed (two `index-<hash>.js` chunks): their facts are compared as one
+// pool, so unchanged code in them is not new.
+const pooledNames = (left, right, aliases) => {
+  const paired = new Set([
+    ...aliases.keys(),
+    ...[...aliases.values()].map((alias) => alias.path),
+  ]);
+  const counts = new Map();
+  for (const [side, app] of [
+    ["left", left],
+    ["right", right],
+  ])
+    for (const modulePath of scriptPaths(app)) {
+      const bare = withoutHash(modulePath);
+      if (bare === modulePath || paired.has(modulePath)) continue;
+      const entry = counts.get(bare) ?? { left: 0, right: 0 };
+      entry[side] += 1;
+      counts.set(bare, entry);
+    }
+  return new Set(
+    [...counts]
+      .filter(([, entry]) => entry.left > 1 || entry.right > 1)
+      .map(([bare]) => bare),
+  );
+};
+
+const pool = (facts, pools) =>
+  pools.size === 0
+    ? facts
+    : facts.map((fact) => {
+        const modulePath = fact.data?.module;
+        if (typeof modulePath !== "string") return fact;
+        const bare = withoutHash(modulePath);
+        if (!pools.has(bare) || !fact.key.startsWith(`${modulePath}#`))
+          return fact;
+        return { ...fact, key: `${bare}${fact.key.slice(modulePath.length)}` };
+      });
+
 /** Compare the application facts of two releases, family by family. */
 export const diffApplications = (
   leftApp,
@@ -291,13 +327,17 @@ export const diffApplications = (
         })),
       ]),
     );
+  const pools =
+    leftApp && rightApp ? pooledNames(left, right, aliases) : new Set();
   return Object.fromEntries(
     FAMILIES.map(
       ({ family, coverage, moduleKeyed, equal, unique, countable }) => [
         family,
         diffKeyed(
-          moduleKeyed ? rekey(left[family], aliases) : left[family],
-          right[family],
+          moduleKeyed
+            ? pool(rekey(left[family], aliases), pools)
+            : left[family],
+          moduleKeyed ? pool(right[family], pools) : right[family],
           {
             leftComplete: complete(left, coverage),
             rightComplete: complete(right, coverage),

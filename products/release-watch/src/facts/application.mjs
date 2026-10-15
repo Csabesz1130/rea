@@ -3,6 +3,7 @@
 import { HTML_SINKS } from "../catalog.mjs";
 import { isUrl, scriptKey } from "../urls.mjs";
 import { callGraph } from "./calls.mjs";
+import { coverageOf, unreachedModules } from "./coverage.mjs";
 import { browserModules, importIndex } from "./modules.mjs";
 import { withLoads } from "./windows.mjs";
 import {
@@ -326,24 +327,40 @@ const memberCalls = (scope) => {
   }
 };
 
-const dynamicEvaluation = (semantic, contexts, facts) => {
+// Process APIs whose names in an REA unknown mean a process call REA could
+// not classify. Plain `exec` is left out: RegExp.prototype.exec shares it.
+const PROCESS_NAME =
+  /\b(execSync|execFile|execFileSync|spawn|spawnSync|fork|child_process)\b/;
+
+/**
+ * REA's unknowns that matter to the rules: dynamic evaluation (eval, new
+ * Function), and values or calls REA could not resolve that name a process
+ * API, where a process call may have gone unclassified.
+ */
+const semanticUnknowns = (semantic, contexts, facts) => {
   for (const unknown of semantic.unknowns ?? []) {
-    if (unknown.reason !== "dynamic-scope") continue;
     const location = unknown.evidence?.location?.value;
     const modulePath =
       location?.kind === "source-range" ? location.source : null;
     if (modulePath === null) continue;
-    facts.dynamicEvaluation.push(
-      semanticFact(
-        { ...unknown, node_id: unknown.unknown_id },
-        contexts,
-        `${modulePath}#eval`,
-        {
+    const node = { ...unknown, node_id: unknown.unknown_id };
+    const detail = unknown.detail ?? null;
+    if (unknown.reason === "dynamic-scope")
+      facts.dynamicEvaluation.push(
+        semanticFact(node, contexts, `${modulePath}#eval`, {
           module: modulePath,
-          detail: unknown.detail ?? null,
-        },
-      ),
-    );
+          detail,
+        }),
+      );
+    const name = PROCESS_NAME.exec(detail ?? "")?.[1];
+    if (name)
+      facts.processUnknowns.push(
+        semanticFact(node, contexts, `${modulePath}#${name}`, {
+          module: modulePath,
+          name,
+          detail,
+        }),
+      );
   }
 };
 
@@ -359,6 +376,7 @@ const semanticFacts = (semantic) => {
     htmlSinks: [],
     memberCalls: [],
     dynamicEvaluation: [],
+    processUnknowns: [],
   };
   if (!semantic) return facts;
   const contexts = new Map(
@@ -390,57 +408,8 @@ const semanticFacts = (semantic) => {
   for (const node of semantic.nodes)
     SEMANTIC_PROJECTIONS[node.kind]?.(node, scope);
   memberCalls(scope);
-  dynamicEvaluation(semantic, contexts, facts);
+  semanticUnknowns(semantic, contexts, facts);
   return facts;
-};
-
-// Modules whose semantic node count reached REA's per-file ceiling: where a
-// truncated graph dropped facts. Derived from REA's own limit and nodes.
-const ceilingModules = (semantic) => {
-  const ceiling = semantic?.coverage?.limits?.find(
-    (limit) => limit.name === "semantic_graph_file_node_ceiling",
-  )?.value;
-  if (!semantic?.coverage?.truncated || !ceiling) return [];
-  const counts = new Map();
-  for (const node of semantic.nodes) {
-    const modulePath = node.identity?.module_path;
-    if (modulePath) counts.set(modulePath, (counts.get(modulePath) ?? 0) + 1);
-  }
-  return [...counts]
-    .filter(([, count]) => count >= ceiling)
-    .map(([modulePath]) => modulePath)
-    .sort();
-};
-
-/** REA's coverage of both graphs, as Release Watch reports it. */
-const coverageOf = (graph, semantic) => ({
-  graph: graph.coverage?.status ?? "unknown",
-  graph_truncated: graph.coverage?.truncated === true,
-  graph_omitted: graph.coverage?.omitted_count ?? 0,
-  semantic: semantic?.coverage?.status ?? "unavailable",
-  semantic_truncated: semantic?.coverage?.truncated === true,
-  semantic_omitted_nodes: semantic?.coverage?.omitted_nodes ?? null,
-  semantic_limits: (semantic?.coverage?.limits ?? []).map(
-    (limit) =>
-      `${limit.name} ${limit.value}${limit.unit === "items" ? "" : ` ${limit.unit}`}`,
-  ),
-  semantic_ceiling_modules: ceilingModules(semantic),
-});
-
-// Script files with no semantic node at all when REA truncated the semantic
-// graph: the global ceiling left them unexamined.
-const unreachedModules = (semantic, assets) => {
-  if (!semantic?.coverage?.truncated) return [];
-  const reached = new Set(
-    semantic.nodes.map((node) => node.identity?.module_path).filter(Boolean),
-  );
-  return assets
-    .map((asset) => asset.key)
-    .filter(
-      (key) =>
-        /\.(m?js|cjs|jsx|ts|mts|cts|tsx)$/.test(key) && !reached.has(key),
-    )
-    .sort();
 };
 
 // The bundle each source-map original belongs to: the asset whose source map

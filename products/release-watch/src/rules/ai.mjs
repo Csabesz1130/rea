@@ -170,7 +170,7 @@ const credentialFindings = (context) => {
         return {
           rule: "RW-A02",
           severity: inBrowser && !moved ? "critical" : "high",
-          title: `${token.kind} ${moved ? "moved into" : "shipped in"} ${inBrowser ? "browser code" : "code"}: ${carrier.module}`,
+          title: `${token.kind} ${moved ? "now in" : "shipped in"} ${inBrowser ? "browser code" : "code"}: ${carrier.module}`,
           summary: moved
             ? `${labels.right} ships a ${token.kind} in code Release Watch classifies as browser code; ${labels.left} had the same key only in code it did not classify that way.`
             : `${labels.right} contains a string with the format of a ${token.kind}${binding}.`,
@@ -181,11 +181,18 @@ const credentialFindings = (context) => {
             "Revoke the key now, move the call behind a server, and review the key's usage logs.",
           evidence: [
             cite(
-              `${token.kind} ${token.masked}${binding} (${moved ? `also in ${labels.left}, outside browser code` : `not in any string REA reported for ${labels.left}`})`,
+              `${token.kind} ${token.masked}${binding} (${moved ? `also in a string REA reported for ${labels.left}` : `not in any string REA reported for ${labels.left}`})`,
               carrier.fact,
               APP_SOURCE,
             ),
             ...(inBrowser ? [BROWSER_CODE] : []),
+            ...(moved
+              ? [
+                  heuristic(
+                    `Release Watch did not classify the ${labels.left} code that held this key as browser code`,
+                  ),
+                ]
+              : []),
           ],
           unknowns: [
             ...(moved ? [BROWSER_LIMIT] : []),

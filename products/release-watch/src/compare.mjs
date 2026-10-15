@@ -15,11 +15,11 @@ import {
   ambiguousBundles,
   diffApplications,
   diffCaptures,
-  isScriptPath,
   moduleAliases,
 } from "./diff.mjs";
 import { discoverRelease } from "./discover.mjs";
 import { deploymentOf } from "./facts/capture.mjs";
+import { isScriptPath } from "./facts/modules.mjs";
 import { pairComponents, pairHelpers, pairRuntimes } from "./pairing.mjs";
 import { connectionTotals, registrationTotals } from "./rules/mcp.mjs";
 import {
@@ -377,6 +377,25 @@ const gradeComponent = async ({
   };
 };
 
+// The manifest's product, else a component's package name, else the new
+// release's directory name unless that already is a release label.
+const productName = (rightRelease, components, labels) => {
+  const named =
+    rightRelease.product ??
+    components
+      .map(
+        (component) =>
+          component.right.app?.package?.name ??
+          component.left.app?.package?.name,
+      )
+      .find(Boolean);
+  if (named) return named;
+  const directory = path.basename(rightRelease.root);
+  return directory === labels.right || directory === labels.left
+    ? null
+    : directory;
+};
+
 /** Compare two releases and return the complete report model. */
 export const compareReleases = async ({
   left,
@@ -437,16 +456,7 @@ export const compareReleases = async ({
   return {
     tool: { name: "Release Watch", version: "0.2.0" },
     generated_at: new Date().toISOString(),
-    product:
-      rightRelease.product ??
-      components
-        .map(
-          (component) =>
-            component.right.app?.package?.name ??
-            component.left.app?.package?.name,
-        )
-        .find(Boolean) ??
-      path.basename(rightRelease.root),
+    product: productName(rightRelease, components, labels),
     labels,
     components,
     findings,

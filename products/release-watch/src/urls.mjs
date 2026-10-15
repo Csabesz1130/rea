@@ -44,15 +44,22 @@ export const hostOf = (url) => {
  */
 export const scriptSourceUrl = (source) => {
   if (typeof source !== "string") return null;
-  // As a browser parses it: ASCII tab and newline removed anywhere, other
-  // surrounding whitespace trimmed.
+  // As a browser parses it: ASCII tab and newline removed anywhere, C0
+  // controls and spaces trimmed at both ends.
   const trimmed = source
     .replace(/[\t\n\r]/g, "")
-    .replace(/^[\f ]+|[\f ]+$/g, "");
+    // oxlint-disable-next-line no-control-regex -- the URL parser trims C0 controls.
+    .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
   if (/^(data|blob|javascript):/i.test(trimmed)) return null;
   const absolute = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
   return hostOf(absolute) === null ? null : absolute;
 };
+
+/** True for a `<script src>` whose code is embedded in the URL (data:, javascript:). */
+export const isEmbeddedScript = (source) =>
+  typeof source === "string" &&
+  // oxlint-disable-next-line no-control-regex -- the URL parser trims C0 controls.
+  /^[\u0000-\u0020]*(data|javascript):/i.test(source.replace(/[\t\n\r]/g, ""));
 
 /** The host of a `<script src>` value, or null for a relative source. */
 export const scriptHostOf = (source) => hostOf(scriptSourceUrl(source));
