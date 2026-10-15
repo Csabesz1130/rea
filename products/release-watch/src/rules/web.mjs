@@ -1,17 +1,14 @@
 // Web build rules: third-party scripts in HTML, service workers, shipped
 // original sources and direct eval.
+import { displayUrl, scriptHostOf } from "../urls.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
   cite,
-  hostOf,
   isVendorHost,
   newFacts,
   packResult,
 } from "./shared.mjs";
-
-const scriptHost = (scriptPath) =>
-  hostOf(scriptPath.startsWith("//") ? `https:${scriptPath}` : scriptPath);
 
 const scriptFindings = (context) => {
   const { labels, options, network } = context;
@@ -19,25 +16,30 @@ const scriptFindings = (context) => {
   const hosts = [];
   for (const { fact, status } of newFacts(context.diff.app.pageScripts)) {
     if (fact.data.resolution_status !== "external") continue;
-    const host = scriptHost(fact.data.script_path);
+    const host = scriptHostOf(fact.data.script_path);
     if (host === null) continue;
     hosts.push(host);
     if (isVendorHost(host, options.vendorDomains) || network.own.has(host))
       continue;
     const knownHost = network.known.has(host);
+    const source = displayUrl(
+      fact.data.script_path.startsWith("//")
+        ? `https:${fact.data.script_path}`
+        : fact.data.script_path,
+    );
     findings.push({
       rule: "RW-W01",
       severity: knownHost ? "medium" : "high",
       title: knownHost
         ? `New script from ${host}`
         : `New third-party script: ${host}`,
-      summary: `${labels.right}'s HTML loads ${fact.data.script_path}.`,
+      summary: `${labels.right}'s HTML loads a script from ${source}.`,
       why: "A third-party script runs with full access to the page, its data and its users' sessions. The 2024 polyfill.io takeover used exactly this path.",
       recommendation:
         "Self-host the script or pin it with Subresource Integrity, and confirm what data the vendor collects.",
       evidence: [
         cite(
-          `<script src="${fact.data.script_path}"> (${absencePhrase(status, labels.left)})`,
+          `HTML script reference to ${source} (${absencePhrase(status, labels.left)})`,
           fact,
           APP_SOURCE,
         ),
@@ -61,7 +63,7 @@ const serviceWorkerFindings = (context) =>
       "Review what the worker caches and forwards, and confirm it ships an update and unregister path.",
     evidence: [
       cite(
-        `navigator.serviceWorker.register("${fact.data.specifier}") (${absencePhrase(status, context.labels.left)})`,
+        `Service worker registration of ${fact.data.specifier} (${absencePhrase(status, context.labels.left)})`,
         fact,
         APP_SOURCE,
       ),
@@ -69,7 +71,10 @@ const serviceWorkerFindings = (context) =>
     unknowns: [],
   }));
 
+// Reported only when the old release shipped no original sources at all; a
+// release that already published them gains nothing new by adding files.
 const embeddedSourceFindings = (context) => {
+  if ((context.left.app?.embeddedSources.length ?? 0) > 0) return [];
   const added = newFacts(context.diff.app.embeddedSources);
   if (added.length === 0) return [];
   return [
@@ -77,7 +82,7 @@ const embeddedSourceFindings = (context) => {
       rule: "RW-W03",
       severity: "low",
       title: `Source maps now ship ${added.length} original source file${added.length === 1 ? "" : "s"}`,
-      summary: `${context.labels.right} publishes source maps with embedded original sources.`,
+      summary: `${context.labels.right} publishes source maps with embedded original sources; ${context.labels.left} published none REA could see.`,
       why: "Embedded sources reveal unminified code, comments and internal paths to anyone who opens the site.",
       recommendation:
         "Upload source maps to your error tracker instead of serving them, or strip sourcesContent.",
@@ -96,22 +101,24 @@ const embeddedSourceFindings = (context) => {
 };
 
 const evalFindings = (context) =>
-  newFacts(context.diff.app.dynamicEvaluation).map(({ fact, status }) => ({
-    rule: "RW-W04",
-    severity: "low",
-    title: `New direct eval in ${fact.data.module}`,
-    summary: `${context.labels.right} evaluates code built at runtime in ${fact.data.module}.`,
-    why: "eval turns any string that reaches it into running code and blocks a strict Content-Security-Policy.",
-    recommendation: "Replace eval with explicit code paths.",
-    evidence: [
-      cite(
-        `${fact.data.detail ?? "eval can declare bindings at runtime"} (${absencePhrase(status, context.labels.left)})`,
-        fact,
-        APP_SOURCE,
-      ),
-    ],
-    unknowns: ["REA does not resolve what string reaches eval."],
-  }));
+  newFacts(context.diff.app.dynamicEvaluation).map(
+    ({ fact, status, counts }) => ({
+      rule: "RW-W04",
+      severity: "low",
+      title: `New direct eval in ${fact.data.module}`,
+      summary: `${context.labels.right} evaluates code built at runtime in ${fact.data.module}.`,
+      why: "eval turns any string that reaches it into running code and blocks a strict Content-Security-Policy.",
+      recommendation: "Replace eval with explicit code paths.",
+      evidence: [
+        cite(
+          `${fact.data.detail ?? "eval can declare bindings at runtime"} (${absencePhrase(status, context.labels.left, counts)})`,
+          fact,
+          APP_SOURCE,
+        ),
+      ],
+      unknowns: ["REA does not resolve what string reaches eval."],
+    }),
+  );
 
 // Requests made inside a new service worker forward the page's own traffic;
 // RW-W02 explains them.

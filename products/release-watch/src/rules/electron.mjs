@@ -52,7 +52,7 @@ const rendererProcessExecution = (context) => {
     const handler = handlers.get(member.data.channel);
     const handlerModule = handler?.location?.file ?? null;
     if (handlerModule === null) continue;
-    for (const { fact: exec, status: execStatus } of execSites) {
+    for (const { fact: exec, status: execStatus, counts } of execSites) {
       const execModule = exec.data.module;
       const read = handlerReach(app, handler, execModule);
       if (read === null) continue;
@@ -74,7 +74,7 @@ const rendererProcessExecution = (context) => {
           read.location,
         ),
         cite(
-          `${exec.data.method}() creates a child process in ${execModule} (${absencePhrase(execStatus, labels.left)})`,
+          `${exec.data.method}() creates a child process in ${execModule} (${absencePhrase(execStatus, labels.left, counts)})`,
           exec,
           APP_SOURCE,
         ),
@@ -142,51 +142,103 @@ const WEB_PREFERENCES = {
   allowRunningInsecureContent: { safe: false, label: "Mixed-content blocking" },
 };
 
-const preferenceRegressions = (before, after) =>
-  Object.entries(WEB_PREFERENCES).flatMap(([name, rule]) => {
-    const was = before[name] ?? { known: true, value: rule.safe };
-    const now = after[name] ?? { known: true, value: rule.safe };
-    if (!was.known || was.value !== rule.safe) return [];
-    if (now.known && now.value === rule.safe) return [];
-    return [{ name, rule, was, now }];
-  });
+// How every window on one side sets one preference: "unsafe" when any window
+// sets the unsafe value, "dynamic" when any value is not a literal,
+// otherwise "safe" (set to the safe value or omitted).
+const preferenceState = (windows, name, rule) => {
+  const settings = windows.map((window) => ({
+    window,
+    setting: window.data.web_preferences[name] ?? null,
+  }));
+  const unsafe = settings.filter(
+    ({ setting }) => setting?.known && setting.value !== rule.safe,
+  );
+  const dynamic = settings.filter(
+    ({ setting }) => setting !== null && !setting.known,
+  );
+  const state =
+    unsafe.length > 0 ? "unsafe" : dynamic.length > 0 ? "dynamic" : "safe";
+  return { state, settings, offending: unsafe.length > 0 ? unsafe : dynamic };
+};
 
-const webPreferenceRegressions = (context) =>
-  context.diff.app.windows
-    .filter((item) => item.status === "changed")
-    .flatMap((item) => {
-      const [before] = item.left;
-      const [after] = item.right;
-      return preferenceRegressions(
-        before.data.web_preferences,
-        after.data.web_preferences,
-      ).map(({ name, rule, now }) => ({
+const settingText = (name, setting) =>
+  setting === null
+    ? `${name} omitted`
+    : `${name} = ${setting.known ? JSON.stringify(setting.value) : `dynamic value ${setting.value ?? ""}`.trim()}`;
+
+// Lines describing how the old release set the preference: explicit values
+// are REA facts, omitted values rely on Electron's documented default.
+const beforeEvidence = (context, name, rule, before) => {
+  if (before.settings.length === 0)
+    return [
+      reported(
+        `${context.labels.left}: REA reported no BrowserWindow, so no window set ${name}`,
+        "derived",
+        APP_SOURCE,
+      ),
+    ];
+  return before.settings.map(({ window, setting }) =>
+    setting === null
+      ? heuristic(
+          `${context.labels.left}: BrowserWindow in ${window.data.source_path ?? window.key} omits ${name}; Electron 20+ defaults it to ${JSON.stringify(rule.safe)}`,
+          window.location,
+          { side: "left" },
+        )
+      : cite(
+          `${context.labels.left}: BrowserWindow in ${window.data.source_path ?? window.key}: ${settingText(name, setting)}`,
+          window,
+          APP_SOURCE,
+          {
+            side: "left",
+          },
+        ),
+  );
+};
+
+// Compared as sets of windows, so a window that moved file, a new window and
+// several windows in one file are all graded the same way.
+const webPreferenceRegressions = (context) => {
+  const { left, right } = context;
+  if (!left.app || !right.app) return [];
+  return Object.entries(WEB_PREFERENCES).flatMap(([name, rule]) => {
+    const before = preferenceState(left.app.windows, name, rule);
+    const after = preferenceState(right.app.windows, name, rule);
+    if (before.state !== "safe" || after.state === "safe") return [];
+    const known = after.state === "unsafe";
+    const shown = after.offending[0].setting;
+    return [
+      {
         rule: "RW-E02",
-        severity: now.known ? "high" : "medium",
-        title: now.known
-          ? `${rule.label} turned off (${name}: ${String(now.value)})`
+        severity: known ? "high" : "medium",
+        title: known
+          ? `${rule.label} turned off (${name}: ${JSON.stringify(shown.value)})`
           : `${rule.label} no longer statically known (${name})`,
-        summary: `The BrowserWindow in ${item.key} changed ${name} from ${JSON.stringify(rule.safe)} to ${now.known ? JSON.stringify(now.value) : "a dynamic value"}.`,
+        summary: `${after.offending.length} BrowserWindow${after.offending.length === 1 ? "" : "s"} in ${context.labels.right} set ${name} to ${known ? "the unsafe value" : "a dynamic value"}; no window in ${context.labels.left} did.`,
         why: "This removes a layer that contains compromised or untrusted web content.",
         recommendation:
           "Ask the vendor to restore the setting or document the compensating control.",
         evidence: [
-          cite(
-            `${context.labels.left}: ${name} = ${JSON.stringify(rule.safe)}`,
-            before,
-            APP_SOURCE,
-          ),
-          cite(
-            `${context.labels.right}: ${name} = ${now.known ? JSON.stringify(now.value) : String(now.value)}`,
-            after,
-            APP_SOURCE,
+          ...beforeEvidence(context, name, rule, before),
+          ...after.offending.map(({ window, setting }) =>
+            cite(
+              `${context.labels.right}: BrowserWindow in ${window.data.source_path ?? window.key}: ${settingText(name, setting)}`,
+              window,
+              APP_SOURCE,
+            ),
           ),
         ],
         unknowns: [
           "Static webPreferences do not prove runtime enforcement; code can still change them before window creation.",
+          ...(before.settings.some(({ setting }) => setting === null)
+            ? [
+                "Release Watch assumes Electron 20 or later defaults for omitted options; REA did not report the Electron version.",
+              ]
+            : []),
         ],
-      }));
-    });
+      },
+    ];
+  });
+};
 
 const FUSES = {
   RunAsNode: {
@@ -232,8 +284,14 @@ const implicationOutcome = (fuses, index) =>
 const fuseRegressions = (context) => {
   const { left, right, diff } = context;
   if (!left.runtime?.fuses || !right.runtime?.fuses) return [];
+  if (left.runtime.fuses.ambiguous || right.runtime.fuses.ambiguous) return [];
+  // Only a fuse REA read as enabled or disabled on the new side is graded;
+  // removed or unknown fuses are coverage limits, reported by RW-C03.
   const rows = diff.fuses.filter(
-    (change) => FUSES[change.name] && change.before === FUSES[change.name].safe,
+    (change) =>
+      FUSES[change.name] &&
+      change.before === FUSES[change.name].safe &&
+      (change.after === "enabled" || change.after === "disabled"),
   );
   if (rows.length === 0) return [];
   const unknowns = [];

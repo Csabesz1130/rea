@@ -18,10 +18,16 @@ const headerMap = (headers) =>
       .map((header) => [header.name.toLowerCase(), header.value]),
   );
 
+// A page the browser rendered: a successful GET of HTML. Redirects and error
+// pages carry different headers and are not compared.
 const isDocument = (record) => {
   const mime = record.reported?.response?.content?.mimeType ?? "";
+  const status = record.reported?.response?.status ?? 0;
   return (
-    record.reported?.request?.method === "GET" && /^text\/html\b/i.test(mime)
+    record.reported?.request?.method === "GET" &&
+    /^text\/html\b/i.test(mime) &&
+    status >= 200 &&
+    status < 300
   );
 };
 
@@ -36,9 +42,9 @@ const recordFact = (capture, record, key, data) => ({
     column: null,
     record: record.ordinal,
   },
-  state: "observed",
-  authority: "historical-reference",
-  confidence: "observed",
+  state: capture.state,
+  authority: capture.authority,
+  confidence: capture.confidence,
   artifact_sha256: capture.sha256,
   data,
 });
@@ -115,6 +121,7 @@ const exchangeFact = (capture, record, url) =>
 const documentFact = (capture, record, url) =>
   recordFact(capture, record, url.pathname, {
     origin: url.origin,
+    host: url.hostname,
     path: url.pathname,
     headers: headerMap(record.reported.response?.headers),
   });
@@ -131,9 +138,9 @@ const apiGroupFact = (capture, view, group) => {
       column: null,
       record: group.record_ordinals?.[0] ?? null,
     },
-    state: "inferred",
-    authority: "rea-analysis-view",
-    confidence: "inferred",
+    state: view.confidence ?? "unknown",
+    authority: view.authority ?? "unknown",
+    confidence: view.confidence ?? "unknown",
     artifact_sha256: capture.sha256,
     data: {
       method: group.method,
@@ -148,13 +155,22 @@ const apiGroupFact = (capture, view, group) => {
  * Runtime facts from one capture. `name` labels the capture in report lines.
  * `apiSurface` is the optional `inspect-analysis-view` api-surface result.
  */
+// REA's own labels for the capture records: retained producer evidence.
+const captureIdentity = (evidence, name) => ({
+  evidence_id: evidence.evidence_id,
+  sha256:
+    evidence.normalized_result.artifact?.sha256 ??
+    evidence.subject?.digest?.sha256 ??
+    null,
+  name,
+  state: evidence.confidence ?? "unknown",
+  authority: evidence.authority ?? "unknown",
+  confidence: evidence.confidence ?? "unknown",
+});
+
 export const captureFacts = (evidence, apiSurface, name) => {
   const result = evidence.normalized_result;
-  const capture = {
-    evidence_id: evidence.evidence_id,
-    sha256: result.artifact?.sha256 ?? evidence.subject?.digest?.sha256 ?? null,
-    name,
-  };
+  const capture = captureIdentity(evidence, name);
   const facts = {
     ...capture,
     format: result.format ?? null,
@@ -165,16 +181,27 @@ export const captureFacts = (evidence, apiSurface, name) => {
     cookies: [],
     credentials: [],
     apiGroups: [],
+    // The host of the first page the browser loaded: the deployment itself.
+    mainHost: null,
   };
   for (const record of result.records ?? []) {
     const url = parseUrl(record.reported?.request?.url);
     if (url === null) continue;
     facts.exchanges.push(exchangeFact(capture, record, url));
-    if (isDocument(record))
+    if (isDocument(record)) {
       facts.documents.push(documentFact(capture, record, url));
+      facts.mainHost ??= url.hostname;
+    }
     facts.cookies.push(...cookiesOf(capture, record, url));
     facts.credentials.push(...credentialsOf(capture, record, url));
   }
+  // Pages of the deployment pair by path, so a staging host can be compared
+  // with production; pages of other hosts (iframes, sign-in) keep their host.
+  for (const document of facts.documents)
+    if (document.data.host !== facts.mainHost) {
+      document.key = `${document.data.host}${document.data.path}`;
+      document.label = document.key;
+    }
   if (apiSurface)
     for (const group of apiSurface.normalized_result?.groups ?? [])
       facts.apiGroups.push(apiGroupFact(capture, apiSurface, group));

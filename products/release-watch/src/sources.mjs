@@ -31,7 +31,8 @@ export const openSources = async (rea, appPath, assets, label) => {
       try {
         const bytes = readFileSync(path.join(root, relative));
         file = {
-          lines: bytes.toString("utf8").split("\n"),
+          // REA counts CR, LF, CRLF, U+2028 and U+2029 as line terminators.
+          lines: bytes.toString("utf8").split(/\r\n|\r|\n|\u2028|\u2029/),
           verified: expected !== null && sha256(bytes) === expected,
         };
       } catch {
@@ -46,7 +47,7 @@ export const openSources = async (rea, appPath, assets, label) => {
       const file = line ? load(relative) : null;
       const text = file?.lines[line - 1];
       if (text === undefined) return null;
-      return { line, text: text.trim(), verified: file.verified };
+      return { line, text, verified: file.verified };
     },
     close: () => {
       if (owned !== null) rmSync(owned, { recursive: true, force: true });

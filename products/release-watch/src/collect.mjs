@@ -18,10 +18,14 @@ const analyzeApp = async (scope) => {
   const { rea, target, errors } = scope;
   if (target.app === null) return null;
   const file = evidencePath(scope, "application");
-  const result = await rea.run("analyze-javascript-application", [target.app], {
-    label: `analyze ${scope.label}`,
-    saveTo: file,
-  });
+  const result = await rea.run(
+    "analyze-javascript-application",
+    [target.app, ...scope.analysisArgs],
+    {
+      label: `analyze ${scope.label}`,
+      saveTo: file,
+    },
+  );
   if (!result.ok) {
     errors.push({
       component: scope.component,
@@ -52,21 +56,30 @@ const inspectFuses = async (scope) => {
   return null;
 };
 
+// How REA identified a helper: "go" with build information, "not-go" when
+// REA read the file but found none, "failed" when the operation failed.
+const identification = (result, go) =>
+  !result.ok ? "failed" : go === null ? "not-go" : "go";
+
 const inspectHelpers = async (scope) => {
   const helpers = [];
-  for (const helper of scope.target.helpers) {
+  for (const [index, helper] of scope.target.helpers.entries()) {
     const name = path.basename(helper);
-    const file = evidencePath(scope, `helper-${name}`);
+    // Helpers in different directories can share a name; the index keeps
+    // their Evidence files apart.
+    const file = evidencePath(scope, `helper-${index + 1}-${name}`);
     const result = await scope.rea.run("inspect-go-binary", [helper], {
       label: `go ${scope.label} ${name}`,
       saveTo: file,
     });
+    const go = result.ok ? goFacts(result.evidence) : null;
     helpers.push({
       relative: path.relative(scope.target.root, helper),
       name,
-      go: result.ok ? goFacts(result.evidence) : null,
+      go,
       file: result.ok ? relative(scope, file) : null,
-      identified: result.ok ? "go" : "unidentified",
+      identified: identification(result, go),
+      error: result.ok ? null : result.error,
     });
   }
   return helpers;
@@ -92,7 +105,9 @@ const apiSurface = async (scope, captureFile) => {
     saveTo: file,
   });
   rmSync(input, { force: true });
-  return result.ok ? result.evidence : null;
+  return result.ok
+    ? { evidence: result.evidence, error: null }
+    : { evidence: null, error: result.error };
 };
 
 const inspectCapture = async (scope) => {
@@ -118,10 +133,14 @@ const inspectCapture = async (scope) => {
   const surface = await apiSurface(scope, file);
   const facts = captureFacts(
     result.evidence,
-    surface,
+    surface.evidence,
     path.basename(target.capture),
   );
-  if (surface?.normalized_result?.coverage?.exhausted === false)
+  if (surface.error)
+    facts.limitations.push(
+      `REA's api-surface view failed (${surface.error.message}); API endpoints were not compared.`,
+    );
+  if (surface.evidence?.normalized_result?.coverage?.exhausted === false)
     facts.limitations.push(
       `Release Watch read the first ${API_SURFACE_PAGE} API groups of this capture; later groups are not compared.`,
     );
@@ -140,6 +159,7 @@ export const collectSide = async ({
   target,
   outDir,
   errors,
+  analysisArgs = [],
 }) => {
   const scope = {
     rea,
@@ -149,6 +169,7 @@ export const collectSide = async ({
     target,
     outDir,
     errors,
+    analysisArgs,
     prefix: `${component}-${side}`,
   };
   if (target.kind === "unknown") {

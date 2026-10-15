@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { diffKeyed, moduleAliases } from "../src/diff.mjs";
+import { ambiguousBundles, diffKeyed, moduleAliases } from "../src/diff.mjs";
 import { app, fact } from "./helpers.mjs";
 
 describe("diffKeyed", () => {
@@ -72,5 +72,24 @@ describe("moduleAliases", () => {
       app({ assets: assets("src/report-exporter.js") }),
     );
     assert.equal(aliases.size, 0);
+  });
+});
+
+describe("ambiguousBundles", () => {
+  it("lists new bundles whose hash-free name is shared and that nothing paired", () => {
+    const assets = (...paths) =>
+      paths.map((modulePath) => fact(modulePath, { sha256: modulePath }));
+    const left = app({
+      assets: assets("assets/index-Aa11Bb22.js", "assets/index-Cc33Dd44.js"),
+    });
+    const right = app({
+      assets: assets("assets/index-Ee55Ff66.js", "assets/index-Gg77Hh88.js"),
+    });
+    const aliases = moduleAliases(left, right);
+    assert.equal(aliases.size, 0);
+    assert.deepEqual([...ambiguousBundles(left, right, aliases)].sort(), [
+      "assets/index-Ee55Ff66.js",
+      "assets/index-Gg77Hh88.js",
+    ]);
   });
 });

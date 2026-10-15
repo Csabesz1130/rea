@@ -111,27 +111,44 @@ describe("Electron renderer process execution", () => {
   });
 });
 
-describe("network destinations", () => {
-  const withRequest = (module, url) =>
-    app({
-      requests: [
-        fact(
-          `${module}#fetch`,
-          { module, method: "fetch", endpoint: null },
-          at(module, 4),
-        ),
-      ],
-      urlLiterals: url
+// A request that reads ENDPOINT inside its call, as REA reports
+// `fetch(ENDPOINT, …)`; `bound: false` drops the read.
+const withRequest = (module, url, { bound = true } = {}) =>
+  app({
+    requests: [
+      fact(
+        `${module}#fetch`,
+        {
+          module,
+          method: "fetch",
+          endpoint: null,
+          range: range(4, 10, 6, 2),
+        },
+        at(module, 4),
+      ),
+    ],
+    urlLiterals: url
+      ? [
+          fact(
+            url,
+            { module, url, value: url, binding: "ENDPOINT" },
+            at(module, 1),
+          ),
+        ]
+      : [],
+    bindingReads:
+      url && bound
         ? [
             fact(
-              url,
-              { module, url, value: url, binding: "ENDPOINT" },
-              at(module, 1),
+              `${module}#ENDPOINT`,
+              { module, name: "ENDPOINT", range: range(4, 16, 4, 24) },
+              at(module, 4),
             ),
           ]
         : [],
-    });
+  });
 
+describe("network destinations", () => {
   it("grades by destination owner", () => {
     const options = { vendorDomains: ["acmenotes.example"] };
     const thirdParty = evaluate(
@@ -195,5 +212,26 @@ describe("network destinations", () => {
       ),
     );
     assert.deepEqual(findings, []);
+  });
+});
+
+describe("network destination attribution", () => {
+  it("keeps a request that only shares a module with a first-party URL as unresolved", () => {
+    const [finding] = evaluate(
+      side("v1", app()),
+      side(
+        "v2",
+        withRequest("lib/x.js", "https://help.acmenotes.example/docs", {
+          bound: false,
+        }),
+      ),
+      { options: { vendorDomains: ["acmenotes.example"] } },
+    );
+    assert.equal(finding.rule, "RW-N02");
+    assert.match(
+      finding.evidence[1].claim,
+      /Candidate destination: URL literal https:\/\/help\.acmenotes\.example\/docs/,
+    );
+    assert.equal(finding.evidence[1].basis, "heuristic");
   });
 });

@@ -1,14 +1,19 @@
-// Serializable report model and per-component inventory sections. Sections
-// render only for the surfaces a component has, and never carry literal
-// values beyond URLs (with query values removed) and prompt previews.
+// The machine-readable report and its per-component inventory sections. The
+// HTML and Markdown renderers read only this model, and the model passes
+// through the redaction boundary once, so no renderer can print a value the
+// model does not carry.
+import { builtinModules } from "node:module";
+
 import {
-  SECURITY_HEADERS,
   aiProviderOf,
   isAiEnvironmentKey,
   packageNameOf,
   sdkOf,
 } from "../catalog.mjs";
-import { displayUrl } from "../rules/shared.mjs";
+import { scrubDeep } from "../redact.mjs";
+import { headerChanges } from "../rules/runtime.mjs";
+import { sdkUses } from "../surfaces.mjs";
+import { displayUrl } from "../urls.mjs";
 
 const STATUS = {
   added: "added",
@@ -16,6 +21,7 @@ const STATUS = {
   changed: "changed",
   unchanged: "unchanged",
   ambiguous: "ambiguous",
+  increased: "more",
   "not-previously-observed": "new",
   "no-longer-observed": "gone",
 };
@@ -32,21 +38,23 @@ const section = (id, title, headers, rows) => ({
 });
 const noted = (note, entry) => ({ ...entry, note });
 
-const electronSections = (component) => {
-  const { left, right, diff } = component;
-  const fuses = right.runtime?.fuses
-    ? Object.keys(right.runtime.fuses.fuses).map((name) => {
-        const before = left.runtime?.fuses?.fuses[name] ?? "unknown";
-        const after = right.runtime.fuses.fuses[name];
-        return [name, before, { text: after, flag: before !== after }];
-      })
-    : [];
+const electronSections = ({ left, right, diff }) => {
+  const before = left.runtime?.fuses?.fuses ?? {};
+  const after = right.runtime?.fuses?.fuses ?? {};
+  const names = [...new Set([...Object.keys(before), ...Object.keys(after)])];
   return [
     section(
       "fuses",
       "Electron fuses",
       ["Fuse", left.label, right.label],
-      fuses,
+      names.map((name) => [
+        name,
+        before[name] ?? "unknown",
+        {
+          text: after[name] ?? "unknown",
+          flag: (before[name] ?? "unknown") !== (after[name] ?? "unknown"),
+        },
+      ]),
     ),
     section(
       "bridge",
@@ -61,80 +69,74 @@ const electronSections = (component) => {
   ];
 };
 
-const webSections = (component) => {
-  const { diff } = component;
-  return [
-    section(
-      "scripts",
-      "Scripts in HTML",
-      ["Script", "Resolution", "Status"],
-      visible(diff.app.pageScripts).map((item) => [
-        displayUrl(item.key),
-        factOf(item).data.resolution_status ?? "",
-        statusOf(item.status),
-      ]),
-    ),
-    section(
-      "service-workers",
-      "Service workers",
-      ["Worker", "Status"],
-      diff.app.serviceWorkers.map((item) => [item.key, statusOf(item.status)]),
-    ),
-    section(
-      "embedded-sources",
-      "Original sources in source maps",
-      ["Original file", "Status"],
-      visible(diff.app.embeddedSources).map((item) => [
-        item.key,
-        statusOf(item.status),
-      ]),
-    ),
-  ];
+const scriptUrl = (script) =>
+  displayUrl(script.startsWith("//") ? `https:${script}` : script);
+
+const webSections = ({ diff }) => [
+  section(
+    "scripts",
+    "Scripts in HTML",
+    ["Script", "Resolution", "Status"],
+    visible(diff.app.pageScripts).map((item) => [
+      scriptUrl(item.key),
+      factOf(item).data.resolution_status ?? "",
+      statusOf(item.status),
+    ]),
+  ),
+  section(
+    "service-workers",
+    "Service workers",
+    ["Worker", "Status"],
+    diff.app.serviceWorkers.map((item) => [item.key, statusOf(item.status)]),
+  ),
+  section(
+    "storage",
+    "Browser storage",
+    ["Kind", "Name", "Status"],
+    visible(diff.app.storage).map((item) => [
+      factOf(item).data.storage_kind ?? "",
+      factOf(item).data.name ?? "(dynamic)",
+      statusOf(item.status),
+    ]),
+  ),
+  section(
+    "embedded-sources",
+    "Original sources in source maps",
+    ["Original file", "Status"],
+    visible(diff.app.embeddedSources).map((item) => [
+      item.key,
+      statusOf(item.status),
+    ]),
+  ),
+];
+
+const sdkRows = (component) => {
+  const before = sdkUses(component.left.app);
+  const after = sdkUses(component.right.app);
+  return [...new Set([...before.keys(), ...after.keys()])]
+    .sort()
+    .map((name) => {
+      const use = after.get(name) ?? before.get(name);
+      const where = [
+        ...new Set(use.facts.map((fact) => fact.data.module ?? "installed")),
+      ];
+      const status = !before.has(name)
+        ? "new"
+        : !after.has(name)
+          ? "gone"
+          : "unchanged";
+      return [name, use.sdk.label, where.join(", "), status];
+    });
 };
 
 const aiSections = (component) => {
   const { diff } = component;
-  const sdks = new Map();
-  for (const item of [
-    ...visible(diff.app.imports),
-    ...visible(diff.app.packages),
-  ]) {
-    const sdk = sdkOf(item.key);
-    if (sdk === null) continue;
-    const name = packageNameOf(item.key) ?? item.key;
-    const row = sdks.get(name) ?? {
-      name,
-      label: sdk.label,
-      where: new Set(),
-      status: statusOf(item.status),
-    };
-    row.where.add(factOf(item).data.module ?? "installed");
-    sdks.set(name, row);
-  }
-  const sdkRows = [...sdks.values()].map((row) => [
-    row.name,
-    row.label,
-    [...row.where].join(", "),
-    row.status,
-  ]);
-  const environment = diff.app.configReads
-    .filter((item) => isAiEnvironmentKey(factOf(item).data.key))
-    .map((item) => [
-      factOf(item).data.key,
-      factOf(item).data.module ?? "",
-      statusOf(item.status),
-    ]);
-  const registrations = diff.app.memberCalls.map((item) => [
-    factOf(item).data.module,
-    `${factOf(item).data.member}()`,
-    `${item.left.length} → ${item.right.length}`,
-  ]);
   return [
     section(
       "ai-sdks",
       "AI and MCP SDKs",
       ["Package", "Kind", "Where", "Status"],
-      sdkRows,
+      sdkRows(component),
     ),
     noted(
       "Names only; values are never read.",
@@ -142,7 +144,13 @@ const aiSections = (component) => {
         "ai-environment",
         "AI settings read from the environment",
         ["Variable", "Module", "Status"],
-        environment,
+        diff.app.configReads
+          .filter((item) => isAiEnvironmentKey(factOf(item).data.key))
+          .map((item) => [
+            factOf(item).data.key,
+            factOf(item).data.module ?? "",
+            statusOf(item.status),
+          ]),
       ),
     ),
     noted(
@@ -151,50 +159,48 @@ const aiSections = (component) => {
         "mcp-registrations",
         "MCP tool registrations",
         ["Module", "Call", "Count"],
-        registrations,
+        diff.app.memberCalls.map((item) => [
+          factOf(item).data.module,
+          `${factOf(item).data.member}()`,
+          `${item.left.length} → ${item.right.length}`,
+        ]),
       ),
     ),
   ];
 };
 
-const destinationRows = (component) => {
-  const { network } = component;
-  if (!network) return [];
-  return [...network.current].map(([host, sources]) => {
-    const kinds = [
-      ...new Set(
-        sources.map((source) =>
-          source.kind === "capture" ? "runtime" : "code",
-        ),
-      ),
-    ].join(" + ");
-    return [
-      host,
-      aiProviderOf(host) ?? "",
-      kinds,
-      network.fresh.has(host) ? "new" : "known",
-    ];
-  });
-};
+const destinationRows = ({ network }) =>
+  network
+    ? [...network.current].map(([host, sources]) => [
+        host,
+        aiProviderOf(host) ?? "",
+        [
+          ...new Set(
+            sources.map((source) =>
+              source.kind === "capture" ? "runtime" : "code",
+            ),
+          ),
+        ].join(" + "),
+        network.fresh.has(host) ? "new" : "known",
+      ])
+    : [];
 
 const runtimeSections = (component) => {
   const capture = component.diff.capture;
   if (capture === null) return [];
+  // The rule's own reading of which headers regressed.
   const headerRows = capture.documents
     .filter((item) => item.left.length > 0 && item.right.length > 0)
-    .flatMap((item) => {
-      const before = item.left[0].data.headers;
-      const after = item.right[0].data.headers;
-      return [...new Set([...Object.keys(before), ...Object.keys(after)])]
-        .filter((name) => name in SECURITY_HEADERS)
-        .filter((name) => before[name] !== after[name])
-        .map((name) => [
+    .flatMap((item) =>
+      headerChanges(item.left[0].data.headers, item.right[0].data.headers).map(
+        (change) => [
           item.key,
-          name,
-          before[name] ?? "(not sent)",
-          { text: after[name] ?? "(not sent)", flag: true },
-        ]);
-    });
+          change.name,
+          change.was,
+          { text: change.now ?? "(not sent)", flag: true },
+        ],
+      ),
+    );
   return [
     noted(
       "Grouped by REA's api-surface view; a capture shows one session.",
@@ -233,15 +239,40 @@ const runtimeSections = (component) => {
   ];
 };
 
-const commonSections = (component) => {
-  const { diff } = component;
-  const dependencyRows = visible(diff.app.packages).map((item) => [
-    item.key,
-    item.left[0]?.data.version ?? "—",
-    item.right[0]?.data.version ?? "—",
-    statusOf(item.status),
+const BUILTINS = new Set(builtinModules);
+
+// Imports grouped by package; AI SDKs have their own table.
+const importRows = ({ diff }) => {
+  const rows = new Map();
+  for (const item of visible(diff.app.imports)) {
+    const name = packageNameOf(item.key);
+    if (
+      name === null ||
+      item.key.startsWith("node:") ||
+      BUILTINS.has(name) ||
+      sdkOf(item.key) !== null
+    )
+      continue;
+    const row = rows.get(name) ?? { modules: new Set(), statuses: new Set() };
+    row.modules.add(factOf(item).data.module);
+    row.statuses.add(statusOf(item.status));
+    rows.set(name, row);
+  }
+  return [...rows].map(([name, row]) => [
+    name,
+    [...row.modules].join(", "),
+    [...row.statuses].join(", "),
   ]);
-  const helperRows = diff.helpers.flatMap((helper) => [
+};
+
+const helperRows = ({ diff }) =>
+  diff.helpers.flatMap((helper) => [
+    ...(helper.before === null && helper.after !== null
+      ? [[helper.relative, "executable", "new", helper.after.identified]]
+      : []),
+    ...(helper.after === null && helper.before !== null
+      ? [[helper.relative, "executable", "gone", ""]]
+      : []),
     ...(helper.go?.dependencies ?? [])
       .filter((item) => item.status !== "unchanged")
       .map((item) => [
@@ -254,9 +285,28 @@ const commonSections = (component) => {
       helper.relative,
       setting.key,
       "changed",
-      `${setting.before ?? "—"} → ${setting.after ?? "—"}`,
+      setting.key === "-ldflags"
+        ? "linker flags changed; see findings"
+        : `${setting.before ?? "—"} → ${setting.after ?? "—"}`,
     ]),
   ]);
+
+// Assets with REA- or name-paired renames shown once, as "renamed".
+const fileRows = ({ diff, aliases }) => {
+  const renamedTo = new Map(
+    [...aliases].map(([from, alias]) => [alias.path, from]),
+  );
+  const renamedFrom = new Set(aliases.keys());
+  return visible(diff.app.assets).flatMap((item) => {
+    if (renamedFrom.has(item.key) && item.right.length === 0) return [];
+    if (renamedTo.has(item.key) && item.left.length === 0)
+      return [[`${renamedTo.get(item.key)} → ${item.key}`, "renamed"]];
+    return [[item.key, statusOf(item.status)]];
+  });
+};
+
+const commonSections = (component) => {
+  const { diff } = component;
   return [
     section(
       "destinations",
@@ -272,33 +322,39 @@ const commonSections = (component) => {
         ...visible(diff.app.requests).map((item) => [
           `${factOf(item).data.method}()`,
           factOf(item).data.module,
-          statusOf(item.status),
+          `${statusOf(item.status)}${item.status === "increased" ? ` (${item.left.length} → ${item.right.length})` : ""}`,
         ]),
         ...visible(diff.app.childProcesses).map((item) => [
           `${factOf(item).data.method}() child process`,
           factOf(item).data.module,
-          statusOf(item.status),
+          `${statusOf(item.status)}${item.status === "increased" ? ` (${item.left.length} → ${item.right.length})` : ""}`,
         ]),
       ],
+    ),
+    section(
+      "imports",
+      "Imported packages",
+      ["Package", "Imported by", "Status"],
+      importRows(component),
     ),
     section(
       "dependencies",
       "Installed packages",
       ["Package", component.left.label, component.right.label, "Status"],
-      dependencyRows,
+      visible(diff.app.packages).map((item) => [
+        item.key,
+        item.left[0]?.data.version ?? "—",
+        item.right[0]?.data.version ?? "—",
+        statusOf(item.status),
+      ]),
     ),
     section(
       "helpers",
       "Helper binaries",
       ["Binary", "Item", "Status", "Detail"],
-      helperRows,
+      helperRows(component),
     ),
-    section(
-      "files",
-      "Files",
-      ["Path", "Status"],
-      visible(diff.app.assets).map((item) => [item.key, statusOf(item.status)]),
-    ),
+    section("files", "Files", ["Path", "Status"], fileRows(component)),
   ];
 };
 
@@ -314,10 +370,75 @@ export const componentSections = (component) => {
   ].filter((entry) => entry.rows.length > 0);
 };
 
+// What Release Watch itself never examines; true of every run.
+const RELEASE_WATCH_LIMITS = [
+  "Release Watch compares REA facts. It does not execute either release during comparison; captures come from a browser session recorded separately.",
+  '"New" means REA saw it only in the new release; REA\'s coverage of the old release does not prove it was absent.',
+  "Rules recognise known patterns. A pass means no rule matched in the examined code, not that the release is safe.",
+];
+
+const COMPARISON_NOTES = {
+  disabled:
+    "REA module pairing was turned off (--rea-compare never); renamed modules are paired by name only.",
+  "no-renames": null,
+  size: "REA module pairing was skipped because the Evidence is larger than 64 MB; renamed modules are paired by name only.",
+};
+
+// Specific gaps in what REA examined on one side, then REA's standing
+// limitations for the operations that ran.
+const sideCoverage = (side) => {
+  const gaps = [];
+  const limitations = [];
+  const app = side.app;
+  if (app) {
+    const { coverage } = app;
+    if (coverage.graph !== "complete")
+      gaps.push(`Application graph coverage: ${coverage.graph}.`);
+    if (coverage.semantic === "unavailable")
+      gaps.push(
+        "No semantic graph: requests, processes and literals were not examined.",
+      );
+    if (coverage.semantic_truncated)
+      gaps.push(
+        `Semantic graph truncated${coverage.semantic_limits.length ? ` (limits: ${coverage.semantic_limits.join(", ")})` : ""}.`,
+      );
+    if (coverage.semantic_ceiling_modules.length > 0)
+      gaps.push(
+        `Files at the per-file node ceiling: ${coverage.semantic_ceiling_modules.join(", ")}.`,
+      );
+    if (app.analysisFailures.length > 0)
+      gaps.push(
+        `REA could not analyze ${app.analysisFailures.length} file(s).`,
+      );
+    limitations.push(...app.limitations);
+  }
+  if (side.runtime?.fuses?.ambiguous)
+    gaps.push(
+      `${side.runtime.name}: several fuse wires, so no fuse state is established.`,
+    );
+  for (const helper of side.helpers)
+    if (helper.identified !== "go")
+      gaps.push(
+        `${helper.relative}: no Go build information (${helper.identified}).`,
+      );
+  if (side.capture) limitations.push(...side.capture.limitations);
+  if (side.runtime?.fuses) limitations.push(...side.runtime.fuses.limitations);
+  return { gaps: [...new Set(gaps)], limitations: [...new Set(limitations)] };
+};
+
+const coverageOf = (component) => ({
+  left: sideCoverage(component.left),
+  right: sideCoverage(component.right),
+  comparison: component.comparison?.error
+    ? `REA module pairing failed: ${component.comparison.error.message}`
+    : (COMPARISON_NOTES[component.comparison?.skipped] ?? null),
+  rea_comparison_limitations: component.comparison?.limitations ?? [],
+});
+
 const sideSummary = (side) => ({
   label: side.label,
   input: side.target?.root ?? null,
-  kind: side.target?.kind ?? null,
+  kind: side.target?.kind ?? "missing",
   package: side.app?.package ?? null,
   surfaces: side.surfaces,
   application: side.app
@@ -328,6 +449,7 @@ const sideSummary = (side) => ({
         format: side.app.format,
         coverage: side.app.coverage,
         inline_scripts: side.app.inlineScripts,
+        analysis_failures: side.app.analysisFailures.length,
       }
     : null,
   runtime: side.runtime
@@ -336,6 +458,7 @@ const sideSummary = (side) => ({
         sha256: side.runtime.fuses.sha256,
         evidence_id: side.runtime.fuses.evidence_id,
         evidence_file: side.runtime.file,
+        ambiguous: side.runtime.fuses.ambiguous,
         fuses: side.runtime.fuses.fuses,
       }
     : null,
@@ -357,33 +480,36 @@ const sideSummary = (side) => ({
     : null,
 });
 
-/** The machine-readable report written to report.json. */
-export const reportJson = (report) => ({
-  tool: report.tool,
-  generated_at: report.generated_at,
-  product: report.product,
-  labels: report.labels,
-  verdict: report.verdict,
-  components: report.components.map((component) => ({
-    name: component.name,
-    surfaces: component.surfaces,
-    left: sideSummary(component.left),
-    right: sideSummary(component.right),
-    rea_comparison: component.comparison
-      ? {
-          evidence_id: component.comparison.evidence_id ?? null,
-          summary: component.comparison.summary ?? null,
-          evidence_file: component.comparison.file ?? null,
-        }
-      : null,
-    module_aliases: [...component.aliases].map(([from, alias]) => ({
-      from,
-      to: alias.path,
-      basis: alias.basis,
+/** The machine-readable report written to report.json, after redaction. */
+export const reportJson = (report) =>
+  scrubDeep({
+    tool: report.tool,
+    generated_at: report.generated_at,
+    product: report.product,
+    labels: report.labels,
+    verdict: report.verdict,
+    components: report.components.map((component) => ({
+      name: component.name,
+      surfaces: component.surfaces,
+      left: sideSummary(component.left),
+      right: sideSummary(component.right),
+      rea_comparison: component.comparison?.evidence_id
+        ? {
+            evidence_id: component.comparison.evidence_id,
+            summary: component.comparison.summary ?? null,
+            evidence_file: component.comparison.file ?? null,
+          }
+        : null,
+      module_aliases: [...component.aliases].map(([from, alias]) => ({
+        from,
+        to: alias.path,
+        basis: alias.basis,
+      })),
+      coverage: coverageOf(component),
+      inventory: componentSections(component),
     })),
-    inventory: componentSections(component),
-  })),
-  findings: report.findings,
-  errors: report.errors,
-  run: report.run,
-});
+    limitations: RELEASE_WATCH_LIMITS,
+    findings: report.findings,
+    errors: report.errors,
+    run: report.run,
+  });

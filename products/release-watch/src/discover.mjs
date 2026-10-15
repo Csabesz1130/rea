@@ -111,6 +111,21 @@ export const discoverTarget = (input, { capture = null } = {}) => {
   return withCapture(found);
 };
 
+const COMPONENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+// A manifest path, which must stay inside the release directory.
+const inside = (root, relative, file) => {
+  const resolved = path.resolve(root, relative);
+  const offset = path.relative(root, resolved);
+  if (
+    offset === ".." ||
+    offset.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(offset)
+  )
+    throw new Error(`${file}: ${relative} is outside the release directory`);
+  return resolved;
+};
+
 const readManifest = (root) => {
   const file = path.join(root, MANIFEST);
   let manifest;
@@ -123,20 +138,31 @@ const readManifest = (root) => {
   }
   if (!Array.isArray(manifest.components) || manifest.components.length === 0)
     throw new Error(`${file} must list at least one component`);
+  const names = new Set();
   const components = manifest.components.map((component, index) => {
     if (
-      typeof component.name !== "string" ||
+      typeof component?.name !== "string" ||
       typeof component.path !== "string"
     )
       throw new Error(
         `${file}: component ${index} needs a "name" and a "path"`,
       );
+    // Names become Evidence file names and report labels.
+    if (!COMPONENT_NAME.test(component.name))
+      throw new Error(
+        `${file}: component name ${JSON.stringify(component.name)} must be 1-64 letters, digits, ".", "_" or "-", starting with a letter or digit`,
+      );
+    if (names.has(component.name))
+      throw new Error(
+        `${file}: component name ${component.name} is listed twice`,
+      );
+    names.add(component.name);
     return {
       name: component.name,
-      target: discoverTarget(path.join(root, component.path), {
+      target: discoverTarget(inside(root, component.path, file), {
         capture:
           typeof component.capture === "string"
-            ? path.join(root, component.capture)
+            ? inside(root, component.capture, file)
             : null,
       }),
     };

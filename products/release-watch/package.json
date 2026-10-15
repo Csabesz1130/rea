@@ -1,8 +1,8 @@
 {
   "name": "release-watch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Review what changed between two releases of a desktop app before rollout, using REA Evidence.",
+  "description": "Review what changed between two releases of a desktop, web or AI app before rollout, using REA Evidence.",
   "type": "module",
   "bin": {
     "release-watch": "bin/release-watch.mjs"

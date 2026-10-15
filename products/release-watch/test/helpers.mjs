@@ -20,7 +20,18 @@ export const fact = (key, data, location = null, state = "observed") => ({
 });
 
 export const app = (overrides = {}) => ({
-  coverage: { graph: "complete", semantic: "partial" },
+  coverage: {
+    graph: "complete",
+    graph_truncated: false,
+    graph_omitted: 0,
+    semantic: "partial",
+    semantic_truncated: false,
+    semantic_omitted_nodes: 0,
+    semantic_limits: [],
+    semantic_ceiling_modules: [],
+  },
+  limitations: [],
+  analysisFailures: [],
   summary: { sender_validation_observations: 0 },
   modules: new Map(),
   imports: [],
@@ -51,6 +62,7 @@ export const app = (overrides = {}) => ({
 
 export const side = (label, application, extra = {}) => ({
   label,
+  target: { root: `/releases/${label}`, kind: "js-app" },
   app: application,
   runtime: null,
   helpers: [],
@@ -61,12 +73,24 @@ export const side = (label, application, extra = {}) => ({
 export const evaluate = (
   left,
   right,
-  { options = {}, surfaces = [], aliases = new Map() } = {},
+  {
+    options = {},
+    surfaces = [],
+    aliases = new Map(),
+    helpers = [],
+    comparison = null,
+    baseline = undefined,
+    ambiguous = new Set(),
+  } = {},
 ) =>
   evaluateComponent({
     name: "app",
     left,
     right,
+    comparison,
+    aliases,
+    ambiguous,
+    baseline,
     surfaces,
     labels: { left: left.label, right: right.label },
     options: { vendorDomains: [], failOn: "high", ...options },
@@ -76,7 +100,7 @@ export const evaluate = (
         left.runtime?.fuses ?? null,
         right.runtime?.fuses ?? null,
       ),
-      helpers: [],
+      helpers,
       capture: diffCaptures(left.capture, right.capture),
     },
   }).findings;

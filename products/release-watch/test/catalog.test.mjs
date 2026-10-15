@@ -8,7 +8,7 @@ import {
   sdkOf,
 } from "../src/catalog.mjs";
 import { verdictFor } from "../src/policy.mjs";
-import { displayUrl } from "../src/rules/shared.mjs";
+import { displayUrl } from "../src/urls.mjs";
 
 describe("catalog", () => {
   it("classifies providers, SDKs and credentials", () => {

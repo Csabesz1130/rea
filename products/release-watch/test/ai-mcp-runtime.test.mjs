@@ -21,10 +21,8 @@ describe("AI rules", () => {
     assert.equal(finding.rule, "RW-A02");
     assert.equal(finding.severity, "critical");
     assert.ok(
-      !JSON.stringify(
-        finding.evidence.map(({ redact: _redact, ...item }) => item),
-      ).includes(key),
-      "claims never hold the raw key",
+      !JSON.stringify(finding).includes(key),
+      "findings never hold the raw key",
     );
     assert.match(finding.evidence[0].claim, /sk-proj-…0000 \(46 characters\)/);
   });
@@ -62,6 +60,13 @@ describe("AI rules", () => {
             },
           ],
         ]),
+        imports: [
+          fact(
+            "@anthropic-ai/sdk",
+            { specifier: "@anthropic-ai/sdk", module },
+            at(module, 1),
+          ),
+        ],
         stringLiterals: [
           fact(
             `${module}#SYSTEM_PROMPT`,
@@ -141,6 +146,8 @@ describe("MCP rules", () => {
 describe("runtime capture rules", () => {
   const capture = (headers, cookie, credentials = []) => ({
     name: "web.har",
+    mainHost: "app.example",
+    limitations: [],
     exchanges: [],
     documents: [
       fact(

@@ -12,28 +12,33 @@ import {
   packResult,
 } from "./shared.mjs";
 
+/**
+ * Security headers the old page sent that the new page dropped or changed,
+ * with how much each change costs. Added headers are not changes.
+ */
+export const headerChanges = (before, after) =>
+  Object.entries(SECURITY_HEADERS).flatMap(([name, header]) => {
+    const was = before[name] ?? null;
+    const now = after[name] ?? null;
+    if (was === null || was === now) return [];
+    return [
+      {
+        name,
+        header,
+        was,
+        now,
+        severity: now === null ? header.removed : "medium",
+      },
+    ];
+  });
+
 const headerFindings = (context) =>
   context.diff.capture.documents
     .filter((item) => item.left.length > 0 && item.right.length > 0)
     .flatMap((item) => {
       const [before] = item.left;
       const [after] = item.right;
-      const changes = Object.entries(SECURITY_HEADERS).flatMap(
-        ([name, header]) => {
-          const was = before.data.headers[name] ?? null;
-          const now = after.data.headers[name] ?? null;
-          if (was === null || was === now) return [];
-          return [
-            {
-              name,
-              header,
-              was,
-              now,
-              severity: now === null ? header.removed : "medium",
-            },
-          ];
-        },
-      );
+      const changes = headerChanges(before.data.headers, after.data.headers);
       if (changes.length === 0) return [];
       return [
         {
@@ -49,6 +54,9 @@ const headerFindings = (context) =>
               `${captureLabel(context.left)}: ${change.header.label}: ${change.was}`,
               before,
               CAPTURE_SOURCE,
+              {
+                side: "left",
+              },
             ),
             cite(
               `${captureLabel(context.right)}: ${change.header.label}: ${change.now ?? "(not sent)"}`,
@@ -64,42 +72,70 @@ const headerFindings = (context) =>
     });
 
 const SAME_SITE_ORDER = { strict: 2, lax: 1, none: 0 };
+const sameSiteRank = (value) =>
+  SAME_SITE_ORDER[String(value ?? "").toLowerCase()] ?? null;
+
+// The weakest protection any response in one capture gave a cookie: a
+// browser keeps whichever Set-Cookie arrived last, so one weak response is
+// enough to expose it.
+const weakest = (facts) => {
+  const ranks = facts.map((fact) => sameSiteRank(fact.data.same_site));
+  const known = ranks.filter((rank) => rank !== null);
+  const lowest =
+    known.length === ranks.length && known.length > 0
+      ? Math.min(...known)
+      : null;
+  return {
+    http_only: facts.every((fact) => fact.data.http_only),
+    secure: facts.every((fact) => fact.data.secure),
+    // The value as the capture recorded it, from the weakest response.
+    same_site:
+      lowest === null ? null : facts[ranks.indexOf(lowest)].data.same_site,
+    fact:
+      facts.find((fact) => !fact.data.http_only || !fact.data.secure) ??
+      facts[0],
+  };
+};
+
+const attributes = (cookie) =>
+  `HttpOnly ${cookie.http_only}, Secure ${cookie.secure}, SameSite ${cookie.same_site ?? "unset or mixed"}`;
 
 const cookieFindings = (context) =>
   context.diff.capture.cookies
-    .filter((item) => item.status === "changed")
+    .filter((item) => item.left.length > 0 && item.right.length > 0)
     .flatMap((item) => {
-      const [before] = item.left;
-      const [after] = item.right;
+      const before = weakest(item.left);
+      const after = weakest(item.right);
       const lost = [];
-      if (before.data.http_only && !after.data.http_only) lost.push("HttpOnly");
-      if (before.data.secure && !after.data.secure) lost.push("Secure");
-      const rank = (value) =>
-        SAME_SITE_ORDER[String(value ?? "").toLowerCase()] ?? null;
+      if (before.http_only && !after.http_only) lost.push("HttpOnly");
+      if (before.secure && !after.secure) lost.push("Secure");
       if (
-        rank(before.data.same_site) !== null &&
-        rank(after.data.same_site) !== null &&
-        rank(after.data.same_site) < rank(before.data.same_site)
+        before.same_site !== null &&
+        after.same_site !== null &&
+        sameSiteRank(after.same_site) < sameSiteRank(before.same_site)
       )
-        lost.push(`SameSite=${before.data.same_site}`);
+        lost.push(`SameSite=${before.same_site}`);
       if (lost.length === 0) return [];
       return [
         {
           rule: "RW-H04",
           severity: "medium",
-          title: `Cookie ${after.data.name} lost ${lost.join(", ")}`,
-          summary: `The ${after.data.name} cookie set by ${after.data.host} is less protected in ${context.labels.right}.`,
+          title: `Cookie ${item.key} lost ${lost.join(", ")}`,
+          summary: `The ${item.key} cookie set by ${after.fact.data.host} is less protected in ${context.labels.right}.`,
           why: "HttpOnly keeps scripts from reading the cookie, Secure keeps it off plain HTTP, and SameSite limits cross-site requests that carry it.",
           recommendation: "Restore the cookie attributes.",
           evidence: [
             cite(
-              `${captureLabel(context.left)}: HttpOnly ${before.data.http_only}, Secure ${before.data.secure}, SameSite ${before.data.same_site ?? "unset"}`,
-              before,
+              `${captureLabel(context.left)}: ${attributes(before)} (${item.left.length} Set-Cookie)`,
+              before.fact,
               CAPTURE_SOURCE,
+              {
+                side: "left",
+              },
             ),
             cite(
-              `${captureLabel(context.right)}: HttpOnly ${after.data.http_only}, Secure ${after.data.secure}, SameSite ${after.data.same_site ?? "unset"}`,
-              after,
+              `${captureLabel(context.right)}: ${attributes(after)} (${item.right.length} Set-Cookie)`,
+              after.fact,
               CAPTURE_SOURCE,
             ),
           ],
@@ -129,7 +165,7 @@ const credentialFindings = (context) => {
           "Move the call behind the vendor's server and rotate the credential.",
         evidence: [
           cite(
-            `${fact.data.method} ${fact.data.origin} carries ${name}${redacted ? "; REA redacted its value as a transport credential" : "; the value is in the capture and is not repeated here"} (not seen in ${captureLabel(context.left)})`,
+            `${fact.data.method} ${fact.data.origin} carries ${name}${redacted ? "; REA redacted its value as a transport credential" : "; the value is in the capture and is not repeated here"} (${context.left.capture ? `not seen in ${captureLabel(context.left)}` : `no capture of ${context.labels.left} to compare`})`,
             fact,
             CAPTURE_SOURCE,
           ),
@@ -144,12 +180,15 @@ const credentialFindings = (context) => {
   });
 };
 
-/** Capture rules, or nothing when either side lacks a capture. */
-export const runtimePack = (context) =>
-  context.diff.capture === null
-    ? packResult()
-    : packResult([
-        ...headerFindings(context),
-        ...cookieFindings(context),
-        ...credentialFindings(context),
-      ]);
+/**
+ * Capture rules. Credentials the browser sends are graded whenever the new
+ * release has a capture; header and cookie regressions need both.
+ */
+export const runtimePack = (context) => {
+  if (context.diff.capture === null) return packResult();
+  const compared =
+    context.left.capture === null
+      ? []
+      : [...headerFindings(context), ...cookieFindings(context)];
+  return packResult([...compared, ...credentialFindings(context)]);
+};

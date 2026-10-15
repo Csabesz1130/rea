@@ -118,48 +118,60 @@ const AI_ENVIRONMENT = new Set([
 /** True when an environment variable name is a documented AI provider setting. */
 export const isAiEnvironmentKey = (key) => AI_ENVIRONMENT.has(key);
 
-// Documented credential formats. A literal must match a whole pattern.
+// Documented credential formats: a pattern body, the label, and how many
+// leading characters are a public prefix that may be shown.
 const CREDENTIALS = [
+  { body: "sk-ant-[A-Za-z0-9_-]{20,}", kind: "Anthropic API key", keep: 7 },
   {
-    pattern: /^sk-ant-[A-Za-z0-9_-]{20,}$/,
-    kind: "Anthropic API key",
-    keep: 7,
-  },
-  {
-    pattern: /^sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}$/,
+    body: "sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}",
     kind: "OpenAI API key",
     keep: 8,
   },
-  { pattern: /^sk-[A-Za-z0-9]{32,}$/, kind: "OpenAI API key", keep: 3 },
-  { pattern: /^AIza[0-9A-Za-z_-]{35}$/, kind: "Google API key", keep: 4 },
-  { pattern: /^gsk_[A-Za-z0-9]{40,}$/, kind: "Groq API key", keep: 4 },
-  { pattern: /^hf_[A-Za-z0-9]{30,}$/, kind: "Hugging Face token", keep: 3 },
-  { pattern: /^r8_[A-Za-z0-9]{30,}$/, kind: "Replicate token", keep: 3 },
-  { pattern: /^gh[pousr]_[A-Za-z0-9]{36,}$/, kind: "GitHub token", keep: 4 },
-  { pattern: /^github_pat_[A-Za-z0-9_]{22,}$/, kind: "GitHub token", keep: 11 },
-  { pattern: /^xox[abprs]-[A-Za-z0-9-]{10,}$/, kind: "Slack token", keep: 5 },
-  { pattern: /^(AKIA|ASIA)[A-Z0-9]{16}$/, kind: "AWS access key ID", keep: 4 },
+  { body: "sk-[A-Za-z0-9]{32,}", kind: "OpenAI API key", keep: 3 },
+  { body: "AIza[0-9A-Za-z_-]{35}", kind: "Google API key", keep: 4 },
+  { body: "gsk_[A-Za-z0-9]{40,}", kind: "Groq API key", keep: 4 },
+  { body: "hf_[A-Za-z0-9]{30,}", kind: "Hugging Face token", keep: 3 },
+  { body: "r8_[A-Za-z0-9]{30,}", kind: "Replicate token", keep: 3 },
+  { body: "gh[pousr]_[A-Za-z0-9]{36,}", kind: "GitHub token", keep: 4 },
+  { body: "github_pat_[A-Za-z0-9_]{22,}", kind: "GitHub token", keep: 11 },
+  { body: "xox[abprs]-[A-Za-z0-9-]{10,}", kind: "Slack token", keep: 5 },
+  { body: "(?:AKIA|ASIA)[A-Z0-9]{16}", kind: "AWS access key ID", keep: 4 },
   {
-    pattern: /^(sk|rk)_live_[A-Za-z0-9]{20,}$/,
+    body: "(?:sk|rk)_live_[A-Za-z0-9]{20,}",
     kind: "Stripe secret key",
     keep: 8,
   },
-];
+].map((entry) => ({
+  ...entry,
+  whole: new RegExp(`^${entry.body}$`),
+  // Inside text: not preceded or followed by another token character.
+  inside: new RegExp(`(?<![A-Za-z0-9_-])${entry.body}(?![A-Za-z0-9_-])`, "g"),
+}));
 
 /** Show a credential's documented prefix, its last four characters and its length, never the rest. */
 export const maskCredential = (value, keep) =>
   `${value.slice(0, keep)}…${value.slice(-4)} (${value.length} characters)`;
 
-/** `{ kind, masked }` when a literal has a documented credential format, otherwise null. */
+/** `{ kind, masked }` when a whole literal has a documented credential format, otherwise null. */
 export const credentialOf = (value) => {
   if (typeof value !== "string") return null;
-  const entry = CREDENTIALS.find((credential) =>
-    credential.pattern.test(value),
-  );
+  const entry = CREDENTIALS.find((credential) => credential.whole.test(value));
   return entry
     ? { kind: entry.kind, masked: maskCredential(value, entry.keep) }
     : null;
 };
+
+/** Every credential-format token inside a longer text, with its kind. */
+export const credentialsIn = (text) =>
+  typeof text !== "string"
+    ? []
+    : CREDENTIALS.flatMap((entry) =>
+        [...text.matchAll(entry.inside)].map((match) => ({
+          value: match[0],
+          kind: entry.kind,
+          masked: maskCredential(match[0], entry.keep),
+        })),
+      );
 
 // Request header and query parameter names that carry API credentials. REA
 // redacts Authorization and cookies itself; these names it keeps verbatim.

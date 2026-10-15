@@ -1,6 +1,12 @@
 // Orchestrates one release comparison: REA analysis of every component on
 // both sides, the capability diff, policy evaluation and the report model.
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import { collectSide } from "./collect.mjs";
@@ -9,30 +15,87 @@ import {
   diffCaptures,
   diffFuses,
   diffGo,
+  ambiguousBundles,
   moduleAliases,
 } from "./diff.mjs";
 import { discoverRelease } from "./discover.mjs";
-import { evaluateComponent, numberFindings, verdictFor } from "./policy.mjs";
+import {
+  evaluateComponent,
+  numberFindings,
+  releaseBaseline,
+  verdictFor,
+} from "./policy.mjs";
+import { printable, scrubText } from "./redact.mjs";
 import { openSources } from "./sources.mjs";
 import { surfaceNames, surfacesOf } from "./surfaces.mjs";
+
+/** Two labels a reader can tell apart: equal versions gain "(old)" and "(new)". */
+const distinct = (left, right) =>
+  left === right
+    ? { left: `${left} (old)`, right: `${right} (new)` }
+    : { left, right };
 
 const versionLabel = (side, fallback) =>
   side.app?.package?.version ? `v${side.app.package.version}` : fallback;
 
 // A release is named by its manifest version, else the first component
-// package version, else its directory name.
-const releaseLabel = (release, components, side) => {
-  if (release.version) return `v${release.version}`;
-  const version = components
-    .map((component) => component[side].app?.package?.version)
-    .find(Boolean);
-  return version ? `v${version}` : path.basename(release.root);
+// package version, else its path's base name when the two differ, else
+// "old" and "new".
+const releaseLabels = (leftRelease, rightRelease, collected) => {
+  const version = (release, side) => {
+    if (release.version) return `v${release.version}`;
+    const found = collected
+      .map((component) => component[side].app?.package?.version)
+      .find(Boolean);
+    return found ? `v${found}` : null;
+  };
+  const names = [
+    path.basename(leftRelease.root),
+    path.basename(rightRelease.root),
+  ];
+  const distinctNames = names[0] !== names[1];
+  return distinct(
+    version(leftRelease, "left") ?? (distinctNames ? names[0] : "old"),
+    version(rightRelease, "right") ?? (distinctNames ? names[1] : "new"),
+  );
+};
+
+// REA's module pairing reads both application Evidence records in full; past
+// this size it costs more than the renames it finds.
+const MAX_COMPARISON_INPUT = 64 * 1024 * 1024;
+
+const scriptsOf = (app) =>
+  new Set(
+    app.assets
+      .map((asset) => asset.key)
+      .filter((key) => /\.(m?js|cjs)$/.test(key)),
+  );
+
+// Whether REA's pairing can change anything: some script exists only on the
+// old side and some only on the new side.
+const mayHaveRenames = (left, right) => {
+  const before = scriptsOf(left.app);
+  const after = scriptsOf(right.app);
+  return (
+    [...before].some((key) => !after.has(key)) &&
+    [...after].some((key) => !before.has(key))
+  );
+};
+
+const comparisonSkip = (mode, left, right) => {
+  if (mode === "never") return "disabled";
+  if (mode === "always") return null;
+  if (!mayHaveRenames(left, right)) return "no-renames";
+  const size = statSync(left.appFile).size + statSync(right.appFile).size;
+  return size > MAX_COMPARISON_INPUT ? "size" : null;
 };
 
 // REA compares two application graphs; its input is assembled from the two
 // saved Evidence files without re-serializing them.
-const reaComparison = async ({ rea, component, left, right, outDir }) => {
+const reaComparison = async ({ rea, component, left, right, outDir, mode }) => {
   if (left.appFile === null || right.appFile === null) return null;
+  const skipped = comparisonSkip(mode, left, right);
+  if (skipped !== null) return { skipped, pairs: [] };
   const input = path.join(
     outDir,
     "evidence",
@@ -101,47 +164,37 @@ const pairHelpers = (left, right) => {
       name: path.basename(relative),
       before,
       after,
-      go:
-        before?.go || after?.go
-          ? diffGo(before?.go ?? null, after?.go ?? null)
-          : null,
+      go: before?.go && after?.go ? diffGo(before.go, after.go) : null,
     };
   });
 };
 
 const MAX_LINE = 180;
+const LEAD = 60;
 
-// Redact first, then shorten, so a truncated line can never keep part of a
-// redacted value.
-const displayLine = (text, pairs) => {
-  const redacted = pairs.reduce(
-    (result, pair) => result.split(pair.value).join(pair.with ?? "[redacted]"),
-    text,
+// One source line for display: scrubbed as a whole first, so no window can
+// keep part of a credential, then cut to a window around the cited column.
+const displayLine = (text, column) => {
+  const scrubbed = printable(scrubText(text));
+  if (scrubbed.length <= MAX_LINE) return scrubbed.trim();
+  const position = scrubText(text.slice(0, column ?? 0)).length;
+  const start = Math.max(
+    0,
+    Math.min(position - LEAD, scrubbed.length - MAX_LINE),
   );
-  return redacted.length > MAX_LINE
-    ? `${redacted.slice(0, MAX_LINE)}…`
-    : redacted;
+  return `${start > 0 ? "…" : ""}${scrubbed.slice(start, start + MAX_LINE).trim()}…`;
 };
 
-/** Drop the redaction lists, which hold the raw values, once snippets are attached. */
-const dropRedactions = (findings) => {
-  for (const finding of findings)
-    for (const item of finding.evidence) delete item.redact;
-};
-
-// Source lines for display: verified against REA's digest, with any value a
-// rule marked sensitive replaced before the line enters the report.
-const attachSources = (findings, side, sources) => {
+// Source lines for display, attached only to evidence located in this side's
+// release and verified against REA's digest when one was recorded.
+const attachSources = (findings, side, sources, sideName) => {
   if (sources === null) return;
   const digests = new Set(side.app.assets.map((asset) => asset.data.sha256));
   for (const finding of findings) {
-    const shown = new Set(
-      finding.evidence
-        .filter((item) => item.snippet?.release === side.label)
-        .map((item) => `${item.location.file}:${item.location.line}`),
-    );
+    const shown = new Set();
     for (const item of finding.evidence) {
-      if (item.snippet || !item.location?.line) continue;
+      if (item.side !== sideName || item.snippet || !item.location?.line)
+        continue;
       const where = `${item.location.file}:${item.location.line}`;
       if (shown.has(where)) continue;
       if (item.artifact_sha256 !== null && !digests.has(item.artifact_sha256))
@@ -149,8 +202,9 @@ const attachSources = (findings, side, sources) => {
       const snippet = sources.lineAt(item.location.file, item.location.line);
       if (snippet === null) continue;
       item.snippet = {
-        ...snippet,
-        text: displayLine(snippet.text, item.redact ?? []),
+        line: snippet.line,
+        text: displayLine(snippet.text, item.location.column),
+        verified: snippet.verified,
         release: side.label,
       };
       shown.add(where);
@@ -166,8 +220,7 @@ const openSide = (rea, side) => {
   return openSources(rea, side.target.app, assets, side.label);
 };
 
-const emptySide = (label) => ({
-  label,
+const emptySide = () => ({
   target: null,
   app: null,
   appFile: null,
@@ -178,7 +231,8 @@ const emptySide = (label) => ({
   surfaces: { electron: [], web: [], ai: [], mcp: [] },
 });
 
-const compareComponent = async ({
+// Collect both sides of one component. Sides run in parallel.
+const collectComponent = async ({
   name,
   leftTarget,
   rightTarget,
@@ -186,11 +240,10 @@ const compareComponent = async ({
   outDir,
   options,
   errors,
-  fallbackLabels,
 }) => {
   const collect = (side, target) =>
     target === null
-      ? Promise.resolve(emptySide(side))
+      ? Promise.resolve(emptySide())
       : collectSide({
           rea,
           component: name,
@@ -199,23 +252,50 @@ const compareComponent = async ({
           target,
           outDir,
           errors,
+          analysisArgs: options.analysisArgs ?? [],
         });
-  const [leftRaw, rightRaw] = await Promise.all([
+  const [left, right] = await Promise.all([
     collect("left", leftTarget),
     collect("right", rightTarget),
   ]);
-  const left = {
-    ...leftRaw,
-    label: versionLabel(leftRaw, fallbackLabels.left),
-  };
-  const right = {
-    ...rightRaw,
-    label: versionLabel(rightRaw, fallbackLabels.right),
-  };
+  return { name, left, right };
+};
+
+// A component side is named by its own package version, else the release's
+// label; a side the release does not have is "absent".
+const sideLabels = (collected, releaseLabels) => {
+  const label = (side, fallback) =>
+    side.target === null ? "absent" : versionLabel(side, fallback);
+  return distinct(
+    label(collected.left, releaseLabels.left),
+    label(collected.right, releaseLabels.right),
+  );
+};
+
+// Compare and grade one collected component against the release baseline.
+const finishComponent = async ({
+  collected,
+  releaseLabels,
+  baseline,
+  rea,
+  outDir,
+  options,
+}) => {
+  const { name } = collected;
+  const labels = sideLabels(collected, releaseLabels);
+  const left = { ...collected.left, label: labels.left };
+  const right = { ...collected.right, label: labels.right };
   left.surfaces = surfacesOf(left);
   right.surfaces = surfacesOf(right);
   const [comparison, rightSources, leftSources] = await Promise.all([
-    reaComparison({ rea, component: name, left, right, outDir }),
+    reaComparison({
+      rea,
+      component: name,
+      left,
+      right,
+      outDir,
+      mode: options.reaCompare ?? "auto",
+    }),
     openSide(rea, right),
     openSide(rea, left),
   ]);
@@ -231,18 +311,22 @@ const compareComponent = async ({
     name,
     left,
     right,
+    comparison,
     diff,
+    aliases,
+    ambiguous: ambiguousBundles(left.app, right.app, aliases),
+    baseline,
     surfaces,
     options,
-    labels: { left: left.label, right: right.label },
+    labels,
+    releaseLabels,
   });
   try {
-    attachSources(findings, right, rightSources);
-    attachSources(findings, left, leftSources);
+    attachSources(findings, right, rightSources, "right");
+    attachSources(findings, left, leftSources, "left");
   } finally {
     rightSources?.close();
     leftSources?.close();
-    dropRedactions(findings);
   }
   return {
     name,
@@ -289,21 +373,27 @@ export const compareReleases = async ({
     capture: options.rightCapture ?? null,
   });
   const errors = [];
-  const components = [];
-  // Components run one after another; each runs its two sides in parallel.
-  const fallbackLabels = {
-    left: leftRelease.version ? `v${leftRelease.version}` : "old",
-    right: rightRelease.version ? `v${rightRelease.version}` : "new",
-  };
+  // Components are collected one after another, each with its two sides in
+  // parallel, then graded against what the whole old release contained.
+  const collected = [];
   for (const pair of pairComponents(leftRelease, rightRelease))
+    collected.push(
+      await collectComponent({ ...pair, rea, outDir, options, errors }),
+    );
+  const labels = releaseLabels(leftRelease, rightRelease, collected);
+  const baseline = releaseBaseline(
+    collected.map((component) => component.left),
+  );
+  const components = [];
+  for (const component of collected)
     components.push(
-      await compareComponent({
-        ...pair,
+      await finishComponent({
+        collected: component,
+        releaseLabels: labels,
+        baseline,
         rea,
         outDir,
         options,
-        errors,
-        fallbackLabels,
       }),
     );
   const findings = numberFindings(
@@ -322,10 +412,7 @@ export const compareReleases = async ({
         )
         .find(Boolean) ??
       path.basename(rightRelease.root),
-    labels: {
-      left: releaseLabel(leftRelease, components, "left"),
-      right: releaseLabel(rightRelease, components, "right"),
-    },
+    labels,
     components,
     findings,
     verdict: verdictFor(findings, options.failOn, { errors }),

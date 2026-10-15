@@ -1,13 +1,41 @@
 // Which kinds of software a component contains, derived from REA facts.
 // Several surfaces can coexist (an Electron app with AI features); each one
 // records the facts that establish it.
-import { aiProviderOf, isAiEnvironmentKey, sdkOf } from "./catalog.mjs";
-import { hostOf } from "./rules/shared.mjs";
+import {
+  aiProviderOf,
+  isAiEnvironmentKey,
+  packageNameOf,
+  sdkOf,
+} from "./catalog.mjs";
+import { hostOf } from "./urls.mjs";
 
 const reason = (list, text) => {
   list.push(text);
   return list;
 };
+
+/**
+ * AI and MCP SDKs one application uses, by package name, with the import and
+ * package facts that show each. The one place SDK facts are grouped.
+ */
+export const sdkUses = (app) => {
+  const uses = new Map();
+  for (const fact of [...(app?.imports ?? []), ...(app?.packages ?? [])]) {
+    const sdk = sdkOf(fact.key);
+    if (sdk === null) continue;
+    const name = packageNameOf(fact.key) ?? fact.key;
+    if (!uses.has(name)) uses.set(name, { sdk, facts: [] });
+    const use = uses.get(name);
+    // An MCP package is a server when any module imports its server entry.
+    if (sdk.kind === "mcp-server") use.sdk = sdk;
+    use.facts.push(fact);
+  }
+  return uses;
+};
+
+/** True when any module of the application imports an MCP server SDK. */
+export const isMcpServer = (app) =>
+  [...sdkUses(app).values()].some((use) => use.sdk.kind === "mcp-server");
 
 const appSurfaces = (app, surfaces) => {
   if (
@@ -17,12 +45,11 @@ const appSurfaces = (app, surfaces) => {
     reason(surfaces.electron, "Electron IPC, bridge or window declarations");
   if (app.pageScripts.length > 0 || app.browserModules.size > 0)
     reason(surfaces.web, "HTML pages that load scripts");
-  for (const fact of [...app.imports, ...app.packages]) {
-    const sdk = sdkOf(fact.key);
-    if (sdk?.kind === "ai") reason(surfaces.ai, `${sdk.label} (${fact.key})`);
-    if (sdk?.kind === "mcp-server" || sdk?.kind === "mcp")
-      reason(surfaces.mcp, `${sdk.label} (${fact.key})`);
-  }
+  for (const [name, { sdk }] of sdkUses(app))
+    reason(
+      sdk.kind === "ai" ? surfaces.ai : surfaces.mcp,
+      `${sdk.label} (${name})`,
+    );
   for (const read of app.configReads)
     if (isAiEnvironmentKey(read.data.key))
       reason(surfaces.ai, `reads ${read.data.key}`);

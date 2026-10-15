@@ -1,6 +1,7 @@
 // Projects `analyze_javascript_application` Evidence into the capability
 // facts Release Watch compares. This module never reads application source.
 import { HTML_SINKS } from "../catalog.mjs";
+import { isUrl } from "../urls.mjs";
 import {
   edgeFact,
   firstObservation,
@@ -9,9 +10,13 @@ import {
   semanticFact,
 } from "./provenance.mjs";
 
-const URL_LITERAL = /^(https?|wss?):\/\/[^\s"'`]+$/i;
 // Property reads Release Watch pairs with their calls: MCP tool registrations.
-const TRACKED_READS = new Set(["read:/registerTool", "read:/tool"]);
+// The low-level MCP Server API dispatches tools through setRequestHandler.
+const TRACKED_READS = new Set([
+  "read:/registerTool",
+  "read:/tool",
+  "read:/setRequestHandler",
+]);
 
 const webPreferenceValue = (entry) =>
   entry.value?.status === "literal"
@@ -219,9 +224,17 @@ const GRAPH_PROJECTIONS = {
       }),
     );
   },
-  unknown: (_node, properties, facts) => {
+  unknown: (node, properties, facts) => {
     if (properties.operation === "parse-html-inline-scripts")
       facts.inlineScripts += properties.inline_script_count ?? 0;
+    const failure = properties.analysis_failure;
+    if (failure)
+      facts.analysisFailures.push(
+        graphFact(node, `failure:${node.node_id}`, {
+          code: failure.code ?? null,
+          message: failure.message ?? null,
+        }),
+      );
   },
 };
 
@@ -238,6 +251,7 @@ const graphFacts = (graph) => {
     embeddedSources: [],
     storage: [],
     inlineScripts: 0,
+    analysisFailures: [],
     package: null,
   };
   for (const node of graph.nodes)
@@ -256,7 +270,10 @@ const samePosition = (a, b) => a.line === b.line && a.column === b.column;
 const SEMANTIC_PROJECTIONS = {
   request: (node, scope) =>
     scope.facts.requests.push(
-      scope.fact(node, { endpoint: node.properties?.endpoint ?? null }),
+      scope.fact(node, {
+        endpoint: node.properties?.endpoint ?? null,
+        range: rangeOf(node),
+      }),
     ),
   "child-process": (node, scope) =>
     scope.facts.childProcesses.push(
@@ -292,7 +309,7 @@ const SEMANTIC_PROJECTIONS = {
         data,
       ),
     );
-    if (URL_LITERAL.test(value))
+    if (isUrl(value))
       scope.facts.urlLiterals.push(
         semanticFact(node, scope.contexts, value, { ...data, url: value }),
       );
@@ -432,6 +449,39 @@ const semanticFacts = (semantic) => {
   return facts;
 };
 
+// Modules whose semantic node count reached REA's per-file ceiling: where a
+// truncated graph dropped facts. Derived from REA's own limit and nodes.
+const ceilingModules = (semantic) => {
+  const ceiling = semantic?.coverage?.limits?.find(
+    (limit) => limit.name === "semantic_graph_file_node_ceiling",
+  )?.value;
+  if (!semantic?.coverage?.truncated || !ceiling) return [];
+  const counts = new Map();
+  for (const node of semantic.nodes) {
+    const modulePath = node.identity?.module_path;
+    if (modulePath) counts.set(modulePath, (counts.get(modulePath) ?? 0) + 1);
+  }
+  return [...counts]
+    .filter(([, count]) => count >= ceiling)
+    .map(([modulePath]) => modulePath)
+    .sort();
+};
+
+/** REA's coverage of both graphs, as Release Watch reports it. */
+const coverageOf = (graph, semantic) => ({
+  graph: graph.coverage?.status ?? "unknown",
+  graph_truncated: graph.coverage?.truncated === true,
+  graph_omitted: graph.coverage?.omitted_count ?? 0,
+  semantic: semantic?.coverage?.status ?? "unavailable",
+  semantic_truncated: semantic?.coverage?.truncated === true,
+  semantic_omitted_nodes: semantic?.coverage?.omitted_nodes ?? null,
+  semantic_limits: (semantic?.coverage?.limits ?? []).map(
+    (limit) =>
+      `${limit.name} ${limit.value}${limit.unit === "items" ? "" : ` ${limit.unit}`}`,
+  ),
+  semantic_ceiling_modules: ceilingModules(semantic),
+});
+
 /** Capability facts from one `analyze_javascript_application` Evidence record. */
 export const applicationFacts = (evidence) => {
   const result = evidence.normalized_result;
@@ -442,10 +492,7 @@ export const applicationFacts = (evidence) => {
     evidence_id: evidence.evidence_id,
     root_sha256: result.root_artifact_sha256,
     format: result.format,
-    coverage: {
-      graph: graph.coverage?.status ?? "unknown",
-      semantic: semantic?.coverage?.status ?? "unavailable",
-    },
+    coverage: coverageOf(graph, semantic),
     summary: result.summary ?? null,
     limitations: [
       ...(graph.limitations ?? []),

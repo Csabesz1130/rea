@@ -44,6 +44,18 @@ const runProcess = (command, args) =>
 const lastStderrLine = (stderr) =>
   stderr.trim().split("\n").filter(Boolean).at(-1) ?? "";
 
+// REA's validation errors list the failing fields under details.issues.
+const issuesOf = (parsed) =>
+  (Array.isArray(parsed?.details?.issues) ? parsed.details.issues : [])
+    .slice(0, 3)
+    .map((issue) => {
+      const where =
+        Array.isArray(issue.path) && issue.path.length > 0
+          ? issue.path.join(".")
+          : "input";
+      return `${where}: ${issue.message ?? issue.reason ?? "invalid"}${issue.expected ? ` (expected ${issue.expected})` : ""}`;
+    });
+
 const parse = (bytes) => {
   try {
     return JSON.parse(bytes.toString("utf8"));
@@ -94,9 +106,11 @@ export const createRea = (resolved, { onCall = () => {} } = {}) => {
       error: {
         operation,
         code: parsed?.code ?? null,
-        message:
+        message: [
           parsed?.message ??
-          (lastStderrLine(outcome.stderr) || `exit code ${outcome.code}`),
+            (lastStderrLine(outcome.stderr) || `exit code ${outcome.code}`),
+          ...issuesOf(parsed),
+        ].join("; "),
       },
     };
   };

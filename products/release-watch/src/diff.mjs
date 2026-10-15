@@ -14,7 +14,9 @@ const groupByKey = (facts) => {
 /**
  * Compare two fact lists by key. `equal(left, right)` decides whether a key
  * present on both sides changed; keys with several facts on either side are
- * "ambiguous" when `unique` is set.
+ * "ambiguous" when `unique` is set. For `countable` families, a key with more
+ * facts on the right than on the left is "increased": a site was added where
+ * one already existed.
  */
 export const diffKeyed = (left, right, options) => {
   const {
@@ -22,6 +24,7 @@ export const diffKeyed = (left, right, options) => {
     rightComplete,
     equal = () => true,
     unique = false,
+    countable = false,
   } = options;
   const leftGroups = groupByKey(left);
   const rightGroups = groupByKey(right);
@@ -33,6 +36,8 @@ export const diffKeyed = (left, right, options) => {
     const after = rightGroups.get(key) ?? [];
     let status;
     if (unique && (before.length > 1 || after.length > 1)) status = "ambiguous";
+    else if (countable && before.length > 0 && after.length > before.length)
+      status = "increased";
     else if (before.length > 0 && after.length > 0)
       status = equal(before, after) ? "unchanged" : "changed";
     else if (after.length > 0)
@@ -44,7 +49,9 @@ export const diffKeyed = (left, right, options) => {
 
 /** True for statuses that mean "present now, not present or not seen before". */
 export const isNew = (item) =>
-  item.status === "added" || item.status === "not-previously-observed";
+  item.status === "added" ||
+  item.status === "not-previously-observed" ||
+  item.status === "increased";
 
 const sameDigest = (before, after) =>
   before[0].data.sha256 !== null &&
@@ -74,8 +81,18 @@ const FAMILIES = [
   { family: "serviceWorkers", coverage: "graph" },
   { family: "embeddedSources", coverage: "graph" },
   { family: "storage", coverage: "graph" },
-  { family: "requests", coverage: "semantic", moduleKeyed: true },
-  { family: "childProcesses", coverage: "semantic", moduleKeyed: true },
+  {
+    family: "requests",
+    coverage: "semantic",
+    moduleKeyed: true,
+    countable: true,
+  },
+  {
+    family: "childProcesses",
+    coverage: "semantic",
+    moduleKeyed: true,
+    countable: true,
+  },
   { family: "timers", coverage: "semantic", moduleKeyed: true },
   { family: "configReads", coverage: "semantic" },
   {
@@ -85,14 +102,24 @@ const FAMILIES = [
     equal: sameValues("value"),
   },
   { family: "urlLiterals", coverage: "semantic" },
-  { family: "htmlSinks", coverage: "semantic", moduleKeyed: true },
+  {
+    family: "htmlSinks",
+    coverage: "semantic",
+    moduleKeyed: true,
+    countable: true,
+  },
   {
     family: "memberCalls",
     coverage: "semantic",
     moduleKeyed: true,
-    equal: (a, b) => a.length === b.length,
+    countable: true,
   },
-  { family: "dynamicEvaluation", coverage: "semantic", moduleKeyed: true },
+  {
+    family: "dynamicEvaluation",
+    coverage: "semantic",
+    moduleKeyed: true,
+    countable: true,
+  },
 ];
 
 const EMPTY_APP = {
@@ -150,6 +177,39 @@ export const moduleAliases = (leftApp, rightApp, reaPairs = []) => {
   return aliases;
 };
 
+/**
+ * New-side scripts Release Watch could not pair: their name without the
+ * content hash is shared by several scripts on either side, and neither REA
+ * nor a unique name paired them.
+ */
+export const ambiguousBundles = (leftApp, rightApp, aliases) => {
+  if (!leftApp || !rightApp) return new Set();
+  const count = (paths) =>
+    paths.reduce((counts, modulePath) => {
+      const bare = withoutHash(modulePath);
+      return bare === modulePath
+        ? counts
+        : counts.set(bare, (counts.get(bare) ?? 0) + 1);
+    }, new Map());
+  const leftPaths = scriptPaths(leftApp);
+  const before = count(leftPaths);
+  const after = count(scriptPaths(rightApp));
+  const paired = new Set([...aliases.values()].map((alias) => alias.path));
+  const unchanged = new Set(leftPaths);
+  return new Set(
+    scriptPaths(rightApp).filter((modulePath) => {
+      const bare = withoutHash(modulePath);
+      if (
+        bare === modulePath ||
+        paired.has(modulePath) ||
+        unchanged.has(modulePath)
+      )
+        return false;
+      return (before.get(bare) ?? 0) > 1 || (after.get(bare) ?? 0) > 1;
+    }),
+  );
+};
+
 const rekey = (facts, aliases) =>
   aliases.size === 0
     ? facts
@@ -171,19 +231,22 @@ export const diffApplications = (leftApp, rightApp, aliases = new Map()) => {
   const right = rightApp ?? EMPTY_APP;
   const complete = (app, coverage) => app.coverage[coverage] === "complete";
   return Object.fromEntries(
-    FAMILIES.map(({ family, coverage, moduleKeyed, equal, unique }) => [
-      family,
-      diffKeyed(
-        moduleKeyed ? rekey(left[family], aliases) : left[family],
-        right[family],
-        {
-          leftComplete: complete(left, coverage),
-          rightComplete: complete(right, coverage),
-          equal,
-          unique,
-        },
-      ),
-    ]),
+    FAMILIES.map(
+      ({ family, coverage, moduleKeyed, equal, unique, countable }) => [
+        family,
+        diffKeyed(
+          moduleKeyed ? rekey(left[family], aliases) : left[family],
+          right[family],
+          {
+            leftComplete: complete(left, coverage),
+            rightComplete: complete(right, coverage),
+            equal,
+            unique,
+            countable,
+          },
+        ),
+      ],
+    ),
   );
 };
 
@@ -197,14 +260,21 @@ const CAPTURE_FAMILIES = [
   { family: "apiGroups" },
 ];
 
-/** Compare two runtime captures, or return null unless both sides have one. */
+const EMPTY_CAPTURE = Object.fromEntries(
+  CAPTURE_FAMILIES.map(({ family }) => [family, []]),
+);
+
+/**
+ * Compare two runtime captures. Null without a new capture; without an old
+ * one, every new fact is "not previously observed".
+ */
 export const diffCaptures = (left, right) =>
-  left === null || right === null
+  right === null
     ? null
     : Object.fromEntries(
         CAPTURE_FAMILIES.map(({ family, equal }) => [
           family,
-          diffKeyed(left[family], right[family], {
+          diffKeyed((left ?? EMPTY_CAPTURE)[family], right[family], {
             leftComplete: false,
             rightComplete: false,
             equal,

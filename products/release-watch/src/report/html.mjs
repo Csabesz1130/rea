@@ -1,6 +1,6 @@
 // Self-contained HTML report: verdict first, then one ledger row per finding,
-// then the inventory, provenance and run cost.
-import { componentSections } from "./model.mjs";
+// then the inventory, coverage, provenance and run cost. Renders the
+// redacted report.json model only, and loads nothing from the network.
 
 const escape = (value) =>
   String(value ?? "")
@@ -12,6 +12,7 @@ const escape = (value) =>
 const BASIS = {
   observed: "Observed",
   inferred: "Inferred",
+  derived: "Derived",
   heuristic: "Heuristic",
   unknown: "Unknown",
 };
@@ -34,9 +35,9 @@ const STYLE = `
   --paper: #f5f7f7; --sheet: #ffffff; --ink: #11222a; --muted: #5a6b72; --rule: #d7dfe1;
   --accent: #0b5d72; --code: #eef3f4;
   --critical: #a8201a; --high: #c2410c; --medium: #a15c07; --low: #1d5fbf; --info: #64748b;
-  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
-  --body: "IBM Plex Sans", "Segoe UI", Roboto, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --display: "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  --body: system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -106,7 +107,7 @@ h3 { margin: 0; font: 650 18px/1.3 var(--display); text-wrap: balance; }
 .evidence li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 12px; align-items: start; }
 .basis { font: 600 10.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 4px 6px 3px; text-align: center; border: 1px solid var(--muted); color: var(--muted); margin-top: 2px; }
 .basis.observed { background: var(--ink); border-color: var(--ink); color: var(--sheet); }
-.basis.inferred { border-color: var(--ink); color: var(--ink); }
+.basis.inferred, .basis.derived { border-color: var(--ink); color: var(--ink); }
 .basis.heuristic { border-style: dashed; border-color: var(--accent); color: var(--accent); }
 .basis.unknown { border-style: dotted; }
 .claim { min-width: 0; overflow-wrap: anywhere; }
@@ -116,6 +117,10 @@ h3 { margin: 0; font: 650 18px/1.3 var(--display); text-wrap: balance; }
 .snippet .ln { color: var(--muted); user-select: none; flex: none; }
 .snippet code { white-space: pre; }
 .snippet .ok { margin-left: auto; padding-left: 16px; flex: none; color: var(--accent); font-size: 11px; }
+.limits { margin: 0 0 16px; padding-left: 20px; color: var(--muted); max-width: 90ch; }
+.limits li { margin: 4px 0; }
+details.wide { grid-column: 1 / -1; }
+details summary { cursor: pointer; color: var(--muted); font: 600 13px/1.4 var(--mono); margin: 4px 0 10px; }
 .unknowns { margin: 2px 0 0; padding: 10px 12px; border-left: 3px dotted var(--muted); background: var(--code); display: grid; gap: 4px; max-width: 80ch; }
 .unknowns strong { font: 600 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .next { margin: 2px 0 0; font-weight: 500; max-width: 72ch; }
@@ -158,7 +163,7 @@ const evidenceItem = (item) => {
   const snippet = item.snippet
     ? `<div class="snippet"><span class="ln">${item.snippet.line}</span><code>${escape(item.snippet.text)}</code>${item.snippet.verified ? `<span class="ok" title="File SHA-256 matches REA's digest">sha256 ✓ ${escape(item.snippet.release)}</span>` : ""}</div>`
     : "";
-  return `<li><span class="basis ${item.basis}">${BASIS[item.basis] ?? item.basis}</span><div class="claim">${escape(item.claim)}<span class="where">${where ? `${escape(where)} · ` : ""}<span class="source">${escape(item.source)}</span></span></div>${snippet}</li>`;
+  return `<li><span class="basis ${escape(item.basis)}">${escape(BASIS[item.basis] ?? item.basis)}</span><div class="claim">${escape(item.claim)}<span class="where">${where ? `${escape(where)} · ` : ""}<span class="source">${escape(item.source)}</span></span></div>${snippet}</li>`;
 };
 
 const findingRow = (finding, showComponent) => `
@@ -204,17 +209,43 @@ const WIDE = new Set([
   "cookies",
 ]);
 
-const inventorySection = (report) => `
+const inventorySection = (model) => `
 <section>
   <h2>What changed</h2>
   <p class="lede">Every capability REA recovered from both releases. "New" means REA saw it only in the new release but its coverage of the old one cannot prove it was absent.</p>
-  ${report.components
+  ${model.components
     .map((component) => {
-      const sections = componentSections(component);
-      return `${report.components.length > 1 ? `<h3 class="component-title">${escape(component.name)}</h3>` : ""}<div class="tables">${sections.length ? sections.map((entry) => table(entry, WIDE.has(entry.id))).join("") : `<p class="empty">Nothing changed that Release Watch tracks.</p>`}</div>`;
+      const sections = component.inventory;
+      return `${model.components.length > 1 ? `<h3 class="component-title">${escape(component.name)}</h3>` : ""}<div class="tables">${sections.length ? sections.map((entry) => table(entry, WIDE.has(entry.id))).join("") : `<p class="empty">Nothing changed that Release Watch tracks.</p>`}</div>`;
     })
     .join("")}
 </section>`;
+
+const coverageSection = (model) => {
+  const scoped = (component, side, notes) =>
+    notes.map((note) => [`${component.name} ${side.label}`, note]);
+  const gaps = model.components.flatMap((component) => [
+    ...scoped(component, component.right, component.coverage.right.gaps),
+    ...scoped(component, component.left, component.coverage.left.gaps),
+    ...(component.coverage.comparison
+      ? [[component.name, component.coverage.comparison]]
+      : []),
+  ]);
+  const limitations = model.components.flatMap((component) => [
+    ...scoped(component, component.right, component.coverage.right.limitations),
+    ...scoped(component, component.left, component.coverage.left.limitations),
+  ]);
+  return `
+<section>
+  <h2>Coverage and limits</h2>
+  <p class="lede">What REA and Release Watch could not examine. Findings cover only the examined code and captures.</p>
+  <ul class="limits">${model.limitations.map((note) => `<li>${escape(note)}</li>`).join("")}</ul>
+  <div class="tables">
+    ${gaps.length ? table({ title: "Gaps in this run", headers: ["Scope", "Gap"], rows: gaps }, true) : `<p class="empty">REA reported no truncation, failed files or unidentified binaries in this run.</p>`}
+    ${limitations.length ? `<details class="wide"><summary>REA's standing limitations (${limitations.length})</summary>${table({ title: "REA limitations", headers: ["Scope", "Limitation"], rows: limitations }, true)}</details>` : ""}
+  </div>
+</section>`;
+};
 
 const short = (digest) => (digest ? `${digest.slice(0, 12)}…` : "—");
 
@@ -222,59 +253,59 @@ const evidenceRows = (component) => {
   const rows = [];
   for (const side of [component.left, component.right]) {
     const name = `${component.name} ${side.label}`;
-    if (side.app)
+    if (side.application)
       rows.push([
         `${name} application`,
-        short(side.app.root_sha256),
-        side.app.evidence_id,
-        side.appEvidence ?? "—",
+        short(side.application.root_sha256),
+        side.application.evidence_id,
+        side.application.evidence_file ?? "—",
       ]);
     if (side.runtime)
       rows.push([
         `${name} ${side.runtime.name} fuses`,
-        short(side.runtime.fuses.sha256),
-        side.runtime.fuses.evidence_id,
-        side.runtime.file,
+        short(side.runtime.sha256),
+        side.runtime.evidence_id,
+        side.runtime.evidence_file,
       ]);
     for (const helper of side.helpers)
-      if (helper.go)
+      if (helper.evidence_id)
         rows.push([
           `${name} ${helper.relative}`,
-          short(helper.go.sha256),
-          helper.go.evidence_id,
-          helper.file,
+          short(helper.sha256),
+          helper.evidence_id,
+          helper.evidence_file,
         ]);
     if (side.capture)
       rows.push([
         `${name} capture ${side.capture.name}`,
         short(side.capture.sha256),
         side.capture.evidence_id,
-        side.capture.file,
+        side.capture.evidence_file,
       ]);
   }
-  if (component.comparison?.evidence_id)
+  if (component.rea_comparison)
     rows.push([
       `${component.name} REA version comparison`,
       "—",
-      component.comparison.evidence_id,
-      component.comparison.file,
+      component.rea_comparison.evidence_id,
+      component.rea_comparison.evidence_file,
     ]);
   return rows;
 };
 
-const provenanceSection = (report) => {
-  const evidence = report.components.flatMap(evidenceRows);
-  const coverage = report.components.flatMap((component) =>
+const provenanceSection = (model) => {
+  const evidence = model.components.flatMap(evidenceRows);
+  const coverage = model.components.flatMap((component) =>
     [component.left, component.right]
-      .filter((side) => side.app)
+      .filter((side) => side.application)
       .map((side) => [
         `${component.name} ${side.label}`,
-        side.app.coverage.graph,
-        side.app.coverage.semantic,
-        String(side.app.inlineScripts),
+        side.application.coverage.graph,
+        `${side.application.coverage.semantic}${side.application.coverage.semantic_truncated ? " (truncated)" : ""}`,
+        String(side.application.inline_scripts),
       ]),
   );
-  const calls = report.run.rea_calls.map((call) => [
+  const calls = model.run.rea_calls.map((call) => [
     call.label,
     `${(call.elapsed_ms / 1000).toFixed(2)} s`,
     call.ok ? "ok" : "failed",
@@ -291,32 +322,32 @@ const provenanceSection = (report) => {
 </section>`;
 };
 
-const componentStrip = (report) =>
-  `<div class="components">${report.components
+const componentStrip = (model) =>
+  `<div class="components">${model.components
     .map(
       (component) =>
-        `<div class="component"><b>${escape(component.name)}</b><span>${escape(component.left.label)} → ${escape(component.right.label)} · ${escape(component.right.target?.kind ?? component.left.target?.kind ?? "missing")}</span>${component.surfaces.length ? `<div class="chips">${component.surfaces.map((surface) => `<span class="chip">${escape(surface)}</span>`).join("")}</div>` : ""}</div>`,
+        `<div class="component"><b>${escape(component.name)}</b><span>${escape(component.left.label)} → ${escape(component.right.label)} · ${escape(component.right.kind === "missing" ? `${component.left.kind}, removed` : component.left.kind === "missing" ? `${component.right.kind}, new` : component.right.kind)}</span>${component.surfaces.length ? `<div class="chips">${component.surfaces.map((surface) => `<span class="chip">${escape(surface)}</span>`).join("")}</div>` : ""}</div>`,
     )
     .join("")}</div>`;
 
-const headline = (report) => {
+const headline = (model) => {
   const kinds = new Set(
-    report.components.flatMap((component) => [
-      component.left.target?.kind,
-      component.right.target?.kind,
+    model.components.flatMap((component) => [
+      component.left.kind,
+      component.right.kind,
     ]),
   );
   if (kinds.has("electron-dist") || kinds.has("asar")) return "update review";
   if (
     [...kinds].every(
-      (kind) => kind === "web-build" || kind === "har" || kind === undefined,
+      (kind) => kind === "web-build" || kind === "har" || kind === "missing",
     )
   )
     return "deployment review";
   return "release review";
 };
 
-/** Render the full HTML report. */
+/** Render the report model (report.json) as HTML. */
 export const renderHtml = (report) => {
   const verdict = report.verdict;
   const decision = DECISION[verdict.decision];
@@ -340,9 +371,7 @@ export const renderHtml = (report) => {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${escape(product)} ${escape(report.labels.right)} review</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
 <style>${STYLE}</style>
 </head>
 <body>
@@ -363,9 +392,10 @@ export const renderHtml = (report) => {
     <div class="ledger">${report.findings.map((finding) => findingRow(finding, showComponent)).join("") || `<p class="empty">No findings.</p>`}</div>
   </section>
   ${inventorySection(report)}
+  ${coverageSection(report)}
   ${provenanceSection(report)}
 </div></main>
-<footer><div class="wrap">Generated ${escape(report.generated_at)} by ${escape(report.tool.name)} ${escape(report.tool.version)} on REA Evidence. Static analysis and recorded captures only: Release Watch ran neither release.</div></footer>
+<footer><div class="wrap">Generated ${escape(report.generated_at)} by ${escape(report.tool.name)} ${escape(report.tool.version)} on REA Evidence. Release Watch does not execute releases during comparison; captures may come from release-watch record, which loads the site in Chromium.</div></footer>
 </body>
 </html>
 `;
