@@ -20,6 +20,16 @@ export const modulePathOf = (node) => {
 export const isScriptPath = (modulePath) =>
   /\.(m?js|cjs|jsx|ts|mts|cts|tsx)$/.test(modulePath);
 
+// Bundler content hashes in file names: `index-Gg77Hh88.js`, `main.3f2a9c1b.js`.
+const HASHED_NAME = [
+  /-(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{8,}(?=\.(m?js|css)$)/,
+  /\.(?=[a-f0-9]*[0-9])[a-f0-9]{8,}(?=(\.chunk)?\.(m?js|css)$)/,
+];
+
+/** A module path without its bundler content hash. */
+export const withoutHash = (modulePath) =>
+  HASHED_NAME.reduce((name, pattern) => name.replace(pattern, ""), modulePath);
+
 const externalSpecifierOf = (edge, target) => {
   const properties = firstObservation(target)?.properties ?? {};
   if (properties.resolution_status !== "external") return null;
@@ -41,31 +51,46 @@ const exportModuleOf = (node) => {
 
 const emptyEntry = () => ({
   externalImports: new Set(),
+  externalLocals: new Map(),
   local: new Set(),
   imported: new Map(),
   exports: new Map(),
   reexports: new Map(),
+  stars: new Set(),
 });
 
+// Exported name → `{ local, range }`: the local binding it exports, or null
+// for an anonymous default export, with the export's source range.
 const recordExports = (graph, entry) => {
   for (const node of graph.nodes) {
     const modulePath = exportModuleOf(node);
+    const observation = firstObservation(node);
     const { exported_name: exported, local_name: local } =
-      firstObservation(node)?.properties ?? {};
-    if (modulePath !== null && exported && local)
-      entry(modulePath).exports.set(exported, local);
+      observation?.properties ?? {};
+    const location = observation?.evidence?.location?.value;
+    if (modulePath !== null && exported)
+      entry(modulePath).exports.set(exported, {
+        local: local ?? null,
+        range:
+          location?.kind === "source-range"
+            ? { start: location.start, end: location.end }
+            : null,
+      });
   }
 };
 
-// `export { run } from "./shell.js"`: REA links the export binding itself.
+// `export { run } from "./shell.js"` and `export * as ns from`: REA links the
+// export binding itself. `export * from` re-exports every name of a module.
 const recordReexport = (edge, exporter, targetPath, entry) => {
   const { exported_name: exported, imported_name: imported } =
     edge.properties ?? {};
-  if (targetPath !== null && exported)
+  if (targetPath === null) return;
+  if (exported && exported !== "*")
     entry(exporter).reexports.set(exported, {
       module: targetPath,
       name: imported ?? exported,
     });
+  else if (imported === "*") entry(exporter).stars.add(targetPath);
 };
 
 const recordImport = (edge, sourcePath, target, entry) => {
@@ -81,6 +106,11 @@ const recordImport = (edge, sourcePath, target, entry) => {
     return null;
   }
   const specifier = externalSpecifierOf(edge, target);
+  if (specifier !== null && localName !== null)
+    entry(sourcePath).externalLocals.set(localName, {
+      specifier,
+      name: edge.properties?.imported_name ?? localName,
+    });
   if (specifier === null || entry(sourcePath).externalImports.has(specifier))
     return null;
   entry(sourcePath).externalImports.add(specifier);
@@ -89,10 +119,12 @@ const recordImport = (edge, sourcePath, target, entry) => {
 
 /**
  * Per-module import index: local modules each module imports, external
- * specifiers (Node built-ins and npm packages), what each import binds
+ * specifiers (Node built-ins and npm packages) and what each external import
+ * binds (local name to specifier and imported name), what each import binds
  * (local name to module and imported name), what each module exports
- * (exported name to local name) and re-exports (exported name to module and
- * imported name). Also returns one fact per external import edge.
+ * (exported name to local name and range), re-exports (exported name to
+ * module and imported name) and star re-exports. Also returns one fact per
+ * external import edge.
  */
 export const importIndex = (graph) => {
   const byId = new Map(graph.nodes.map((node) => [node.node_id, node]));

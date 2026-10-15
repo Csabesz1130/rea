@@ -225,7 +225,7 @@ describe("MCP tool reachability", () => {
     assert.deepEqual(rules(findings), ["RW-M01"]);
     assert.match(
       findings[0].evidence[2].claim,
-      /reads runCommand, a function in the same module; its body holds exec\(\)/,
+      /reads runCommand, a function in the same module; exec\(\) runs there/,
     );
   });
 

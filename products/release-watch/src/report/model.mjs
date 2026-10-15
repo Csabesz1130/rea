@@ -182,7 +182,8 @@ const aiSections = (component) => {
   ];
 };
 
-const destinationRows = ({ network }) =>
+// After a failed old analysis nothing was compared, so no host is "new".
+const destinationRows = ({ network, left }) =>
   network
     ? [...network.current].map(([host, sources]) => [
         host,
@@ -194,7 +195,11 @@ const destinationRows = ({ network }) =>
             ),
           ),
         ].join(" + "),
-        network.fresh.has(host) ? "new" : "known",
+        left.target && !left.app
+          ? "not compared"
+          : network.fresh.has(host)
+            ? "new"
+            : "known",
       ])
     : [];
 

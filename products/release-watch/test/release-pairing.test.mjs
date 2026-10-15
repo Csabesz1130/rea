@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { diffApplications } from "../src/diff.mjs";
-import { releaseMovesOf } from "../src/policy.mjs";
+import { releaseBaseline, releaseMovesOf } from "../src/policy.mjs";
 import { app, at, evaluate, fact, range, side } from "./helpers.mjs";
 
 const exec = (module, command) =>
@@ -15,8 +15,13 @@ const exec = (module, command) =>
     at(module, 2),
   );
 
-// Grades `name` of a release given as { name: [oldApp, newApp] }.
-const graded = (components, name, comparable = () => true) => {
+// Grades `name` of a release given as { name: [oldApp, newApp] }, with the
+// release-wide moves and baseline the compare command gives each component.
+const graded = (
+  components,
+  name,
+  { comparable = () => true, surfaces = [] } = {},
+) => {
   const prepared = Object.entries(components).map(
     ([component, [old, now]]) => ({
       name: component,
@@ -27,10 +32,14 @@ const graded = (components, name, comparable = () => true) => {
     }),
   );
   const release = { moves: releaseMovesOf(prepared) };
+  const baseline = releaseBaseline(prepared.map((component) => component.left));
   const [old, now] = components[name];
-  return evaluate(side("v1", old), side("v2", now), { release, name }).map(
-    (finding) => [finding.rule, finding.severity],
-  );
+  return evaluate(side("v1", old), side("v2", now), {
+    release,
+    baseline,
+    name,
+    surfaces,
+  }).map((finding) => [finding.rule, finding.severity]);
 };
 
 describe("sites moved between components", () => {
@@ -53,7 +62,7 @@ describe("sites moved between components", () => {
 
   it("takes nothing from a component whose new side REA could not analyze", () => {
     assert.deepEqual(
-      graded(release, "worker", (name) => name !== "core"),
+      graded(release, "worker", { comparable: (name) => name !== "core" }),
       [["RW-P01", "high"]],
     );
   });
@@ -100,6 +109,58 @@ describe("unresolved requests across components", () => {
       const moves = releaseMovesOf(prepared(release(digest))).requests;
       assert.equal(moves.pairs.size, paired ? 1 : 0, digest);
     }
+  });
+});
+
+describe("browser AI code moved between components", () => {
+  const OPENAI = "https://api.openai.com/v1/chat/completions";
+  const module = "assets/summary.js";
+  // The summary bundle, with its OpenAI call, HTML sink and source map.
+  const summary = (digest) =>
+    app({
+      browserModules: new Set([module]),
+      assets: [fact(module, { sha256: digest }, at(module, 1))],
+      requests: [
+        fact(
+          `${module}#fetch`,
+          {
+            module,
+            method: "fetch",
+            endpoint: OPENAI,
+            range: range(6, 2, 6, 40),
+          },
+          at(module, 6),
+        ),
+      ],
+      endpoints: [fact(OPENAI, { value: OPENAI }, at(module, 6))],
+      htmlSinks: [
+        fact(
+          `${module}#write:/innerHTML`,
+          { module, sink: "write:/innerHTML", range: range(21, 2, 21, 30) },
+          at(module, 21),
+        ),
+      ],
+      embeddedSources: [
+        fact(
+          "src/features/summary.ts",
+          { original: "src/features/summary.ts", content_sha256: null },
+          at(`${module}.map`, 1),
+        ),
+      ],
+    });
+  const release = (digest) => ({
+    web: [summary("aa"), app()],
+    admin: [app(), summary(digest)],
+  });
+
+  it("reports nothing new when the file moved unchanged", () => {
+    assert.deepEqual(graded(release("aa"), "admin", { surfaces: ["ai"] }), []);
+  });
+
+  it("still reports the sink when the moved file changed", () => {
+    assert.deepEqual(graded(release("bb"), "admin", { surfaces: ["ai"] }), [
+      ["RW-A05", "medium"],
+    ]);
   });
 });
 

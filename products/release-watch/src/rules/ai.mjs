@@ -6,6 +6,7 @@ import {
   credentialsIn,
   isAiEnvironmentKey,
 } from "../catalog.mjs";
+import { movedFrom } from "../moves.mjs";
 import { textPreview } from "../source-line.mjs";
 import { sdkUses } from "../surfaces.mjs";
 import { hostOf, maskTag } from "../urls.mjs";
@@ -13,10 +14,10 @@ import {
   absenceUnknowns,
   browserHosts,
   hostAbsence,
+  isGuess,
   sourceModule,
-  sourceEvidence,
-  sourceUnknowns,
 } from "./network.mjs";
+import { sourceEvidence, sourceUnknowns } from "./network-evidence.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
@@ -41,7 +42,12 @@ const providerFindings = (context) => {
   const { right, labels, network } = context;
   const findings = [];
   const hosts = [];
-  const oldBrowser = browserHosts(context.left);
+  // Browser placement anywhere in the old release, so code that moved
+  // between components keeps its old classification.
+  const oldBrowser = new Set([
+    ...browserHosts(context.left),
+    ...(context.baseline.browserHosts ?? []),
+  ]);
   for (const [host, sources] of network.current) {
     const provider = aiProviderOf(host);
     if (provider === null) continue;
@@ -52,18 +58,23 @@ const providerFindings = (context) => {
     const fromBrowser = seenInBrowser || browserModule;
     const fresh = network.fresh.has(host);
     if (!fresh && !(fromBrowser && !oldBrowser.has(host))) continue;
+    // A URL found only near requests REA could not resolve is a guess.
+    const guess = isGuess(sources);
     hosts.push(host);
     findings.push({
       rule: "RW-A01",
       // Only the browser placement is new when the host was known; that
-      // placement is Release Watch's classification, so it reviews, not blocks.
-      severity: fresh ? "high" : "medium",
+      // placement is Release Watch's classification, so it reviews, not
+      // blocks, and so does a destination Release Watch only guessed.
+      severity: fresh && !guess ? "high" : "medium",
       title: fromBrowser
         ? `Browser code calls ${provider} directly (${host})`
-        : `New AI provider receives data: ${provider} (${host})`,
-      summary: fresh
-        ? `${labels.right} sends requests to ${provider}; ${host} was ${hostAbsence(context)}.`
-        : `${labels.right} calls ${provider} from code Release Watch classifies as browser code; no module of ${labels.left} that contacted ${host} was classified that way.`,
+        : `New AI provider ${guess ? "may receive" : "receives"} data: ${provider} (${host})`,
+      summary: !fresh
+        ? `${labels.right} calls ${provider} from code Release Watch classifies as browser code; no module of ${labels.left} that contacted ${host} was classified that way.`
+        : guess
+          ? `${labels.right} holds a URL for ${provider} (${host}) next to requests REA could not resolve or does not model; ${host} was ${hostAbsence(context)}.`
+          : `${labels.right} sends requests to ${provider}; ${host} was ${hostAbsence(context)}.`,
       why: fromBrowser
         ? `Prompts and user data now go to ${provider} straight from users' browsers. A browser cannot authenticate to ${provider} without a credential anyone can read, unless the vendor issues short-lived tokens.`
         : `Prompts and user data now go to ${provider}. That is a new processor for privacy, contract and AI-governance reviews.`,
@@ -259,6 +270,11 @@ const aiModules = (app) => {
   for (const literal of app.urlLiterals)
     if (aiProviderOf(hostOf(literal.data.url)))
       modules.add(literal.data.module);
+  // Prompts often live in a module the AI code imports (one step only).
+  const direct = Array.from(modules);
+  for (const module of direct)
+    for (const local of app.modules.get(module)?.local ?? [])
+      modules.add(local);
   return modules;
 };
 
@@ -322,44 +338,54 @@ const promptFindings = (context) => {
 const htmlSinkFindings = (context) => {
   const { right, labels, surfaces } = context;
   if (!right.app || !surfaces.includes("ai")) return [];
-  return newGroups(context.diff.app.htmlSinks)
-    .filter((group) => right.app.browserModules.has(group.facts[0].data.module))
-    .flatMap((group) => {
-      const [fact] = group.facts;
-      const request = right.app.requests.find(
-        (candidate) => candidate.data.module === fact.data.module,
-      );
-      if (request === undefined) return [];
-      const property = fact.data.sink.replace(/^(read|write):\//, "");
-      return [
-        {
-          rule: "RW-A05",
-          severity: "medium",
-          title: `Model output may be rendered as HTML in ${fact.data.module}`,
-          summary: `A new ${property} sink sits in browser code that also fetches data, in a component that calls AI models (${absencePhrase(group.status, labels.left, group.counts)}).`,
-          why: "Model output is untrusted: a prompt-injected answer rendered as HTML runs script in the user's session.",
-          recommendation:
-            "Render model output as text, or sanitize it with an allow-list sanitizer before inserting HTML.",
-          evidence: [
-            ...group.facts.map((site) =>
-              cite(`${property} assignment or call`, site, APP_SOURCE),
-            ),
-            cite(
-              `${request.data.method}() request in the same module`,
-              request,
-              APP_SOURCE,
-            ),
-            BROWSER_CODE,
-            heuristic(
-              "The component has an AI surface; Release Watch connects the sink and the request by module",
-            ),
-          ],
-          unknowns: [
-            "REA does not trace data from the response to the HTML sink.",
-          ],
-        },
-      ];
-    });
+  return (
+    newGroups(context.diff.app.htmlSinks)
+      .filter((group) =>
+        right.app.browserModules.has(group.facts[0].data.module),
+      )
+      // A sink whose file moved unchanged from another component is not new.
+      .filter(
+        (group) =>
+          !context.moves.htmlSinks ||
+          movedFrom(context.moves.htmlSinks, group.facts) === null,
+      )
+      .flatMap((group) => {
+        const [fact] = group.facts;
+        const request = right.app.requests.find(
+          (candidate) => candidate.data.module === fact.data.module,
+        );
+        if (request === undefined) return [];
+        const property = fact.data.sink.replace(/^(read|write):\//, "");
+        return [
+          {
+            rule: "RW-A05",
+            severity: "medium",
+            title: `Model output may be rendered as HTML in ${fact.data.module}`,
+            summary: `A new ${property} sink sits in browser code that also fetches data, in a component that calls AI models (${absencePhrase(group.status, labels.left, group.counts)}).`,
+            why: "Model output is untrusted: a prompt-injected answer rendered as HTML runs script in the user's session.",
+            recommendation:
+              "Render model output as text, or sanitize it with an allow-list sanitizer before inserting HTML.",
+            evidence: [
+              ...group.facts.map((site) =>
+                cite(`${property} assignment or call`, site, APP_SOURCE),
+              ),
+              cite(
+                `${request.data.method}() request in the same module`,
+                request,
+                APP_SOURCE,
+              ),
+              BROWSER_CODE,
+              heuristic(
+                "The component has an AI surface; Release Watch connects the sink and the request by module",
+              ),
+            ],
+            unknowns: [
+              "REA does not trace data from the response to the HTML sink.",
+            ],
+          },
+        ];
+      })
+  );
 };
 
 /** AI rules; claims AI provider hosts so RW-N01 does not repeat them. */

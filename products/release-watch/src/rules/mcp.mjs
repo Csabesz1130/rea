@@ -4,6 +4,7 @@
 // server when any of its modules imports the MCP server SDK; registration
 // calls anywhere in it count, since servers often register tools in modules
 // that only receive the server object.
+import { within } from "../ranges.mjs";
 import { isMcpServer } from "../surfaces.mjs";
 import { reachClaim, reachOf, reachUnknowns, reachedFrom } from "./reach.mjs";
 import {
@@ -13,7 +14,6 @@ import {
   heuristic,
   newGroups,
   packResult,
-  within,
 } from "./shared.mjs";
 
 const SERVER = heuristic(
@@ -112,7 +112,7 @@ const toolExecution = (context) => {
       why: "Any agent connected to this server, and any prompt injection that steers that agent, can ask it to run commands on the host.",
       recommendation:
         "Remove the tool or restrict it to an allow-list of fixed commands, and require human confirmation for each call.",
-      evidence: [SERVER, ...connectionEvidence(keyed, groups, labels)],
+      evidence: [SERVER, ...connectionEvidence(context, keyed, groups)],
       unknowns: [
         "REA does not report the tool's name, description or input schema.",
         "REA does not establish that the tool's input reaches the command.",
@@ -124,7 +124,20 @@ const toolExecution = (context) => {
 };
 
 // Each registration, how it reaches its exec site, and each exec site once.
-const connectionEvidence = (keyed, groups, labels) => {
+// How the old release had an exec site: moved from another place in the
+// release, or the component's own diff status.
+const execAbsence = (context, groups, exec) => {
+  const moved = context.moves?.childProcesses.pairs.get(exec.node_id);
+  const left = context.releaseLabels?.left ?? context.labels.left;
+  if (moved)
+    return `${left} ran the same command from ${moved.fact.data.module}${moved.component === context.name ? "" : ` in component ${moved.component}`}`;
+  const group = groups.get(exec.key);
+  return group
+    ? absencePhrase(group.status, context.labels.left, group.counts)
+    : `also in ${context.labels.left}, where no tool registration reached it`;
+};
+
+const connectionEvidence = (context, keyed, groups) => {
   const cited = new Set();
   return keyed.flatMap(({ call, exec, path }) => {
     const lines = [
@@ -136,13 +149,9 @@ const connectionEvidence = (keyed, groups, labels) => {
     ];
     if (cited.has(exec.node_id)) return lines;
     cited.add(exec.node_id);
-    const group = groups.get(exec.key);
-    const absence = group
-      ? absencePhrase(group.status, labels.left, group.counts)
-      : `also in ${labels.left}, where no tool registration reached it`;
     lines.push(
       cite(
-        `${exec.data.method}() creates a child process${exec.data.command ? "" : " with a command REA did not resolve"} (${absence})`,
+        `${exec.data.method}() creates a child process${exec.data.command ? "" : " with a command REA did not resolve"} (${execAbsence(context, groups, exec)})`,
         exec,
         APP_SOURCE,
       ),
@@ -227,13 +236,18 @@ const newRegistrations = (context, covered) => {
   const apis = [apisOf(old), apisOf(now)].map((set) => [...set].sort().join());
   if (old.length > 0 && apis[0] !== apis[1])
     return [apiChange(context, old, now)];
-  const counted = new Set(now.map((call) => call.node_id));
-  const gained = context.diff.app.memberCalls.filter(
-    (item) =>
-      item.right.length > item.left.length &&
-      counted.has(item.right[0].node_id) &&
-      !covered.has(item.right[0].data.module),
-  );
+  // Within each module and API, only the calls that register tools count
+  // (a setRequestHandler for ListTools does not), whatever REA's order.
+  const counted = new Set([...old, ...now].map((call) => call.node_id));
+  const gained = context.diff.app.memberCalls
+    .map((item) => ({
+      before: item.left.filter((call) => counted.has(call.node_id)),
+      after: item.right.filter((call) => counted.has(call.node_id)),
+    }))
+    .filter(
+      ({ before, after }) =>
+        after.length > before.length && !covered.has(after[0].data.module),
+    );
   if (gained.length === 0) return [];
   const added = now.length - old.length;
   return [
@@ -241,14 +255,14 @@ const newRegistrations = (context, covered) => {
       rule: "RW-M02",
       severity: "medium",
       title: `New MCP tool registrations (${old.length} → ${now.length})`,
-      summary: `${context.labels.right} makes ${added} more tool registration call${added === 1 ? "" : "s"} than ${context.labels.left}, in ${gained.map((item) => item.right[0].data.module).join(", ")}.`,
+      summary: `${context.labels.right} makes ${added} more tool registration call${added === 1 ? "" : "s"} than ${context.labels.left}, in ${gained.map((item) => item.after[0].data.module).join(", ")}.`,
       why: "Every new tool widens what a connected agent can do.",
       recommendation:
         "Review each new tool's handler and whether it needs human confirmation.",
       evidence: [
         ...gained.flatMap((item) =>
-          item.right
-            .slice(item.left.length)
+          item.after
+            .slice(item.before.length)
             .map((call) =>
               cite(`${call.data.member}() call`, call, APP_SOURCE),
             ),

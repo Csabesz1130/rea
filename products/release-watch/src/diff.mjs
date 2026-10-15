@@ -1,7 +1,7 @@
 // Keyed comparison of capability facts across two releases. Absence counts as
 // "added"/"removed" only when the other side's REA coverage is complete;
 // otherwise the item stays "not-previously-observed"/"no-longer-observed".
-import { isScriptPath } from "./facts/modules.mjs";
+import { isScriptPath, withoutHash } from "./facts/modules.mjs";
 
 const groupByKey = (facts) => {
   const groups = new Map();
@@ -133,12 +133,6 @@ const EMPTY_APP = {
 // Content-hashed bundle names: Vite/Rollup `name-Hash.js`, webpack
 // `name.hash.js`. A hash segment has a digit or an uppercase letter, so a
 // plain word such as `-generator` is never taken for one.
-const HASHED_NAME = [
-  /-(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{8,}(?=\.(m?js|css)$)/,
-  /\.(?=[a-f0-9]*[0-9])[a-f0-9]{8,}(?=(\.chunk)?\.(m?js|css)$)/,
-];
-const withoutHash = (modulePath) =>
-  HASHED_NAME.reduce((name, pattern) => name.replace(pattern, ""), modulePath);
 
 const scriptPaths = (app) =>
   app.assets.map((asset) => asset.key).filter(isScriptPath);

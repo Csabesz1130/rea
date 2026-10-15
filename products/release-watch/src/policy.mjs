@@ -6,11 +6,17 @@ import { dependencyPack, packagesOf } from "./rules/dependencies.mjs";
 import { electronPack } from "./rules/electron.mjs";
 import { goPack } from "./rules/go.mjs";
 import { mcpPack } from "./rules/mcp.mjs";
-import { knownHosts, networkPack, networkView } from "./rules/network.mjs";
+import {
+  browserHosts,
+  guessedHosts,
+  knownHosts,
+  networkPack,
+  networkView,
+} from "./rules/network.mjs";
 import { processPack } from "./rules/process.mjs";
 import { runtimePack } from "./rules/runtime.mjs";
 import { maxSeverity, severityRank } from "./rules/shared.mjs";
-import { webPack } from "./rules/web.mjs";
+import { shipsOriginals, webPack } from "./rules/web.mjs";
 import { releaseMoves } from "./moves.mjs";
 import { sdkUses } from "./surfaces.mjs";
 
@@ -49,21 +55,26 @@ export const releaseMovesOf = (components) => ({
     })),
     { field: "command" },
   ),
-  requests: releaseMoves(
-    components.map(({ name, diff, comparable, left, right }) => ({
-      name,
-      items: diff.app.requests,
-      comparable,
-      digests: { left: digestsOf(left), right: digestsOf(right) },
-    })),
-    {
-      field: "endpoint",
-      keep: (fact) => !fact.data.endpoint,
-      unresolvedPairs: true,
-      acrossComponents: "same-file",
-    },
-  ),
+  requests: releaseMoves(withDigests(components, "requests"), {
+    field: "endpoint",
+    keep: (fact) => !fact.data.endpoint,
+    unresolvedPairs: true,
+    sameFile: "across",
+  }),
+  // A sink means what the code around it does, so it moves with its file.
+  htmlSinks: releaseMoves(withDigests(components, "htmlSinks"), {
+    field: "sink",
+    sameFile: "always",
+  }),
 });
+
+const withDigests = (components, family) =>
+  components.map(({ name, diff, comparable, left, right }) => ({
+    name,
+    items: diff.app[family],
+    comparable,
+    digests: { left: digestsOf(left), right: digestsOf(right) },
+  }));
 
 const digestsOf = (side) =>
   new Map(
@@ -73,6 +84,9 @@ const digestsOf = (side) =>
 export const releaseBaseline = (leftSides) => ({
   apps: leftSides.filter((side) => side.app).length,
   hosts: new Set(leftSides.flatMap((side) => [...knownHosts(side)])),
+  browserHosts: new Set(leftSides.flatMap((side) => [...browserHosts(side)])),
+  shipsOriginals: leftSides.some((side) => shipsOriginals(side.app)),
+  guessed: new Set(leftSides.flatMap((side) => [...guessedHosts(side)])),
   packages: new Set(
     leftSides.flatMap((side) => [...packagesOf(side.app).keys()]),
   ),
@@ -84,6 +98,12 @@ export const releaseBaseline = (leftSides) => ({
   ),
   ...shippedTokensOf(leftSides),
   windows: leftSides.flatMap((side) => side.app?.windows ?? []),
+  digests: new Set(
+    leftSides
+      .flatMap((side) => side.app?.assets ?? [])
+      .map((asset) => asset.data.sha256)
+      .filter(Boolean),
+  ),
 });
 
 // Credential tokens the old release shipped anywhere, and in browser code.
@@ -112,19 +132,31 @@ const locatedUnknowns = (finding, component) => {
       .filter(Boolean),
     ...(oldApp?.coverage.semantic_ceiling_modules ?? []),
   ]);
-  return files.flatMap((file) => [
-    ...(ambiguous.has(file)
+  const elsewhere = [...unexamined].filter((file) => !files.includes(file));
+  return [
+    ...files.flatMap((file) =>
+      located(component, { file, ambiguous, unexamined }),
+    ),
+    ...(elsewhere.length > 0 && finding.rule !== "RW-C01"
       ? [
-          `Several bundles share ${file}'s name without its content hash, so Release Watch could not pair it with its old version; what it reports here may predate this release.`,
+          `REA could not fully analyze ${elsewhere.length} file${elsewhere.length === 1 ? "" : "s"} of ${component.labels.left} (${elsewhere.slice(0, 3).join(", ")}), so what is reported here may have been there before.`,
         ]
       : []),
-    ...(unexamined.has(file)
-      ? [
-          `REA could not fully analyze ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
-        ]
-      : []),
-  ]);
+  ];
 };
+
+const located = (component, { file, ambiguous, unexamined }) => [
+  ...(ambiguous.has(file)
+    ? [
+        `Several bundles share ${file}'s name without its content hash, so Release Watch could not pair it with its old version; what it reports here may predate this release.`,
+      ]
+    : []),
+  ...(unexamined.has(file)
+    ? [
+        `REA could not fully analyze ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
+      ]
+    : []),
+];
 
 /** Findings for one component and the network view they were graded against. */
 export const evaluateComponent = (component) => {

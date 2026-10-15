@@ -13,7 +13,14 @@ const listed = (files) =>
 // Every file of a component new in this release is new. Unknown when REA
 // could not analyze the old side: nothing is called changed then.
 export const changedFiles = (context) => {
-  if (context.left.target === null) return () => true;
+  if (context.left.target === null) {
+    const shipped = context.baseline?.digests ?? new Set();
+    return (file) =>
+      !shipped.has(
+        context.right.app?.assets.find((asset) => asset.key === file)?.data
+          .sha256,
+      );
+  }
   if (!context.left.app) return () => false;
   const before = new Map(
     (context.left.app?.assets ?? []).map((asset) => [
@@ -24,10 +31,14 @@ export const changedFiles = (context) => {
   const renamed = new Map(
     [...context.aliases].map(([from, alias]) => [alias.path, from]),
   );
+  // A file whose content the old release shipped anywhere (it moved between
+  // components unchanged) did not change.
+  const shipped = context.baseline?.digests ?? new Set();
   return (file) => {
     const old = before.get(file) ?? before.get(renamed.get(file));
     const now = context.right.app.assets.find((asset) => asset.key === file)
       ?.data.sha256;
+    if (now && shipped.has(now)) return false;
     return old === undefined || old !== now;
   };
 };
@@ -60,7 +71,7 @@ const applicationGaps = (app) => {
   if (coverage.semantic_truncated || (coverage.semantic_omitted_nodes ?? 0) > 0)
     lines.push(
       reported(
-        `Semantic graph truncated${coverage.semantic_omitted_nodes ? ` (${coverage.semantic_omitted_nodes} nodes omitted)` : ""}${coverage.semantic_limits.length > 0 ? ` at ${coverage.semantic_limits.join(", ")}` : ""}`,
+        `Semantic graph truncated${coverage.semantic_omitted_nodes ? ` (${coverage.semantic_omitted_nodes} nodes omitted)` : ""}${coverage.semantic_limits.length > 0 ? `; REA's limits for this run: ${coverage.semantic_limits.join(", ")}` : ""}`,
         "observed",
         APP_SOURCE,
       ),
@@ -78,6 +89,14 @@ const applicationGaps = (app) => {
       reported(
         "REA reached its global node limit, so any analyzed file may have been examined only in part",
         "derived",
+        APP_SOURCE,
+      ),
+    );
+  if ((app.inlineScriptFiles ?? []).length > 0)
+    lines.push(
+      reported(
+        `Pages with inline scripts REA does not analyze: ${listed(app.inlineScriptFiles)}`,
+        "observed",
         APP_SOURCE,
       ),
     );
@@ -191,6 +210,21 @@ const processGapsOf = (context) => {
   );
 };
 
+// Files REA examined only in part or not at all.
+const unexaminedFiles = (app, processGaps) => [
+  ...app.coverage.semantic_ceiling_modules,
+  ...(app.coverage.semantic_unreached_modules ?? []),
+  // Any script file may be partial once the global limit is reached.
+  ...(app.coverage.semantic_global_limit_reached
+    ? app.assets.map((asset) => asset.key).filter(isScriptPath)
+    : []),
+  ...app.analysisFailures
+    .map((failure) => failure.location?.file)
+    .filter(Boolean),
+  ...processGaps.map((unknown) => unknown.data.module),
+  ...(app.inlineScriptFiles ?? []),
+];
+
 /**
  * RW-C01: part of the new release was not examined. High when the
  * unexamined files changed since the old release, since a change there is
@@ -206,7 +240,9 @@ export const incompleteAnalysis = (context) => {
       .slice(0, MAX_FILES)
       .map((unknown) =>
         cite(
-          `REA could not resolve ${unknown.data.name} in ${unknown.data.module}, so a process call there may not be classified`,
+          unknown.data.computed
+            ? `${unknown.data.module} calls a member of ${unknown.data.receiver}, which it imports from child_process, by a computed name REA could not resolve, so that process call is not classified`
+            : `REA could not resolve ${unknown.data.name} in ${unknown.data.module}, so a process call there may not be classified`,
           unknown,
           APP_SOURCE,
         ),
@@ -214,20 +250,7 @@ export const incompleteAnalysis = (context) => {
     ...captureGaps.map((gap) => reported(gap, "derived", COMPONENT)),
   ];
   if (evidence.length === 0) return [];
-  const files = app
-    ? [
-        ...app.coverage.semantic_ceiling_modules,
-        ...(app.coverage.semantic_unreached_modules ?? []),
-        // Any script file may be partial once the global limit is reached.
-        ...(app.coverage.semantic_global_limit_reached
-          ? app.assets.map((asset) => asset.key).filter(isScriptPath)
-          : []),
-        ...app.analysisFailures
-          .map((failure) => failure.location?.file)
-          .filter(Boolean),
-        ...processGaps.map((unknown) => unknown.data.module),
-      ]
-    : [];
+  const files = app ? unexaminedFiles(app, processGaps) : [];
   const changed = app ? [...new Set(files.filter(changedFiles(context)))] : [];
   const { changes, substantive } = unexaminedChanges(context, changed);
   const limited =

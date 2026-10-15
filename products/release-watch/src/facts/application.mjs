@@ -5,6 +5,7 @@ import { isUrl, scriptKey } from "../urls.mjs";
 import { callGraph } from "./calls.mjs";
 import { coverageOf, unreachedModules } from "./coverage.mjs";
 import { browserModules, importIndex } from "./modules.mjs";
+import { processUnknowns } from "./process.mjs";
 import { withLoads } from "./windows.mjs";
 import {
   firstObservation,
@@ -153,8 +154,12 @@ const GRAPH_PROJECTIONS = {
     );
   },
   unknown: (node, properties, facts) => {
-    if (properties.operation === "parse-html-inline-scripts")
+    if (properties.operation === "parse-html-inline-scripts") {
       facts.inlineScripts += properties.inline_script_count ?? 0;
+      // REA does not analyze inline script bodies: those pages hold unexamined code.
+      if (properties.path && (properties.inline_script_count ?? 0) > 0)
+        facts.inlineScriptFiles.push(properties.path);
+    }
     const failure = properties.analysis_failure;
     if (failure)
       facts.analysisFailures.push(
@@ -194,6 +199,7 @@ const graphFacts = (graph) => {
     embeddedSources: [],
     storage: [],
     inlineScripts: 0,
+    inlineScriptFiles: [],
     analysisFailures: [],
     package: null,
   };
@@ -327,44 +333,23 @@ const memberCalls = (scope) => {
   }
 };
 
-// Process APIs whose names in an REA unknown mean a process call REA could
-// not classify. Plain `exec` is left out: RegExp.prototype.exec shares it.
-const PROCESS_NAME =
-  /\b(execSync|execFile|execFileSync|spawn|spawnSync|fork|child_process)\b/;
-
-/**
- * REA's unknowns that matter to the rules: dynamic evaluation (eval, new
- * Function), and values or calls REA could not resolve that name a process
- * API, where a process call may have gone unclassified.
- */
-const semanticUnknowns = (semantic, contexts, facts) => {
-  for (const unknown of semantic.unknowns ?? []) {
+// Dynamic evaluation REA reports as an unknown scope (eval, new Function).
+const dynamicEvaluation = (semantic, contexts) =>
+  (semantic.unknowns ?? []).flatMap((unknown) => {
     const location = unknown.evidence?.location?.value;
-    const modulePath =
-      location?.kind === "source-range" ? location.source : null;
-    if (modulePath === null) continue;
-    const node = { ...unknown, node_id: unknown.unknown_id };
-    const detail = unknown.detail ?? null;
-    if (unknown.reason === "dynamic-scope")
-      facts.dynamicEvaluation.push(
-        semanticFact(node, contexts, `${modulePath}#eval`, {
-          module: modulePath,
-          detail,
-        }),
-      );
-    const name = PROCESS_NAME.exec(detail ?? "")?.[1];
-    if (name)
-      facts.processUnknowns.push(
-        semanticFact(node, contexts, `${modulePath}#${name}`, {
-          module: modulePath,
-          name,
-          detail,
-        }),
-      );
-  }
-};
+    if (unknown.reason !== "dynamic-scope" || location?.kind !== "source-range")
+      return [];
+    return [
+      semanticFact(
+        { ...unknown, node_id: unknown.unknown_id },
+        contexts,
+        `${location.source}#eval`,
+        { module: location.source, detail: unknown.detail ?? null },
+      ),
+    ];
+  });
 
-const semanticFacts = (semantic) => {
+const semanticFacts = (semantic, modules) => {
   const facts = {
     requests: [],
     childProcesses: [],
@@ -408,7 +393,12 @@ const semanticFacts = (semantic) => {
   for (const node of semantic.nodes)
     SEMANTIC_PROJECTIONS[node.kind]?.(node, scope);
   memberCalls(scope);
-  semanticUnknowns(semantic, contexts, facts);
+  facts.dynamicEvaluation = dynamicEvaluation(semantic, contexts);
+  facts.processUnknowns = processUnknowns(semantic, contexts, {
+    modules,
+    childProcesses: facts.childProcesses,
+    bindingReads: facts.bindingReads,
+  });
   return facts;
 };
 
@@ -464,7 +454,7 @@ export const applicationFacts = (evidence) => {
     ...graphPart,
     windows: withLoads(graphPart.windows, graph, semantic),
     embeddedSources: withBundles(graphPart.embeddedSources, graph),
-    ...semanticFacts(semantic),
+    ...semanticFacts(semantic, modules),
     ...callGraph(semantic),
   };
 };

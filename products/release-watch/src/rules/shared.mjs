@@ -112,16 +112,6 @@ export const reported = (claim, basis, source, { side = "right" } = {}) => ({
   side,
 });
 
-const before = (a, b) =>
-  a.line < b.line || (a.line === b.line && a.column <= b.column);
-
-/** True when source range `inner` lies inside `outer` (both `{ start, end }` with line and column). */
-export const within = (inner, outer) =>
-  inner !== null &&
-  outer !== null &&
-  before(outer.start, inner.start) &&
-  before(inner.end, outer.end);
-
 export const isVendorHost = (host, vendorDomains) =>
   vendorDomains.some(
     (domain) => host === domain || host.endsWith(`.${domain}`),

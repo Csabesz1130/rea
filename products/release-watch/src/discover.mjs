@@ -4,6 +4,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
+import { withoutHash } from "./facts/modules.mjs";
+
 const LIBRARY = /\.(so(\.\d+)*|dylib|dll|pak|dat|bin|json|html|txt)$/i;
 const HELPER_SEARCH_DEPTH = 4;
 const WEB_OUTPUT_DIRECTORIES = ["dist", "build", "out", "public"];
@@ -134,7 +136,9 @@ const signatureOf = (target) => {
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) walk(full, `${prefix}${entry.name}/`);
       else if (entry.isFile())
-        files.add(`${prefix}${entry.name}\u0000${statSync(full).size}`);
+        files.add(
+          `${withoutHash(`${prefix}${entry.name}`)}\u0000${statSync(full).size}`,
+        );
     }
   };
   const stats = root ? statSync(root, { throwIfNoEntry: false }) : null;

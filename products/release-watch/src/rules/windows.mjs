@@ -157,7 +157,12 @@ const pairWindows = (oldWindows, newWindows, fileOf) => {
     usedNew.add(candidate.window);
     pairs.push([candidate.was, candidate.window]);
   }
-  return { pairs, added: now.filter((window) => !usedNew.has(window)), tied };
+  return {
+    pairs,
+    added: now.filter((window) => !usedNew.has(window)),
+    removed: old.filter((window) => !usedOld.has(window)),
+    tied,
+  };
 };
 
 // Windows whose setting of one preference regressed, by new file.
@@ -204,7 +209,7 @@ const beforeLines = (context, name, rule, items) =>
           { side: "left" },
         )
       : cite(
-          `${context.labels.left}: BrowserWindow in ${windowFile(was)}: ${settingText(name, setting)}`,
+          `${context.labels.left}: BrowserWindow in ${windowFile(was)}${was.data.component && was.data.component !== context.name ? ` of component ${was.data.component}` : ""}: ${settingText(name, setting)}`,
           was,
           APP_SOURCE,
           { side: "left" },
@@ -271,15 +276,30 @@ const regressionFinding = (
 };
 
 /**
+ * The old windows a component's new windows did not pair with, tagged with
+ * the component, for the release's new components to pair with.
+ */
+export const unpairedWindows = (component, oldWindows, newWindows, aliases) => {
+  const fileOf = (window) =>
+    aliases.get(windowFile(window))?.path ?? windowFile(window);
+  return pairWindows(oldWindows, newWindows, fileOf).removed.map((window) => ({
+    ...window,
+    data: { ...window.data, component },
+  }));
+};
+
+/**
  * RW-E02 findings for one component. A component new in this release is
  * paired with every window of the old release.
  */
 export const webPreferenceRegressions = (context) => {
   const { left, right } = context;
   if (!right.app) return [];
+  // A new component is paired with the old windows no surviving component
+  // kept, release-wide, so one old window explains at most one new one.
   const oldWindows =
     left.target === null
-      ? (context.baseline.windows ?? [])
+      ? (context.release?.orphanWindows ?? context.baseline.windows ?? [])
       : (left.app?.windows ?? null);
   // An old side REA could not analyze is coverage, not an empty release.
   if (oldWindows === null) return [];

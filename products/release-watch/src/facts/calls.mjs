@@ -53,16 +53,29 @@ const membersOf = (semantic) =>
       : [];
   });
 
+// Declared bindings (not parameters), with their owning function, so a read
+// can be resolved to what the binding's initializer defines.
+const bindingsOf = (semantic) =>
+  semantic.nodes
+    .filter((node) => node.kind === "binding" && node.label && rangeOf(node))
+    .map((node) => ({
+      module: moduleOf(node),
+      name: node.label,
+      range: rangeOf(node),
+      owner: node.function_node_id ?? null,
+    }));
+
 /**
- * `{ functions, calls, members }` from one semantic graph. Binding reads are
+ * `{ functions, calls, members, bindings }` from one semantic graph. Binding reads are
  * projected with the other semantic facts, in application.mjs.
  */
 export const callGraph = (semantic) => {
-  if (!semantic) return { functions: [], calls: [], members: [] };
+  if (!semantic) return { functions: [], calls: [], members: [], bindings: [] };
   const byId = new Map(semantic.nodes.map((node) => [node.node_id, node]));
   return {
     functions: functionsOf(semantic),
     calls: callsOf(semantic, byId),
     members: membersOf(semantic),
+    bindings: bindingsOf(semantic),
   };
 };

@@ -1,7 +1,6 @@
 // Runs the public CLI against the fixtures with the REA build in this
 // checkout. Skipped when REA has not been built.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -14,38 +13,10 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const product = path.resolve(here, "..");
-const fixtures = path.join(product, "demo", "fixtures");
-const reaBuilt = existsSync(path.resolve(product, "../../dist/cli.js"));
-const skip = reaBuilt ? false : "REA is not built (npm run build:cached)";
+import { fixtures, here, run, skip } from "./cli-run.mjs";
+
 const FAKE_KEY = "sk-proj-DEMO-not-a-real-key-000000000000000000";
-
-const run = (left, right, ...extra) => {
-  const out = mkdtempSync(path.join(tmpdir(), "release-watch-test-"));
-  const result = spawnSync(
-    process.execPath,
-    [
-      path.join(product, "bin", "release-watch.mjs"),
-      "compare",
-      left,
-      right,
-      "--out",
-      out,
-      "--vendor-domain",
-      "acmenotes.example",
-      ...extra,
-    ],
-    { encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } },
-  );
-  const reportFile = path.join(out, "report.json");
-  const report = existsSync(reportFile)
-    ? JSON.parse(readFileSync(reportFile, "utf8"))
-    : null;
-  return { out, result, report };
-};
 
 const titles = (report, rule) =>
   report.findings
@@ -273,6 +244,37 @@ describe("compare: MCP tools that reach process execution", { skip }, () => {
     );
   });
 });
+
+describe(
+  "compare: MCP tools reached through values and exports",
+  { skip },
+  () => {
+    let values;
+    before(() => {
+      const local = path.join(here, "fixtures");
+      values = run(
+        path.join(local, "reach-values-1.0.0"),
+        path.join(local, "reach-values-1.1.0"),
+      );
+    });
+    after(() => rmSync(values.out, { recursive: true, force: true }));
+
+    it("follows tool tables, handler objects, default re-exports and star exports", () => {
+      assert.equal(values.result.status, 2, values.result.stderr);
+      const lines = values.report.findings
+        .filter((finding) => finding.rule === "RW-M01")
+        .flatMap((finding) => finding.evidence)
+        .filter((item) => item.claim === "registerTool() call")
+        .map((item) => item.location.line)
+        .sort((a, b) => a - b);
+      // A tool table (18), a handler map (25), a re-exported default (33)
+      // and a star export (41). Not 26, an imported logger object; 30, an
+      // imported constant; or 37, a harmless anonymous default export next to
+      // an exec function. The map's initializer ends before line 25 uses it.
+      assert.deepEqual(lines, [18, 25, 33, 41]);
+    });
+  },
+);
 
 describe("compare: captures only and nothing to analyze", { skip }, () => {
   const outs = [];

@@ -58,14 +58,22 @@ const finding = (context, group) => {
         "Check that the moved call takes its command from the same source as before.",
       evidence: [
         ...sites,
-        ...moved.map(({ component, fact: old }) =>
-          cite(
-            `${context.labels.left}: ${method}() with the same command in ${old.data.module}${component === context.name ? "" : ` of component ${component}`}`,
+        ...moved.map(({ component, fact: old }) => {
+          const line = cite(
+            component === context.name
+              ? `${context.labels.left}: ${method}() with the same command in ${old.data.module}`
+              : `${context.releaseLabels?.left ?? context.labels.left}, component ${component}: ${method}() with the same command in ${old.data.module}`,
             old,
             APP_SOURCE,
             { side: "left" },
-          ),
-        ),
+          );
+          return component === context.name
+            ? line
+            : {
+                ...line,
+                location: line.location && { ...line.location, component },
+              };
+        }),
         heuristic(
           "Release Watch pairs each new site with one removed site of the same method and command; REA does not establish that they are the same call",
         ),

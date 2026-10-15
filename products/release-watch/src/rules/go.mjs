@@ -137,7 +137,7 @@ const dependencyFindings = (helper, item) =>
     return {
       rule: "RW-G02",
       severity: "medium",
-      title: `New dependency compiled into ${helper.name}: ${dependency.path} ${dependency.version}`,
+      title: `${oldFailed(helper) ? "Dependency" : "New dependency"} compiled into ${helper.name}: ${dependency.path} ${dependency.version}`,
       summary: `${helper.relative} ${oldFailed(helper) ? "embeds" : "now embeds"} ${dependency.path}${unpinned ? " with no module checksum" : ""}.`,
       why: unpinned
         ? "Without a recorded checksum the binary does not tie this code to a published module version, which is how vendored or patched code hides."

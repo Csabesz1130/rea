@@ -30,18 +30,14 @@ const pairable = (gained, lost, { field, unresolvedPairs }) => {
  * the family and `digests` `{ left, right }` maps of module to SHA-256.
  * `keep` selects the facts that take part; `unresolvedPairs` lets two sites
  * with no value pair (requests with no resolved destination), which process
- * sites never do. `acrossComponents` is "any", or "same-file" for sites with
- * nothing else that ties a site of one component to a site of another:
- * those pair across components only when their file moved unchanged.
+ * sites never do. `sameFile` says when two sites must sit in the same file
+ * content to pair: "never", "across" components (sites with nothing else
+ * that ties a site of one component to a site of another), or "always"
+ * (sites whose meaning depends on the code around them).
  */
 export const releaseMoves = (
   components,
-  {
-    field,
-    keep = () => true,
-    unresolvedPairs = false,
-    acrossComponents = "any",
-  },
+  { field, keep = () => true, unresolvedPairs = false, sameFile = "never" },
 ) => {
   const gained = [];
   const lost = [];
@@ -65,8 +61,9 @@ export const releaseMoves = (
           })),
         );
     }
-  const across = (site, candidate) =>
-    acrossComponents === "any" ||
+  const fileBound = (site, candidate, sameComponent) =>
+    sameFile === "never" ||
+    (sameFile === "across" && sameComponent) ||
     (site.digest !== null && site.digest === candidate.digest);
   const pairs = new Map();
   const used = new Set();
@@ -78,7 +75,7 @@ export const releaseMoves = (
         (candidate) =>
           !used.has(candidate) &&
           (candidate.component === site.component) === sameComponent &&
-          (sameComponent || across(site, candidate)) &&
+          fileBound(site, candidate, sameComponent) &&
           pairable(site, candidate, { field, unresolvedPairs }),
       );
       if (!match) continue;

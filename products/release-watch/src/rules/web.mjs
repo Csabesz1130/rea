@@ -96,24 +96,24 @@ const serviceWorkerFindings = (context) =>
     unknowns: [],
   }));
 
-// Reported only when the old release shipped no original sources at all; a
-// release that already published them gains nothing new by adding files.
 // Bundler runtime and external-module stubs a source map lists, which are
 // not the product's own source files.
 const isStub = (original) =>
-  /(^|\/)external (?:(?:commonjs2?|module|amd|var|root|umd|node-commonjs|import) )?"/.test(
-    original,
-  ) ||
+  /(^|\/)external (?:[\w-]+ )?"/.test(original) ||
+  /(^|\/)ignored\|/.test(original) ||
   /(^|\/)\(webpack\)|webpack\/(bootstrap|runtime)|^webpack\//.test(original);
 
+/** True when an app's source maps embed original sources of its own. */
+export const shipsOriginals = (app) =>
+  (app?.embeddedSources ?? []).some((fact) => !isStub(fact.data.original));
+
+// Reported only when no component of the old release shipped original
+// sources; a release that already published them gains nothing new by
+// adding files.
 const embeddedSourceFindings = (context) => {
   // Unknown when REA could not analyze some old files: they may have shipped sources.
   if ((context.left.app?.analysisFailures.length ?? 0) > 0) return [];
-  if (
-    (context.left.app?.embeddedSources ?? []).some(
-      (fact) => !isStub(fact.data.original),
-    )
-  )
+  if (shipsOriginals(context.left.app) || context.baseline.shipsOriginals)
     return [];
   const added = newFacts(context.diff.app.embeddedSources).filter(
     ({ fact }) => !isStub(fact.data.original),

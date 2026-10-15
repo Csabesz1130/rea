@@ -233,7 +233,7 @@ const fuseSeverity = (name, fuses, unknowns) => {
  */
 const oldFuseGap = (status) =>
   (status?.candidates ?? 0) === 0
-    ? "no executable to inspect"
+    ? "it has no Electron executable to inspect"
     : status.failures.length > 0
       ? "the inspection failed"
       : "no fuse wire found";
@@ -243,12 +243,9 @@ const fuseRegressions = (context) =>
     const after = pair.after?.fuses;
     if (!after || after.ambiguous) return [];
     const before = pair.before?.fuses ?? null;
-    // The old release had executables REA tried to read without a result,
-    // or is an Electron distribution with none REA could inspect: its fuse
-    // state is unknown, not safe.
-    const oldUnknown =
-      (context.left.runtimeStatus?.candidates ?? 0) > 0 ||
-      context.left.target?.kind === "electron-dist";
+    // Any old side that exists, an app directory with no executable among
+    // them, has fuses REA did not establish rather than safe ones.
+    const oldUnknown = context.left.target !== null;
     const unknowns = new Set();
     const rows = Object.entries(FUSES).flatMap(([name, fuse]) => {
       const now = after.fuses[name];

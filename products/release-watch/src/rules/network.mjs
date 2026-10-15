@@ -1,8 +1,10 @@
 // Network destinations, keyed by host so renamed bundles and refactored
 // modules do not hide or invent a destination.
 import { movedFrom } from "../moves.mjs";
-import { isNamespaceHost } from "../catalog.mjs";
+import { sourceEvidence, sourceUnknowns } from "./network-evidence.mjs";
+import { isHttpClient, isNamespaceHost, packageNameOf } from "../catalog.mjs";
 import { captureUnread } from "../facts/capture.mjs";
+import { within } from "../ranges.mjs";
 import {
   displayUrl,
   hostOf,
@@ -12,18 +14,12 @@ import {
 } from "../urls.mjs";
 import {
   APP_SOURCE,
-  CAPTURE_SOURCE,
-  GO_SOURCE,
   cite,
   heuristic,
   isVendorHost,
   newGroups,
   packResult,
-  reported,
-  within,
 } from "./shared.mjs";
-
-const MAX_LINES = 8;
 
 // The read of a URL literal's variable inside the request call, when REA's
 // facts show one.
@@ -37,9 +33,56 @@ const boundRead = (app, request, literal) =>
           within(read.data.range, request.data.range),
       ) ?? null);
 
+// URL literals bound to a binding the request reads that another module
+// exports: `fetch(MODEL_URL)` with MODEL_URL imported from a constants module.
+const importedLiterals = (app, request) => {
+  if (request.data.range === null) return [];
+  const imported = app.modules.get(request.data.module)?.imported;
+  if (!imported) return [];
+  return app.bindingReads
+    .filter(
+      (read) =>
+        read.data.module === request.data.module &&
+        read.data.binding_owner === null &&
+        imported.has(read.data.name) &&
+        within(read.data.range, request.data.range),
+    )
+    .flatMap((read) => {
+      const target = imported.get(read.data.name);
+      if (target.name === "*") return [];
+      const local =
+        app.modules.get(target.module)?.exports?.get(target.name)?.local ??
+        target.name;
+      return app.urlLiterals
+        .filter(
+          (literal) =>
+            literal.data.module === target.module &&
+            literal.data.binding === local,
+        )
+        .map((literal) => ({ literal, read }));
+    });
+};
+
+// Modules that import an HTTP client library and have no request site REA
+// recognised: REA does not model those clients' calls.
+const clientModules = (app) => {
+  const requesting = new Set(
+    app.requests.map((request) => request.data.module),
+  );
+  return new Set(
+    app.imports
+      .filter((fact) => isHttpClient(packageNameOf(fact.key)))
+      .map((fact) => fact.data.module)
+      .filter((module) => !requesting.has(module)),
+  );
+};
+
 // A request REA resolved names its host. An unresolved one is attributed to
-// a URL literal whose variable it reads ("bound-literal"), else, as a guess,
-// to every URL literal in its module ("module-literal").
+// a URL literal whose variable it reads, in its module or exported by the
+// module it imports it from ("bound-literal"), else, as a guess, to every URL
+// literal in its module ("module-literal"). A URL literal in a module whose
+// requests go through an HTTP client REA does not model is a guess too
+// ("client-literal").
 const appSources = (app, add) => {
   for (const fact of app.endpoints)
     if (!fact.data.candidate)
@@ -68,7 +111,26 @@ const appSources = (app, add) => {
         read,
       });
     }
+    for (const { literal, read } of importedLiterals(app, request))
+      add(hostOf(literal.data.url), {
+        kind: "bound-literal",
+        fact: literal,
+        url: literal.data.url,
+        request,
+        read,
+      });
   }
+  const clients = clientModules(app);
+  for (const literal of app.urlLiterals)
+    if (
+      clients.has(literal.data.module) &&
+      !LOCAL.test(hostOf(literal.data.url) ?? "")
+    )
+      add(hostOf(literal.data.url), {
+        kind: "client-literal",
+        fact: literal,
+        url: literal.data.url,
+      });
 };
 
 /**
@@ -100,14 +162,34 @@ export const destinationsOf = (side, { includeCapture }) => {
 
 const HOSTNAME = /^(?=.{4,253}$)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
 
-/** Hosts one old side is known to contact: destinations, captured hosts and HTML script hosts. */
+/** True for a source that only places a URL near a request: a guess. */
+export const isGuessSource = (source) =>
+  source.kind === "module-literal" || source.kind === "client-literal";
+
+/** True when every source of a host only places its URL near requests or in a build setting. */
+export const isGuess = (sources) =>
+  sources.every(
+    (source) => isGuessSource(source) || source.kind === "build-setting",
+  );
+
+/** Hosts one old side is known to contact: destinations, captured hosts and HTML script hosts; not guesses. */
 export const knownHosts = (side) =>
   new Set([
-    ...destinationsOf(side, { includeCapture: true }).keys(),
+    ...[...destinationsOf(side, { includeCapture: true })]
+      .filter(([, sources]) => sources.some((source) => !isGuessSource(source)))
+      .map(([host]) => host),
     ...(side.app?.pageScripts ?? [])
       .map((script) => scriptHostOf(script.data.script_path))
       .filter(Boolean),
   ]);
+
+/** Hosts one old side only guessed at: URL literals near requests or HTTP clients. */
+export const guessedHosts = (side) =>
+  new Set(
+    [...destinationsOf(side, { includeCapture: true })]
+      .filter(([, sources]) => sources.every(isGuessSource))
+      .map(([host]) => host),
+  );
 
 /** The module a destination source was seen in: the request's, the literal's, or the endpoint's location. */
 export const sourceModule = (source) =>
@@ -152,16 +234,32 @@ export const networkView = (
 ) => {
   const leftDestinations = destinationsOf(left, { includeCapture: true });
   const known = new Set([...knownHosts(left), ...baseline.hosts]);
+  const guessed = new Set([...guessedHosts(left), ...(baseline.guessed ?? [])]);
   // Without a readable old capture, hosts seen only at runtime cannot be compared.
   const current = destinationsOf(right, { includeCapture: !ignoreCapture });
-  // The deployment's own origin is the site itself, not a destination.
+  // The deployment's own origin is the site itself, not a destination. A
+  // host the old release only guessed at is new once the new release
+  // contacts it, and not new while it is still only a guess.
   const fresh = new Map(
-    [...current].filter(([host]) => !known.has(host) && !own.has(host)),
+    [...current].filter(
+      ([host, sources]) =>
+        !known.has(host) &&
+        !own.has(host) &&
+        !(guessed.has(host) && sources.every(isGuessSource)),
+    ),
   );
+  // How the old release reached each host, from what it contacted: not
+  // guesses, and not a navigation the server redirected.
   const leftSchemes = new Map(
     [...leftDestinations].map(([host, sources]) => [
       host,
-      new Set(sources.map((source) => schemeOf(source.url))),
+      new Set(
+        sources
+          .filter(
+            (source) => !isGuessSource(source) && !isUpgradeRedirect(source),
+          )
+          .map((source) => schemeOf(source.url)),
+      ),
     ]),
   );
   return { known, named: namedHosts(left), current, fresh, own, leftSchemes };
@@ -191,113 +289,6 @@ export const absenceUnknowns = (context) => [
       ]
     : []),
 ];
-
-const literalLine = (source, url) => {
-  const binding = source.fact.data.binding;
-  return cite(
-    `URL literal ${url}${binding ? ` assigned to ${binding}` : ""}`,
-    source.fact,
-    APP_SOURCE,
-  );
-};
-const requestLine = (source) =>
-  cite(
-    `${source.request.data.method}() request in ${source.request.data.module}`,
-    source.request,
-    APP_SOURCE,
-  );
-
-// Evidence lines per source kind, most direct first.
-const SOURCE_LINES = {
-  capture: (source, url) => [
-    cite(
-      `${source.fact.data.method} ${url} answered ${source.fact.data.status ?? "without a status"} at runtime`,
-      source.fact,
-      CAPTURE_SOURCE,
-    ),
-  ],
-  endpoint: (source, url) => [
-    cite(
-      `${source.fact.data.mechanism ?? "request"} to ${url}`,
-      source.fact,
-      APP_SOURCE,
-    ),
-  ],
-  request: (source, url) => [
-    cite(
-      `${source.fact.data.method}() request to ${url}`,
-      source.fact,
-      APP_SOURCE,
-    ),
-  ],
-  "bound-literal": (source, url) => [
-    requestLine(source),
-    literalLine(source, url),
-    heuristic(
-      `The request reads ${source.fact.data.binding} inside its call; REA reports the read and the assignment, Release Watch connects them`,
-      source.read.location,
-    ),
-  ],
-  "module-literal": (source, url) => [
-    requestLine(source),
-    literalLine(source, url),
-    heuristic(
-      "Release Watch attributes the request to this URL only because they share a module",
-    ),
-  ],
-  "build-setting": (source, url) => [
-    reported(
-      `${source.helper.relative} is linked with a build setting that contains ${url}`,
-      "observed",
-      GO_SOURCE,
-    ),
-  ],
-};
-const ORDER = Object.keys(SOURCE_LINES);
-
-/** Evidence lines for one host's sources, most direct first. */
-export const sourceEvidence = (sources, labels) => {
-  const seen = new Set();
-  const lines = [];
-  for (const source of [...sources].sort(
-    (a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind),
-  )) {
-    const identity = `${source.kind}:${source.url}:${source.fact?.node_id ?? source.helper?.relative}`;
-    if (seen.has(identity)) continue;
-    seen.add(identity);
-    lines.push(...SOURCE_LINES[source.kind](source, displayUrl(source.url)));
-  }
-  const shown = lines.slice(0, MAX_LINES);
-  if (lines.length > shown.length)
-    shown.push(
-      heuristic(
-        `${lines.length - shown.length} more evidence lines for this host in ${labels.right}`,
-      ),
-    );
-  return shown;
-};
-
-/** What a host's sources cannot establish. */
-export const sourceUnknowns = (sources) => {
-  const unknowns = [];
-  if (sources.some((source) => source.kind === "bound-literal"))
-    unknowns.push(
-      "REA did not resolve the request's URL argument; the request reads a variable assigned this URL, which code may change.",
-    );
-  if (sources.some((source) => source.kind === "module-literal"))
-    unknowns.push(
-      "REA did not resolve the request's URL argument; the destination is a URL literal in the same module.",
-    );
-  if (sources.every((source) => source.kind === "capture"))
-    unknowns.push(
-      "A capture records one session; it does not show which code sends the request or what other paths contact.",
-    );
-  if (sources.every((source) => source.kind === "build-setting"))
-    unknowns.push(
-      "A build setting records the value; REA does not establish that the program contacts it.",
-    );
-  return unknowns;
-};
 
 // What else the sending modules do: timers that repeat the request, and host
 // or user APIs they import.
@@ -338,10 +329,10 @@ const destinationFinding = (host, sources, context) => {
   const runtime = sources.some((source) => source.kind === "capture");
   return {
     rule: "RW-N01",
-    severity: firstParty ? "low" : "high",
+    severity: firstParty ? "low" : isGuess(sources) ? "medium" : "high",
     title: `New ${firstParty ? "first-party" : "third-party"} destination: ${host}`,
     summary: isGuess(sources)
-      ? `${labels.right} has a request with an unresolved destination in a module that also holds a URL for ${host}; the host was ${hostAbsence(context)}.`
+      ? `${labels.right} holds a URL for ${host} next to requests REA could not resolve or does not model; the host was ${hostAbsence(context)}.`
       : `${labels.right} sends requests to ${host}${runtime ? " (seen at runtime)" : ""}; it was ${hostAbsence(context)}.`,
     why: firstParty
       ? "New network behaviour on the vendor's own domain is usually a feature."
@@ -469,11 +460,6 @@ const cleartextChannels = (context) =>
 // A host known only from a URL literal next to an unresolved request is a
 // guess. A third-party guess still gets RW-N01, labelled as one; a
 // first-party guess does not, and its request stays an RW-N02 candidate.
-const isGuess = (sources) =>
-  sources.every(
-    (source) =>
-      source.kind === "module-literal" || source.kind === "build-setting",
-  );
 
 /** RW-N01 for new hosts no other pack claimed, RW-N02 for unresolved requests, RW-N03 for cleartext. */
 export const networkPack = (context) => {

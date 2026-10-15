@@ -72,7 +72,9 @@ const sideCoverage = (side) => {
   for (const helper of side.helpers)
     if (helper.identified !== "go")
       gaps.push(
-        `${helper.relative}: no Go build information (${helper.identified}).`,
+        helper.identified === "failed"
+          ? `REA could not inspect ${helper.relative}, so its build information is not established.`
+          : `${helper.relative}: REA found no Go build information.`,
       );
   if (captureUnread(side))
     gaps.push(
