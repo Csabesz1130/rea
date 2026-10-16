@@ -132,7 +132,7 @@ describe(
       assert.match(
         text,
         new RegExp(
-          `execFile\\(\\) creates a child process in lib/diag\\.js \\(component desk2 is new; ${ANOTHER} called execFile\\(\\) in a module at this path\\)`,
+          `execFile\\(\\) creates a child process in lib/diag\\.js \\(component desk2 is new; ${ANOTHER} called execFile\\(\\) in a module at this path and shipped this file\\)`,
         ),
       );
       assert.ok(reach.unknowns.some((unknown) => SHARED.test(unknown)));
@@ -161,16 +161,17 @@ describe(
       assert.match(
         fresh.summary,
         new RegExp(
-          `lib/cleanup\\.js \\(component desk2 is new; ${ANOTHER} called spawn\\(\\) in a module at this path\\)`,
+          `lib/cleanup\\.js \\(component desk2 is new; ${ANOTHER} called spawn\\(\\) in a module at this path and shipped this file\\)`,
         ),
       );
       assert.ok(fresh.unknowns.some((unknown) => SHARED.test(unknown)));
       const copied = finding("RW-P01", "shell");
       assert.equal(copied.severity, "high");
+      // Another component had a site at this path and shipped the file.
       assert.match(
         copied.summary,
         new RegExp(
-          `lib/cleanup\\.js, a file whose content ${ANOTHER} shipped \\((absent from|not observed in) component shell of v1\\.0\\.0; ${ANOTHER} called spawn\\(\\)`,
+          `lib/cleanup\\.js \\((absent from|not observed in) component shell of v1\\.0\\.0; ${ANOTHER} called spawn\\(\\) in a module at this path and shipped this file\\)`,
         ),
       );
       assert.doesNotMatch(copied.summary, /a file new in this release/);
@@ -181,7 +182,7 @@ describe(
       assert.match(
         claims(tool).join("\n"),
         new RegExp(
-          `execFile\\(\\) creates a child process \\(component tools2 is new; ${ANOTHER} called execFile\\(\\) in a module at this path\\)`,
+          `execFile\\(\\) creates a child process \\(component tools2 is new; ${ANOTHER} called execFile\\(\\) in a module at this path and shipped this file\\)`,
         ),
       );
       const registrations = finding("RW-M02", "tools2");
@@ -205,6 +206,64 @@ describe(
         `v1.1.0 ships an executable at ${HELPER} (component desk2 is new; another component of v1.0.0 shipped one at this path).`,
       );
       assert.ok(helper.unknowns.some((unknown) => SHARED.test(unknown)));
+    });
+  },
+);
+
+// A component that gains copies of process code under new paths: one of
+// another component's file, one of its own.
+const GIT =
+  'const { execFile } = require("node:child_process");\nexports.status = () => execFile("/usr/bin/git", ["status", "--short"]);\n';
+const PURGE =
+  'const { spawn } = require("node:child_process");\nexports.purge = () => spawn("/usr/bin/notes-purge", []);\n';
+const copies = (gained) => ({
+  "core/package.json": JSON.stringify({ name: "core", main: "src/a.js" }),
+  "core/src/a.js": GIT,
+  "worker/package.json": JSON.stringify({
+    name: "worker",
+    main: "src/index.js",
+  }),
+  "worker/src/index.js": 'require("./purge.js").purge();\n',
+  "worker/src/purge.js": PURGE,
+  ...(gained
+    ? { "worker/src/w.js": GIT, "worker/src/purge-now.js": PURGE }
+    : {}),
+});
+
+describe(
+  "compare: process sites in files the old release shipped elsewhere",
+  { skip },
+  () => {
+    it("says which old side shipped the file instead of denying the site", () => {
+      const pair = ["core", "worker"];
+      const { result, report } = run(
+        release("1.0.0", pair, copies(false)),
+        release("1.1.0", pair, copies(true)),
+      );
+      assert.equal(result.status, 2, result.stderr);
+      const summaries = report.findings
+        .filter((item) => item.rule === "RW-P01" && item.component === "worker")
+        .map((item) => [item.summary, item.unknowns]);
+      const of = (file) =>
+        summaries.find(([summary]) => summary.includes(file));
+      assert.match(
+        of("src/w.js")[0],
+        new RegExp(
+          `src/w\\.js \\((absent from|not observed in) component worker of v1\\.0\\.0; ${ANOTHER} shipped this file\\)\\.$`,
+        ),
+      );
+      assert.ok(of("src/w.js")[1].some((unknown) => SHARED.test(unknown)));
+      assert.match(
+        of("src/purge-now.js")[0],
+        /src\/purge-now\.js \((absent from|not observed in) v1\.0\.0 at this path; v1\.0\.0 shipped this file's content under another path\)\.$/,
+      );
+      assert.ok(
+        of("src/purge-now.js")[1].some((unknown) =>
+          /may be a copy of a site v1\.0\.0 had in a file with the same content/.test(
+            unknown,
+          ),
+        ),
+      );
     });
   },
 );

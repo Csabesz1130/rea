@@ -364,7 +364,10 @@ passed.
   another component of the old release had at the same key (an API name, a
   module path and method, a helper path) is reported as new to its
   component, and the claim says another component had it rather than that
-  the old release lacked it. A new component's RW-M02 gives the release's
+  the old release lacked it. So does a process site in a file whose content
+  the old release shipped under another path: the claim says another
+  component shipped the file, or that the component's old side shipped it
+  under another path. A new component's RW-M02 gives the release's
   registration totals instead of comparing its calls with the old release.
 - A URL literal in a module that imports an HTTP client REA does not model
   (axios, got, ky), or one such a module reads from an import (a constant,

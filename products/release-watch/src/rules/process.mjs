@@ -3,9 +3,13 @@
 // a site's command differs from every old one. A new site that takes a site
 // the release lost, with the same method and resolved command, moved; it is
 // reported low with the old location. An unresolved command never pairs.
-import { movedFrom, shippedBefore } from "../moves.mjs";
-import { perComponent, processAbsence } from "./component-absence.mjs";
-import { oldRelease } from "./network.mjs";
+import { movedFrom } from "../moves.mjs";
+import {
+  contentOrigin,
+  copiedSite,
+  perComponent,
+  processAbsence,
+} from "./component-absence.mjs";
 import {
   APP_SOURCE,
   cite,
@@ -22,20 +26,11 @@ const movedSites = (context, group) =>
     : movedFrom(context.moves.childProcesses, group.facts);
 
 // A file the component's old side did not have is new in the release
-// unless another component of the old release shipped its content.
-const newFileNote = (context, modulePath) => {
-  const renamed = new Set(
-    [...context.aliases.values()].map((alias) => alias.path),
-  );
-  const before = new Set(
-    (context.left.app?.assets ?? []).map((asset) => asset.key),
-  );
-  if (!context.left.app || before.has(modulePath) || renamed.has(modulePath))
-    return "";
-  return shippedBefore(context.baseline, context.right.app)(modulePath)
-    ? `, a file whose content another component of ${oldRelease(context)} shipped`
-    : ", a file new in this release";
-};
+// unless the old release shipped its content, which the absence claim says.
+const newFileNote = (context, modulePath) =>
+  context.left.app && contentOrigin(context, modulePath) === "new"
+    ? ", a file new in this release"
+    : "";
 
 const siteLine = (fact) =>
   cite(
@@ -88,6 +83,7 @@ const finding = (context, group) => {
   const changed = group.status === "changed";
   const absence = processAbsence(context, group);
   if (absence.held) unknowns.push(perComponent("process execution sites"));
+  if (absence.copied) unknowns.push(copiedSite(context));
   const gone = context.moves.childProcesses.lost
     .map((site) => site.fact)
     .filter(

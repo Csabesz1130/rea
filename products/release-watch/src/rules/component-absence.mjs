@@ -3,6 +3,7 @@
 // MCP tool registrations and native helpers. A fact another component of
 // the old release had is new to this component only, so its claim names the
 // component instead of denying what REA saw elsewhere in the old release.
+import { fileDigests } from "../moves.mjs";
 import { oldRelease } from "./network.mjs";
 import { absencePhrase } from "./shared.mjs";
 
@@ -59,22 +60,72 @@ export const componentAbsence = (
 };
 
 /**
+ * Where the content of a new side's file was before, by REA's digests:
+ * "path" when the component's old side had a file at its path (or one REA
+ * paired with it), "component" when that old side shipped the content
+ * under another path, "release" when only another component of the old
+ * release shipped it, else "new" (also for a file REA reported no digest
+ * for).
+ */
+export const contentOrigin = (context, module) => {
+  const own = context.left.app;
+  if (
+    (own?.assets ?? []).some((asset) => asset.key === module) ||
+    [...(context.aliases?.values() ?? [])].some(
+      (alias) => alias.path === module,
+    )
+  )
+    return "path";
+  const digest = fileDigests(context.right.app).get(module);
+  if (!digest) return "new";
+  if ([...fileDigests(own).values()].includes(digest)) return "component";
+  return context.baseline?.digests?.has(digest) ? "release" : "new";
+};
+
+// A site at a path the component's old side did not have, in a file whose
+// content that old side shipped under another path.
+const copiedPhrase = (context, status) =>
+  `${status === "added" ? "absent from" : "not observed in"} ${context.labels.left} at this path; ${context.labels.left} shipped this file's content under another path`;
+
+/**
  * How a group of process sites (one module#method key, `newGroups`) was
- * absent from the component's old side: `{ held, phrase }`.
+ * absent from the component's old side: `{ held, copied, phrase }`. The
+ * old release had it elsewhere when another component had a site at this
+ * key, or shipped the content of its file (`held`), or the component's old
+ * side shipped that content under another path (`copied`); the claim then
+ * says so rather than that the old release lacked it.
  */
 export const processAbsence = (context, group) => {
-  const held = heldElsewhere(context, "childProcesses", group);
-  const method = group.facts[0]?.data.method;
+  const atPath = heldElsewhere(context, "childProcesses", group);
+  const [fact] = group.facts;
+  const origin = ABSENT.has(group.status)
+    ? contentOrigin(context, fact?.data.module)
+    : "path";
+  if (origin === "component" && !atPath)
+    return {
+      held: false,
+      copied: true,
+      phrase: copiedPhrase(context, group.status),
+    };
+  const shipped = origin === "release";
+  const held = atPath || shipped;
+  const had = [
+    atPath ? `called ${fact?.data.method}() in a module at this path` : null,
+    shipped ? "shipped this file" : null,
+  ]
+    .filter(Boolean)
+    .join(" and ");
   return {
     held,
-    phrase: componentAbsence(context, {
-      ...group,
-      held,
-      had: `called ${method}() in a module at this path`,
-    }),
+    copied: false,
+    phrase: componentAbsence(context, { ...group, held, had }),
   };
 };
 
 /** The unknown a fact another component had carries. */
 export const perComponent = (what) =>
   `Release Watch compares ${what} per component, so this may be the same one, moved from or shared with another component.`;
+
+/** The unknown a process site in a copied file carries. */
+export const copiedSite = (context) =>
+  `Release Watch compares process sites by module path, so this may be a copy of a site ${context.labels.left} had in a file with the same content.`;
