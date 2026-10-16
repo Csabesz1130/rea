@@ -12,7 +12,7 @@ import {
   startsBefore,
   within,
 } from "../ranges.mjs";
-import { readsOfBinding, scopeOf } from "./reach-index.mjs";
+import { callStartingAt, readsOfBinding, scopeOf } from "./reach-index.mjs";
 import { declaredFunction } from "./reach-region.mjs";
 import {
   CALL_MEMBERS,
@@ -243,20 +243,7 @@ export const constructedRead = (index, module, call) => {
  * or null when no call there has it as callee.
  */
 export const callRole = (index, module, read) => {
-  const calls = index.callSites.get(module) ?? [];
-  let call = null;
-  for (
-    let next = firstStarting(calls, read.range);
-    next < calls.length && sameStart(calls[next].range, read.range);
-    next += 1
-  ) {
-    const candidate = calls[next];
-    if (
-      comesBefore(read.range.end, candidate.range.end) &&
-      (!call || comesBefore(candidate.range.end, call.range.end))
-    )
-      call = candidate;
-  }
+  const call = callStartingAt(index, module, read.range, read.range.end);
   if (!call) return null;
   const path = calleeMember(index, module, call)?.path ?? [];
   const method = path.at(-1);

@@ -22,6 +22,7 @@ import { ADDERS } from "./reach-builtins.mjs";
 import {
   WHOLE_MODULE,
   bindingAt,
+  callStartingAt,
   enclosingFunction,
   memberAt,
   namedFunctions,
@@ -250,26 +251,6 @@ const siteEnd = (context, site) => {
   return { end, exact: exported !== null };
 };
 
-// The call that starts at `range` with `member` as its callee: the
-// innermost call starting there that runs past the member read.
-const callOf = (index, module, { range, member }) => {
-  const calls = index.callSites.get(module) ?? [];
-  let found = null;
-  for (
-    let next = firstStarting(calls, range);
-    next < calls.length && startsBefore(calls[next].range, range) === 0;
-    next += 1
-  ) {
-    const { end } = calls[next].range;
-    if (
-      comesBefore(member.range.end, end) &&
-      (!found || comesBefore(end, found.range.end))
-    )
-      found = calls[next];
-  }
-  return found;
-};
-
 // The arguments of each call that adds to the binding's value: a call
 // whose callee is a member read of an adding method on a read of the
 // binding (`TOOLS.push(…)`).
@@ -277,7 +258,7 @@ const addedBy = ({ index, module, binding }) =>
   readsOfBinding(index, module, binding.range).flatMap(({ range }) => {
     const member = memberAt(index, module, range);
     if (member?.path.length !== 1 || !ADDERS.has(member.path[0])) return [];
-    const call = callOf(index, module, { range, member });
+    const call = callStartingAt(index, module, range, member.range.end);
     return call ? [{ start: member.range.end, end: call.range.end }] : [];
   });
 

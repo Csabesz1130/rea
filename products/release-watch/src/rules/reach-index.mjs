@@ -4,7 +4,13 @@
 // member reads, class field keys, property writes, assignments, bindings,
 // statement markers, export statements and process sites of each module
 // sorted by position.
-import { firstStarting, sameStart, startsBefore, within } from "../ranges.mjs";
+import {
+  comesBefore,
+  firstStarting,
+  sameStart,
+  startsBefore,
+  within,
+} from "../ranges.mjs";
 
 const indexes = new WeakMap();
 
@@ -210,6 +216,25 @@ export const memberAt = (index, module, range) => {
       ) < 0
     )
       found = members[next];
+  return found;
+};
+
+/**
+ * The innermost call site that starts where `range` starts and ends after
+ * position `past` (the end of its callee or receiver), or null.
+ */
+export const callStartingAt = (index, module, range, past) => {
+  const calls = index.callSites.get(module) ?? [];
+  let found = null;
+  for (
+    let next = firstStarting(calls, range);
+    next < calls.length && sameStart(calls[next].range, range);
+    next += 1
+  ) {
+    const { end } = calls[next].range;
+    if (comesBefore(past, end) && (!found || comesBefore(end, found.range.end)))
+      found = calls[next];
+  }
   return found;
 };
 
