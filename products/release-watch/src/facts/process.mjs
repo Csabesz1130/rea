@@ -11,7 +11,13 @@
 import { within } from "../ranges.mjs";
 import { moduleUses } from "./process-flow.mjs";
 import { processGraph, rangeOf } from "./process-graph.mjs";
-import { mayImportProcess, processSites, seedsOf } from "./process-sources.mjs";
+import {
+  isRequireValue,
+  loadStarts,
+  mayImportProcess,
+  processSites,
+  seedsOf,
+} from "./process-sources.mjs";
 import { semanticFact } from "./provenance.mjs";
 
 // The binding node an import edge creates: the binding of that name inside
@@ -62,14 +68,23 @@ const factOf = (use, contexts, module) => {
 };
 
 // Modules that may load a module through a require function REA does not
-// resolve: a member read named `require`, a read of `eval`, an import of
-// createRequire, or a load REA resolved to no module.
+// resolve: a member read named `require`, a read of `eval`, `require` read
+// as a value rather than called, an import of createRequire, or a load REA
+// resolved to no module.
 const loaderModules = (semantic, modules) => {
   const found = new Set();
+  const starts = new Map();
+  const startsOf = (module) => {
+    if (!starts.has(module))
+      starts.set(module, loadStarts(modules.get(module)));
+    return starts.get(module);
+  };
   for (const node of semantic.nodes) {
     const path = node.properties?.property_path;
-    if (path?.at(-1) === "require" || node.label === "eval")
-      found.add(node.identity?.module_path ?? null);
+    const module = node.identity?.module_path ?? null;
+    if (path?.at(-1) === "require" || node.label === "eval") found.add(module);
+    else if (node.label === "require" && isRequireValue(node, startsOf(module)))
+      found.add(module);
   }
   for (const [module, entry] of modules)
     if (

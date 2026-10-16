@@ -322,9 +322,12 @@ passed.
   a pattern destructured right before a load REA links to no binding; and
   a load REA resolves no module for (`require(name)`, `module.require`,
   `process.mainModule.require`, `window.require`, the function
-  `createRequire` returns, `eval("require")`), which counts only where a
-  child_process export (`exec`, `execSync`, `execFile`, `execFileSync`,
-  `spawn`, `spawnSync`, `fork`) is read on what it loads. A name alone never
+  `createRequire` returns, `eval("require")`, a binding that holds
+  `require`: one declared right before a read of it, `const load =
+  require`, or one REA's data flow shows `require` reaching, such as
+  esbuild's `__require` shim), which counts only where a child_process
+  export (`exec`, `execSync`, `execFile`, `execFileSync`, `spawn`,
+  `spawnSync`, `fork`) is read on what it loads. A name alone never
   counts, so a saga's `fork` or a game's `world.spawn` is not a process
   API. Not seen: a value a local module derives from child_process
   (`module.exports = { run: promisify(exec) }`) or exports under another

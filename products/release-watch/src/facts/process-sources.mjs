@@ -10,14 +10,15 @@
 // - as Release Watch's correlation, a load REA resolved to no module, or a
 //   call of a require function REA does not resolve (`module.require`,
 //   `process.mainModule.require`, a function createRequire returns,
-//   `eval("require")`), which counts only through a read of a
-//   child_process export on what it loads.
+//   `eval("require")`, a binding that holds `require`), which counts only
+//   through a read of a child_process export on what it loads.
 import { isNodeModule, isProcessModule } from "../catalog.mjs";
 import { sameStart, within } from "../ranges.mjs";
 import { exportHolder, wholeHolder } from "./process-exports.mjs";
 import {
   calleeOf,
   callOf,
+  definedBefore,
   rangeOf,
   relationsOf,
   sameRange,
@@ -202,10 +203,67 @@ const isGlobalRead = (graph, node, label) =>
   !node.properties?.operation_kind &&
   !graph.readBinding.has(node.node_id);
 
-// The bindings and calls that hold a require function createRequire made.
-const requireMakers = (graph, index, entry, importBinding) => {
+const startKey = (range) => `${range.start.line}:${range.start.column}`;
+
+/** Where the loads REA reports in a module (`require("x")` and the like) start. */
+export const loadStarts = (entry) =>
+  new Set(
+    [
+      ...(entry?.externalSites ?? []),
+      ...(entry?.localSites ?? []),
+      ...(entry?.unresolvedSites ?? []),
+    ]
+      .map((site) => site.data.range)
+      .filter(Boolean)
+      .map(startKey),
+  );
+
+/**
+ * True for a reference to `require` that no load REA reports starts at:
+ * `require` used as a value (`const load = require`, `typeof require`),
+ * not called as `require("x")`. The reference may still be a local binding
+ * named `require`; callers that need the global check REA's reads.
+ */
+export const isRequireValue = (node, starts) =>
+  node.kind === "expression" &&
+  node.label === "require" &&
+  !node.properties?.operation_kind &&
+  node.identity?.source_range != null &&
+  !starts.has(startKey(node.identity.source_range));
+
+// The bindings REA's data flow shows a read of `require` reaching: one it
+// is assigned to, or one assigned a call that returns it (esbuild's `var
+// __require = ((x) => typeof require !== "undefined" ? require : x)(…)`).
+const requireHolders = (graph, read) =>
+  relationsOf(graph, read, "aliases").flatMap(({ target }) => {
+    if (target.kind === "binding") return [target];
+    if (target.kind !== "return-site") return [];
+    return relationsOf(graph, target, "returns-to-call").flatMap(
+      ({ target: call }) =>
+        relationsOf(graph, call, "aliases")
+          .map(({ target: binding }) => binding)
+          .filter((binding) => binding.kind === "binding"),
+    );
+  });
+
+// The bindings and calls that hold a require function REA does not resolve:
+// a binding REA's data flow shows the global `require` reaching, a binding
+// defined right before a read of it (`const load = require`, Release
+// Watch's correlation, as for child_process values), and the bindings and
+// calls that hold a function createRequire made.
+const requireFunctions = (graph, index, entry, importBinding) => {
   const bindings = new Set();
   const calls = new Set();
+  const starts = loadStarts(entry);
+  for (const read of index.nodes) {
+    if (!isRequireValue(read, starts) || !isGlobalRead(graph, read, "require"))
+      continue;
+    for (const binding of [
+      ...requireHolders(graph, read),
+      ...definedBefore(graph, index, rangeOf(read), null),
+    ])
+      bindings.add(binding.node_id);
+  }
   for (const site of entry?.externalSites ?? []) {
     if (!isNodeModule(site.data.specifier)) continue;
     if (site.data.imported !== "createRequire" || site.data.local === null)
@@ -255,7 +313,7 @@ const loaderName = (graph, index, call, makers) => {
 };
 
 const loaderSeeds = (graph, index, entry, { importBinding, taken }) => {
-  const makers = requireMakers(graph, index, entry, importBinding);
+  const makers = requireFunctions(graph, index, entry, importBinding);
   return index.calls.flatMap((call) => {
     if (taken.some((range) => sameRange(range, rangeOf(call)))) return [];
     const name = loaderName(graph, index, call, makers);

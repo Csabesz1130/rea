@@ -1,7 +1,8 @@
 // Runs the public CLI on small releases each test writes, for where a
 // module's child_process value comes from when it imports no child_process
 // itself: an unchanged local module that exports it, a load REA resolves to
-// a constant, and require functions REA does not resolve.
+// a constant, and require functions REA does not resolve, including
+// bindings that hold `require`.
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 
@@ -177,6 +178,52 @@ describe(
           /^REA classified no process call where renderer\.js calls exec \(Release Watch takes exec to be child_process's exec: REA reports it destructured right before window\.require\(…\), whose result REA links to no binding; /,
         ],
       ]);
+    });
+  },
+);
+
+describe(
+  "compare: child_process loaded through a binding that holds require",
+  { skip },
+  () => {
+    it("follows an alias and esbuild's __require shims", () => {
+      // esbuild --format=esm --platform=node output for a CommonJS import,
+      // inline and inside a __commonJS wrapper.
+      const shim =
+        'var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {\n  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]\n}) : x)(function(x) {\n  if (typeof require !== "undefined") return require.apply(this, arguments);\n  throw Error(\'Dynamic require of "\' + x + \'" is not supported\');\n});\n';
+      const { result, report } = compare(OLD, {
+        ...OLD,
+        "alias.js":
+          'const load = require;\nconst cp = load("child_process");\nexports.f = (c) => cp.execSync(c);\nexports.v = () => load("./package.json").version;\n',
+        "bundle.mjs": `${shim}var import_child_process = __require("child_process");\nexport const f = (c) => (0, import_child_process.execSync)(c);\n`,
+        "wrapped.mjs": `${shim}var __commonJS = (cb, mod) => function __require2() {\n  return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n};\nvar require_run = __commonJS({\n  "src/run.js"(exports) {\n    var { execSync } = __require("child_process");\n    exports.f = (c) => execSync(c);\n  }\n});\nexport default require_run();\n`,
+        // A binding that only tests for require loads nothing.
+        "probe.js":
+          'const hasRequire = typeof require === "function";\nexports.f = () => hasRequire && require("fs").existsSync("x");\n',
+      });
+      assert.equal(result.status, 2, result.stderr);
+      assertGaps(report, "alias.js", [
+        [
+          3,
+          "heuristic",
+          /^REA classified no process call where alias\.js calls cp\.execSync \(cp is assigned load\(…\); Release Watch takes load\(…\) to load child_process: REA resolves no module for it\)$/,
+        ],
+      ]);
+      assertGaps(report, "bundle.mjs", [
+        [
+          8,
+          "heuristic",
+          /^REA classified no process call where bundle\.mjs calls import_child_process\.execSync \(import_child_process is assigned __require\(…\); Release Watch takes __require\(…\) to load child_process: /,
+        ],
+      ]);
+      assertGaps(report, "wrapped.mjs", [
+        [
+          13,
+          "heuristic",
+          /^REA classified no process call where wrapped\.mjs calls execSync \(Release Watch takes execSync to be child_process's execSync: REA reports it destructured right before __require\(…\), /,
+        ],
+      ]);
+      assertGaps(report, "probe.js", []);
     });
   },
 );
