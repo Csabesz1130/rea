@@ -1,6 +1,9 @@
 // RW-C01: what REA could not examine in the new release, graded by whether
-// that code changed since the old release.
+// that code changed since the old release. RW-C06, for process libraries REA
+// does not model, is reported with it.
 import { isScriptPath } from "../facts/modules.mjs";
+import { gapLine, processGapsOf } from "./process-gaps.mjs";
+import { processLibraries } from "./process-libraries.mjs";
 import { APP_SOURCE, cite, reported } from "./shared.mjs";
 
 const COMPONENT = "Release Watch";
@@ -45,10 +48,6 @@ export const changedFiles = (context) => {
 
 // What REA reported it could not examine in the new release: truncation,
 // files at the per-file ceiling, failed files, no semantic graph.
-const uniqueBy = (items, key) => [
-  ...new Map(items.map((item) => [key(item), item])).values(),
-];
-
 const applicationGaps = (app) => {
   const { coverage } = app;
   const lines = [];
@@ -198,18 +197,6 @@ const recommendationFor = (context, { limited, changes }) => {
     : `Review the listed files or captures by other means.${review}`;
 };
 
-// Process APIs REA could not resolve in files that changed: a process call
-// there may have gone unclassified.
-const processGapsOf = (context) => {
-  const changed = changedFiles(context);
-  return uniqueBy(
-    (context.right.app?.processUnknowns ?? []).filter((unknown) =>
-      changed(unknown.data.module),
-    ),
-    (unknown) => unknown.key,
-  );
-};
-
 // Files REA examined only in part or not at all.
 const unexaminedFiles = (app, processGaps) => [
   ...app.coverage.semantic_ceiling_modules,
@@ -230,23 +217,13 @@ const unexaminedFiles = (app, processGaps) => [
  * unexamined files changed since the old release, since a change there is
  * exactly what this report cannot see; medium otherwise.
  */
-export const incompleteAnalysis = (context) => {
+const unexaminedAnalysis = (context) => {
   const app = context.right.app;
   const captureGaps = context.right.capture?.gaps ?? [];
-  const processGaps = app ? processGapsOf(context) : [];
+  const processGaps = app ? processGapsOf(app, changedFiles(context)) : [];
   const evidence = [
     ...(app ? applicationGaps(app) : []),
-    ...processGaps
-      .slice(0, MAX_FILES)
-      .map((unknown) =>
-        cite(
-          unknown.data.computed
-            ? `${unknown.data.module} calls a member of ${unknown.data.receiver}, which it imports from child_process, by a computed name REA could not resolve, so that process call is not classified`
-            : `REA could not resolve ${unknown.data.name} in ${unknown.data.module}, so a process call there may not be classified`,
-          unknown,
-          APP_SOURCE,
-        ),
-      ),
+    ...processGaps.slice(0, MAX_FILES).map(gapLine),
     ...captureGaps.map((gap) => reported(gap, "derived", COMPONENT)),
   ];
   if (evidence.length === 0) return [];
@@ -288,3 +265,19 @@ export const incompleteAnalysis = (context) => {
     },
   ];
 };
+
+/**
+ * Coverage of the new release's code: RW-C01 for what REA did not examine,
+ * and RW-C06 for modules that start processes through a library REA does
+ * not model. When REA could not analyze the old side of a component it
+ * shipped, every module counts as changed for RW-C06.
+ */
+export const incompleteAnalysis = (context) => [
+  ...unexaminedAnalysis(context),
+  ...processLibraries(
+    context,
+    context.left.app || context.left.target === null
+      ? changedFiles(context)
+      : () => true,
+  ),
+];

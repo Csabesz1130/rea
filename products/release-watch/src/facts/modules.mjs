@@ -51,8 +51,11 @@ const exportModuleOf = (node) => {
 
 const emptyEntry = () => ({
   externalImports: new Set(),
-  externalLocals: new Map(),
+  externalSites: [],
+  unresolvedSites: [],
+  externalExports: new Map(),
   local: new Set(),
+  localSites: [],
   imported: new Map(),
   exports: new Map(),
   reexports: new Map(),
@@ -79,12 +82,46 @@ const recordExports = (graph, entry) => {
   }
 };
 
+// One import edge as REA reports it: the binding it creates (`local`, null
+// when it creates none, as for `require(...).exec` or a dynamic import),
+// the imported name and property path, how it was written (`require`,
+// `import`, `static-import`, `dynamic-import`, or for an export
+// `export`, `re-export`, `commonjs-export`) and its source range.
+const siteOf = (edge, key, extra) => {
+  const properties = edge.properties ?? {};
+  const location = edge.evidence?.location?.value;
+  return edgeFact(edge, key, {
+    ...extra,
+    local: properties.local_name ?? null,
+    imported: properties.imported_name ?? null,
+    path: properties.imported_path ?? null,
+    form: properties.kind ?? properties.module_link_kind ?? null,
+    range:
+      location?.kind === "source-range"
+        ? { start: location.start, end: location.end }
+        : null,
+  });
+};
+
 // `export { run } from "./shell.js"` and `export * as ns from`: REA links the
 // export binding itself. `export * from` re-exports every name of a module.
-const recordReexport = (edge, exporter, targetPath, entry) => {
+// An export REA traces to an external module (`export { execSync } from
+// "node:child_process"`, `module.exports = require("child_process")`,
+// `exports.spawn = spawn`) is kept by exported name, with the external
+// module's name or property path it holds.
+const recordReexport = (edge, exporter, target, entry) => {
   const { exported_name: exported, imported_name: imported } =
     edge.properties ?? {};
-  if (targetPath === null) return;
+  const targetPath = modulePathOf(target);
+  if (targetPath === null) {
+    const specifier = externalSpecifierOf(edge, target);
+    if (specifier !== null && exported)
+      entry(exporter).externalExports.set(
+        exported,
+        siteOf(edge, specifier, { specifier }),
+      );
+    return;
+  }
   if (exported && exported !== "*")
     entry(exporter).reexports.set(exported, {
       module: targetPath,
@@ -93,11 +130,22 @@ const recordReexport = (edge, exporter, targetPath, entry) => {
   else if (imported === "*") entry(exporter).stars.add(targetPath);
 };
 
+// A load REA resolved to no module (`require(name)`); REA renders its
+// expression.
+const isUnresolvedLoad = (target) =>
+  firstObservation(target)?.properties?.resolution === "unresolved";
+
 const recordImport = (edge, sourcePath, target, entry) => {
   const targetPath = modulePathOf(target);
   const localName = edge.properties?.local_name ?? null;
   if (targetPath !== null) {
     entry(sourcePath).local.add(targetPath);
+    entry(sourcePath).localSites.push(
+      siteOf(edge, targetPath, {
+        module: targetPath,
+        specifier: edge.properties?.specifier ?? null,
+      }),
+    );
     if (localName !== null)
       entry(sourcePath).imported.set(localName, {
         module: targetPath,
@@ -106,11 +154,16 @@ const recordImport = (edge, sourcePath, target, entry) => {
     return null;
   }
   const specifier = externalSpecifierOf(edge, target);
-  if (specifier !== null && localName !== null)
-    entry(sourcePath).externalLocals.set(localName, {
-      specifier,
-      name: edge.properties?.imported_name ?? localName,
-    });
+  if (specifier === null && isUnresolvedLoad(target))
+    entry(sourcePath).unresolvedSites.push(
+      siteOf(edge, edge.properties?.expression ?? "load", {
+        expression: edge.properties?.expression ?? null,
+      }),
+    );
+  if (specifier !== null)
+    entry(sourcePath).externalSites.push(
+      siteOf(edge, specifier, { specifier }),
+    );
   if (specifier === null || entry(sourcePath).externalImports.has(specifier))
     return null;
   entry(sourcePath).externalImports.add(specifier);
@@ -118,13 +171,16 @@ const recordImport = (edge, sourcePath, target, entry) => {
 };
 
 /**
- * Per-module import index: local modules each module imports, external
- * specifiers (Node built-ins and npm packages) and what each external import
- * binds (local name to specifier and imported name), what each import binds
- * (local name to module and imported name), what each module exports
- * (exported name to local name and range), re-exports (exported name to
- * module and imported name) and star re-exports. Also returns one fact per
- * external import edge.
+ * Per-module import index: local modules each module imports, with every
+ * such import edge and its range (`localSites`); external specifiers
+ * (Node built-ins and npm packages) with every external import edge and
+ * its range (`externalSites`); loads REA resolved to no module
+ * (`unresolvedSites`); what each import binds (local name to module and
+ * imported name); what each module exports (exported name to local name
+ * and range); re-exports (exported name to module and imported name),
+ * star re-exports, and exports REA traces to an external module
+ * (`externalExports`, by exported name). Also returns one fact per
+ * external import specifier and module.
  */
 export const importIndex = (graph) => {
   const byId = new Map(graph.nodes.map((node) => [node.node_id, node]));
@@ -142,7 +198,7 @@ export const importIndex = (graph) => {
     if (source === undefined || target === undefined) continue;
     const exporter = exportModuleOf(source);
     if (exporter !== null) {
-      recordReexport(edge, exporter, modulePathOf(target), entry);
+      recordReexport(edge, exporter, target, entry);
       continue;
     }
     const sourcePath = modulePathOf(source);

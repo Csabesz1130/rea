@@ -54,7 +54,7 @@ describe(
         finding.evidence.some(
           (item) =>
             item.location?.line === 4 &&
-            /calls a member of cp, which it imports from child_process, by a computed name/.test(
+            /computed member name index\.js calls on cp \(cp is imported from child_process\)/.test(
               item.claim,
             ),
         ),

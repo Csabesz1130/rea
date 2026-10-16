@@ -1,6 +1,8 @@
 // Product knowledge Release Watch applies to REA facts: which hosts belong to
-// AI providers, which packages are AI or MCP SDKs, which literal shapes are
-// vendor credentials and which response headers carry security policy.
+// AI providers, which packages are AI or MCP SDKs, HTTP clients or process
+// libraries, which literal shapes are vendor credentials, which response
+// headers carry security policy, and Node's child_process and module
+// built-ins.
 // Matches here are Release Watch heuristics, never REA observations.
 
 const exactOrSuffix = (host, entry) =>
@@ -245,3 +247,56 @@ const HTTP_CLIENTS = new Set([
 
 /** True when a package name is an HTTP client library. */
 export const isHttpClient = (name) => HTTP_CLIENTS.has(name);
+
+// Packages that start processes for their caller. REA's child-process
+// extraction models node:child_process calls only, so processes these
+// start are not classified. Release Watch only notes that they are imported.
+const PROCESS_LIBRARIES = new Set([
+  "execa",
+  "cross-spawn",
+  "shelljs",
+  "zx",
+  "node-pty",
+  "@lydell/node-pty",
+  "@homebridge/node-pty-prebuilt-multiarch",
+  "tinyexec",
+  "nano-spawn",
+  "sudo-prompt",
+  "@vscode/sudo-prompt",
+  "@npmcli/promise-spawn",
+  "child-process-promise",
+  "foreground-child",
+]);
+
+/** True when a package name is a library that starts processes. */
+export const isProcessLibrary = (name) => PROCESS_LIBRARIES.has(name);
+
+// Node's child_process module, by either specifier.
+const PROCESS_MODULE = /^(?:node:)?child_process$/;
+
+/** True when an import specifier names Node's child_process module. */
+export const isProcessModule = (specifier) =>
+  typeof specifier === "string" && PROCESS_MODULE.test(specifier);
+
+// The child_process exports that start a process. A module REA does not
+// resolve counts as possibly child_process only through a read of one of
+// these on what it loads (Release Watch's correlation).
+const PROCESS_EXPORTS = new Set([
+  "exec",
+  "execSync",
+  "execFile",
+  "execFileSync",
+  "spawn",
+  "spawnSync",
+  "fork",
+]);
+
+/** True when a name is a child_process export that starts a process. */
+export const isProcessExport = (name) => PROCESS_EXPORTS.has(name);
+
+// Node's `module` built-in, which exports createRequire.
+const NODE_MODULE = /^(?:node:)?module$/;
+
+/** True when an import specifier names Node's module built-in. */
+export const isNodeModule = (specifier) =>
+  typeof specifier === "string" && NODE_MODULE.test(specifier);

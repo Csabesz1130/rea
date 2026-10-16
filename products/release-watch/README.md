@@ -190,11 +190,12 @@ so.
 | RW-G03 | low                 | A Go helper lost `-trimpath`                                                                                                                                                                                                                                               |
 | RW-G04 | medium              | A new helper executable                                                                                                                                                                                                                                                    |
 | RW-D01 | low                 | New third-party packages imported, one finding per component                                                                                                                                                                                                               |
-| RW-C01 | high / medium       | REA examined only part of the new release (truncation, node ceilings, failed or unparsed files, process APIs REA could not resolve, a child_process member called by a computed name); high when that code changed, unless its source map names no changed original source |
+| RW-C01 | high / medium       | REA examined only part of the new release (truncation, node ceilings, failed or unparsed files, a use of child_process REA classified no process call for, such as `promisify(exec)`); high when that code changed, unless its source map names no changed original source |
 | RW-C02 | low                 | A component, capture or module pairing available on one side only                                                                                                                                                                                                          |
 | RW-C03 | medium              | The old release's fuses were readable and the new release's are not                                                                                                                                                                                                        |
 | RW-C04 | medium              | A helper REA identified before is not identified now                                                                                                                                                                                                                       |
 | RW-C05 | medium / low        | New or changed modules reach an HTTP client library and REA recognised no request site in them; low when a capture covers the release                                                                                                                                      |
+| RW-C06 | high / medium       | Changed modules import a library that starts processes (execa, cross-spawn, shelljs, zx, node-pty and the like), whose calls REA does not classify; high when a module imports it for the first time, medium when every such module imported it before                     |
 
 Coverage findings exist because a rule that found nothing only means
 something for code REA examined; a truncated analysis is reviewed rather than
@@ -215,6 +216,44 @@ passed.
 - A process site whose command REA did not resolve is never taken as moved:
   a refactor that relocates one is reported high, with a note that it may be
   the same call.
+- RW-P01 compares a process site's method and the command REA resolved (its
+  first argument). REA reports the length of a literal argv array (none for
+  `exec` or a computed array), not the argument values or options such as
+  `shell: true`, so a changed argument list or a shell newly enabled at the
+  same site is not reported.
+- RW-C01 finds process calls REA did not classify through the values REA
+  ties to child_process: import bindings, `require("child_process")` calls,
+  bindings destructured from them, the parameters REA passes them to, and
+  imports of a local module's export that REA traces to child_process
+  (`module.exports = require("child_process")`, `export { execSync } from
+  "node:child_process"`), followed through re-exports. A `require(name)`
+  counts when REA reports `name` constant "child_process". Release Watch's
+  correlations are labelled heuristic: a binding declared or assigned right
+  before a read of such a value, when REA gives it the same unknown value
+  (`const proc = cp`, not `const ready = typeof cp === "object"`), or right
+  before a read of a member, when REA reports its value unknown and no call
+  assigns it (`const run = cp.execFile`; REA's facts do not tell this from
+  `const ok = typeof cp.spawn === "function"`, which is taken alike); an
+  interop wrapper of the `require` (`__importStar(require(...))`); an
+  export REA traced no source for, matched by the name of a binding of the
+  exporting module that holds child_process (`module.exports = { spawn }`);
+  a pattern destructured right before a load REA links to no binding; and
+  a load REA resolves no module for (`require(name)`, `module.require`,
+  `process.mainModule.require`, `window.require`, the function
+  `createRequire` returns, `eval("require")`), which counts only where a
+  child_process export (`exec`, `execSync`, `execFile`, `execFileSync`,
+  `spawn`, `spawnSync`, `fork`) is read on what it loads. A name alone never
+  counts, so a saga's `fork` or a game's `world.spawn` is not a process
+  API. Not seen: a value a local module derives from child_process
+  (`module.exports = { run: promisify(exec) }`) or exports under another
+  name (`module.exports = { run: spawn }`), a guessed load used without a
+  child_process export name, and code REA does not parse (`new Function`,
+  the source string `eval` runs). A read of child_process that REA's graph
+  does not follow (`if (!cp)`) is reported as a gap on that read.
+- RW-C06 notes that changed modules import a process library; what those
+  libraries run is not examined, and a library bundled into a file without
+  an import is not seen. A module whose content the old release shipped,
+  under any path, did not change.
 - Browser code is classified from what HTML pages and service workers load.
   Dedicated workers and scripts loaded at runtime are not classified, so a
   call that moved from a worker into page code is reported at medium.

@@ -1,106 +1,173 @@
-// REA's unknowns where a process call may have gone unclassified: values or
-// calls REA could not resolve that name a process API, and computed member
-// calls on a child_process import (`cp[method](...)`), whose function REA
-// cannot know.
-import { sameStart, within } from "../ranges.mjs";
+// Where a module uses child_process and REA classified no process call: the
+// places a process call may have gone unclassified. Release Watch follows
+// the values REA's facts tie to child_process (process-sources: import
+// bindings, a `require("child_process")` call, a local module's exports
+// that hold it; process-flow: bindings REA destructures from them, the
+// parameters REA passes them to) to each place they are read, and keeps the
+// reads that no process site REA reported accounts for. A name counts only
+// through what REA binds to child_process or a load REA did not resolve,
+// never by its text alone, so a redux-saga `fork` or a game's `world.spawn`
+// is not a process API.
+import { within } from "../ranges.mjs";
+import { moduleUses } from "./process-flow.mjs";
+import { processGraph, rangeOf } from "./process-graph.mjs";
+import { mayImportProcess, processSites, seedsOf } from "./process-sources.mjs";
 import { semanticFact } from "./provenance.mjs";
 
-// Process APIs whose names in an REA unknown mean a process call REA could
-// not classify. Plain `exec` is left out: RegExp.prototype.exec shares it.
-const PROCESS_NAME =
-  /\b(execSync|execFile|execFileSync|spawn|spawnSync|fork|child_process)\b/;
-const PROCESS_MODULE = /^(?:node:)?child_process$/;
-
-const sourceRange = (unknown) => {
-  const location = unknown.evidence?.location?.value;
-  return location?.kind === "source-range" ? location : null;
-};
-
-// Unknowns whose text names a process API.
-const namedGaps = (semantic, contexts) =>
-  (semantic.unknowns ?? []).flatMap((unknown) => {
-    const location = sourceRange(unknown);
-    const name = PROCESS_NAME.exec(unknown.detail ?? "")?.[1];
-    if (!location || !name) return [];
-    return [
-      semanticFact(
-        { ...unknown, node_id: unknown.unknown_id },
-        contexts,
-        `${location.source}#${name}`,
-        { module: location.source, name, detail: unknown.detail ?? null },
-      ),
-    ];
-  });
-
-// REA notes unknowns about every imported process API, even where it then
-// classified the call. An unknown counts only when REA classified no process
-// site of that API in the module (for child_process itself, none at all).
-const unclassified = (unknowns, childProcesses) => {
-  const classified = new Set(
-    childProcesses.flatMap((fact) => [
-      `${fact.data.module}#${fact.data.method}`,
-      `${fact.data.module}#child_process`,
-    ]),
+// The binding node an import edge creates: the binding of that name inside
+// the edge's range, else the module's top-level binding of that name.
+const importBinding = (index, site) => {
+  const named = index.bindings.filter(
+    (node) => node.kind === "binding" && node.label === site.data.local,
   );
-  return unknowns.filter(
-    (unknown) => !classified.has(`${unknown.data.module}#${unknown.data.name}`),
+  return (
+    named.find(
+      (node) => site.data.range && within(rangeOf(node), site.data.range),
+    ) ??
+    named.find((node) => !node.function_node_id) ??
+    null
   );
 };
 
-// Computed member reads REA could not resolve (`cp[method]`), whose receiver
-// is a binding the module imports from child_process. The receiver is the
-// binding read REA reports where the member read starts.
-const computedGaps = (semantic, contexts, { modules, bindingReads }) => {
-  const reads = semantic.nodes.filter(
-    (node) =>
-      node.kind === "expression" &&
-      node.label === "read" &&
-      node.properties?.property_path == null &&
-      node.identity?.source_range,
-  );
-  return (semantic.unknowns ?? []).flatMap((unknown) => {
-    const location = sourceRange(unknown);
-    if (unknown.reason !== "dynamic-property" || !location) return [];
-    const module = location.source;
-    const locals = modules.get(module)?.externalLocals;
-    const read = reads.find(
-      (node) =>
-        node.identity.module_path === module &&
-        within(location, node.identity.source_range),
-    );
-    const receiver =
-      read &&
-      bindingReads.find(
-        (fact) =>
-          fact.data.module === module &&
-          sameStart(fact.data.range, read.identity.source_range),
-      );
-    const imported = receiver && locals?.get(receiver.data.name);
-    if (!imported || !PROCESS_MODULE.test(imported.specifier)) return [];
-    const { start } = read.identity.source_range;
-    return [
-      semanticFact(
-        { ...unknown, node_id: unknown.unknown_id },
-        contexts,
-        `${module}#child_process@${start.line}:${start.column}`,
-        {
+// What a holder is, for the fact: its name, the child_process export it
+// holds (null for the module), how Release Watch tied it to child_process
+// and from which value, and the load it rests on when Release Watch only
+// takes that load to be child_process.
+const holderData = (holder) => ({
+  receiver: holder.name,
+  member: holder.member,
+  via: holder.via,
+  from: holder.from ?? null,
+  exported: holder.exported ?? null,
+  loader: holder.loader ?? null,
+  heuristic: holder.heuristic === true,
+});
+
+const factOf = (use, contexts, module) => {
+  const base = use.node
+    ? semanticFact(use.node, contexts, "", {})
+    : { ...use.site };
+  const location = base.location;
+  return {
+    ...base,
+    key: `${module}#child_process@${location?.line}:${location?.column}`,
+    state: "derived",
+    data: {
+      module,
+      use: use.kind,
+      path: use.path,
+      ...holderData(use.holder),
+    },
+  };
+};
+
+// Modules that may load a module through a require function REA does not
+// resolve: a member read named `require`, a read of `eval`, an import of
+// createRequire, or a load REA resolved to no module.
+const loaderModules = (semantic, modules) => {
+  const found = new Set();
+  for (const node of semantic.nodes) {
+    const path = node.properties?.property_path;
+    if (path?.at(-1) === "require" || node.label === "eval")
+      found.add(node.identity?.module_path ?? null);
+  }
+  for (const [module, entry] of modules)
+    if (
+      entry.unresolvedSites.length > 0 ||
+      entry.externalSites.some((site) => site.data.imported === "createRequire")
+    )
+      found.add(module);
+  found.delete(null);
+  return found;
+};
+
+// Where a module's top-level bindings that hold child_process go where
+// REA's graph does not show: the names an importer may find them under
+// when REA traced no export (Release Watch's correlation).
+const escapedNames = (module, result) => {
+  const names = new Map();
+  for (const use of result.uses)
+    if (use.kind === "value" && use.holder.node?.kind === "binding")
+      if (!use.holder.node.function_node_id && !use.holder.namespace)
+        names.set(use.holder.name, {
+          member: use.holder.member,
           module,
-          name: "child_process",
-          receiver: receiver.data.name,
-          computed: true,
-          detail: unknown.detail ?? null,
-        },
-      ),
-    ];
-  });
+          name: use.holder.name,
+          site: null,
+          commonjs: false,
+          heuristic: true,
+        });
+  return names;
 };
 
 /**
- * Process gaps of one semantic graph. `modules` is the import index (for
- * the local names of external imports); `childProcesses` and
- * `bindingReads` are the facts already projected from the graph.
+ * Process gaps of one semantic graph: every place a module uses a value
+ * REA ties to child_process and REA reported no process site for it.
+ * `modules` is the import index and `childProcesses` the process sites
+ * already projected from the graph; a module without semantic facts is
+ * left to the coverage rules that report it unexamined.
  */
-export const processUnknowns = (semantic, contexts, facts) => [
-  ...unclassified(namedGaps(semantic, contexts), facts.childProcesses),
-  ...computedGaps(semantic, contexts, facts),
-];
+export const processUnknowns = (
+  semantic,
+  contexts,
+  { modules, childProcesses },
+) => {
+  const loaders = loaderModules(semantic, modules);
+  const direct = new Set(
+    [...modules]
+      .filter(([, entry]) => processSites(entry).length > 0)
+      .map(([module]) => module),
+  );
+  for (const module of loaders) direct.add(module);
+  if (direct.size === 0) return [];
+  // A module that imports a local module may hold what it exports.
+  const wanted = new Set(direct);
+  for (const [module, entry] of modules)
+    if (
+      entry.localSites.some((site) => mayImportProcess(modules, site, direct))
+    )
+      wanted.add(module);
+  const graph = processGraph(semantic, wanted, childProcesses);
+  const escaped = new Map();
+  const exports = {
+    named: (module, name) => escaped.get(module)?.get(name) ?? null,
+    namedList: (module) => [...(escaped.get(module)?.keys() ?? [])],
+  };
+  const usesOf = (module) => {
+    const index = graph.modules.get(module);
+    if (!index) return null;
+    const entry = modules.get(module);
+    const seeds = seedsOf({
+      modules,
+      graph,
+      index,
+      entry,
+      exports,
+      importBinding,
+      loaders: loaders.has(module),
+    });
+    return moduleUses(graph, index, seeds, importBinding);
+  };
+  // Modules that use child_process first, so that the names their bindings
+  // escape under are known to the modules importing them.
+  const results = new Map();
+  for (const module of direct) {
+    const result = usesOf(module);
+    if (!result) continue;
+    results.set(module, result);
+    escaped.set(module, escapedNames(module, result));
+  }
+  // The rest, and a module again when it imports names correlated above.
+  const correlated = (module) =>
+    (modules.get(module)?.localSites ?? []).some(
+      (site) => escaped.get(site.data.module)?.size > 0,
+    );
+  for (const module of wanted) {
+    if (results.has(module) && !correlated(module)) continue;
+    const result = usesOf(module);
+    if (result) results.set(module, result);
+  }
+  return [...results].flatMap(([module, result]) =>
+    result.uses.map((use) => factOf(use, contexts, module)),
+  );
+};
