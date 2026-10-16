@@ -147,7 +147,8 @@ assigned to. A module with more sites of one kind than before is reported
 once, with both counts, because Release Watch cannot tell which site is new.
 Across the release, each site a component gained is paired with at most one
 site a component lost, by method and resolved command, so a call that moved
-between modules or components is low and a second copy is not.
+between modules or components is low and a second copy is not. A site whose
+file moved unchanged pairs with its old copy first, wherever it is.
 
 Reachability (RW-E01, RW-M01) follows REA's semantic graph: the functions
 REA reports, the calls it resolved, the binding reads each function owns,
@@ -194,41 +195,41 @@ finding says so.
 
 ## Findings
 
-| Rule   | Severity            | Trigger                                                                                                                                                                                                                                                                    |
-| ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RW-E01 | critical            | A new renderer API whose IPC handler reaches process execution, inline, through an imported function that holds it, or through a same-module helper or value; "may reach" when the path follows a candidate Release Watch could not settle                                 |
-| RW-E02 | high / medium       | A window set a `webPreferences` safeguard to its unsafe (high) or a dynamic or unresolved (medium) value, or a new window has one; windows pair release-wide, one old to one new, by what they load, the functions creating them, what holds them, then their options      |
-| RW-E03 | high / medium       | A hardening fuse REA read as unsafe in any executable; medium when its old state was not established                                                                                                                                                                       |
-| RW-E04 | low                 | New renderer APIs, one finding per component                                                                                                                                                                                                                               |
-| RW-M01 | critical            | An MCP tool registration that reaches more process execution of a kind than before, inline, imported or through a same-module helper or value; "may reach" unless more registrations reach it than before by paths that follow no candidate Release Watch could not settle |
-| RW-M02 | medium / low        | More MCP tool registration calls across the release (medium); a switch between a CallTool dispatcher and per-tool registration (low)                                                                                                                                       |
-| RW-A01 | high / medium       | A new AI provider host (high; medium when only a URL near requests REA could not resolve suggests it), or one that browser code now calls when no old browser code did (medium)                                                                                            |
-| RW-A02 | critical / high     | A credential-format string not shipped before, or one moved into browser code; critical in browser code                                                                                                                                                                    |
-| RW-A03 | medium / low        | A new MCP server SDK (medium) or AI SDK (low)                                                                                                                                                                                                                              |
-| RW-A04 | low                 | Changed prose assigned to a variable in AI code                                                                                                                                                                                                                            |
-| RW-A05 | medium              | A new HTML sink in browser code that fetches, in a component with an AI surface                                                                                                                                                                                            |
-| RW-W01 | high / medium       | A new third-party `<script src>` host, or script code embedded in a `data:` or `javascript:` URL (high)                                                                                                                                                                    |
-| RW-W02 | medium              | A new service worker                                                                                                                                                                                                                                                       |
-| RW-W03 | low                 | Source maps with original sources, when the old release shipped none                                                                                                                                                                                                       |
-| RW-W04 | low                 | New direct `eval`                                                                                                                                                                                                                                                          |
-| RW-H02 | high / medium       | A security header the old capture sent is removed or changed                                                                                                                                                                                                               |
-| RW-H03 | critical / high     | The browser sends a credential to another party, critical for an AI provider                                                                                                                                                                                               |
-| RW-H04 | medium              | A cookie's weakest `Set-Cookie` lost `HttpOnly`, `Secure` or `SameSite` strength                                                                                                                                                                                           |
-| RW-N01 | high / medium / low | A new destination host, third party (high; medium when only a URL near requests REA could not resolve suggests it) or vendor or deployment host (low)                                                                                                                      |
-| RW-N02 | medium              | Request sites without a known destination that no removed site accounts for                                                                                                                                                                                                |
-| RW-N03 | medium              | A host now reached over `http://` or `ws://` that was reached only encrypted before                                                                                                                                                                                        |
-| RW-P01 | high / low          | New process execution or a changed command (high); a site that took a removed site with the same command, anywhere in the release (low)                                                                                                                                    |
-| RW-G01 | high                | A Go helper's `-ldflags` sets a URL on a new third-party host, also for a new or newly identified helper                                                                                                                                                                   |
-| RW-G02 | medium              | A new Go module dependency, noting a missing checksum                                                                                                                                                                                                                      |
-| RW-G03 | low                 | A Go helper lost `-trimpath`                                                                                                                                                                                                                                               |
-| RW-G04 | medium              | A new helper executable                                                                                                                                                                                                                                                    |
-| RW-D01 | low                 | New third-party packages imported, one finding per component                                                                                                                                                                                                               |
-| RW-C01 | high / medium       | REA examined only part of the new release (truncation, node ceilings, failed or unparsed files, a use of child_process REA classified no process call for, such as `promisify(exec)`); high when that code changed, unless its source map names no changed original source |
-| RW-C02 | low                 | A component, capture or module pairing available on one side only                                                                                                                                                                                                          |
-| RW-C03 | medium              | The old release's fuses were readable and the new release's are not                                                                                                                                                                                                        |
-| RW-C04 | medium              | A helper REA identified before is not identified now                                                                                                                                                                                                                       |
-| RW-C05 | medium / low        | New or changed modules reach an HTTP client library and REA recognised no request site in them; low when a capture covers the release                                                                                                                                      |
-| RW-C06 | high / medium       | Changed modules import a library that starts processes (execa, cross-spawn, shelljs, zx, node-pty and the like), whose calls REA does not classify; high when a module imports it for the first time, medium when every such module imported it before                     |
+| Rule   | Severity            | Trigger                                                                                                                                                                                                                                                                       |
+| ------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RW-E01 | critical            | A new renderer API whose IPC handler reaches process execution, inline, through an imported function that holds it, or through a same-module helper or value; "may reach" when the path follows a candidate Release Watch could not settle                                    |
+| RW-E02 | high / medium       | A window set a `webPreferences` safeguard to its unsafe (high) or a dynamic or unresolved (medium) value, or a new window has one; windows pair release-wide, one old to one new, by what they load, the functions creating them, what holds them, then their options         |
+| RW-E03 | high / medium       | A hardening fuse REA read as unsafe in any executable; medium when its old state was not established                                                                                                                                                                          |
+| RW-E04 | low                 | New renderer APIs, one finding per component                                                                                                                                                                                                                                  |
+| RW-M01 | critical            | An MCP tool registration that reaches more process execution of a kind than before, inline, imported or through a same-module helper or value; "may reach" unless more registrations reach it than before by paths that follow no candidate Release Watch could not settle    |
+| RW-M02 | medium / low        | More MCP tool registration calls across the release (medium); a switch between a CallTool dispatcher and per-tool registration (low)                                                                                                                                          |
+| RW-A01 | high / medium       | A new AI provider host (high; medium when only a URL near requests REA could not resolve suggests it), or one that browser code now calls, or holds a URL for, when no old browser code did, or a provider SDK browser code now imports when no old browser code did (medium) |
+| RW-A02 | critical / high     | A credential-format string not shipped before, or one moved into browser code; critical in browser code                                                                                                                                                                       |
+| RW-A03 | medium / low        | A new MCP server SDK (medium) or AI SDK (low)                                                                                                                                                                                                                                 |
+| RW-A04 | low                 | Changed prose assigned to a variable in AI code                                                                                                                                                                                                                               |
+| RW-A05 | medium              | A new HTML sink in browser code that fetches, in a component with an AI surface                                                                                                                                                                                               |
+| RW-W01 | high / medium       | A new third-party `<script src>` host, or script code embedded in a `data:` or `javascript:` URL (high)                                                                                                                                                                       |
+| RW-W02 | medium              | A new service worker in a component, noting one another component of the old release registered                                                                                                                                                                               |
+| RW-W03 | low                 | Source maps with original sources, when the old release shipped none                                                                                                                                                                                                          |
+| RW-W04 | low                 | New direct `eval`, outside files whose content the old release shipped                                                                                                                                                                                                        |
+| RW-H02 | high / medium       | A security header the old capture sent is removed or changed                                                                                                                                                                                                                  |
+| RW-H03 | critical / high     | The browser sends a credential to another party, critical for an AI provider                                                                                                                                                                                                  |
+| RW-H04 | medium              | A cookie's weakest `Set-Cookie` lost `HttpOnly`, `Secure` or `SameSite` strength                                                                                                                                                                                              |
+| RW-N01 | high / medium / low | A new destination host, third party (high; medium when only a URL near requests REA could not resolve suggests it) or vendor or deployment host (low)                                                                                                                         |
+| RW-N02 | medium              | More request sites without a known destination in a module than before (REA resolved none, and the request reads no URL literal Release Watch binds it to), beyond those a removed site of the release or a new destination accounts for                                      |
+| RW-N03 | medium              | A host now reached over `http://` or `ws://` that the old release reached only encrypted, from code that did not move unchanged                                                                                                                                               |
+| RW-P01 | high / low          | New process execution or a changed command (high); a site that took a removed site with the same command, anywhere in the release (low)                                                                                                                                       |
+| RW-G01 | high                | A Go helper's `-ldflags` sets a URL on a new third-party host, also for a new or newly identified helper                                                                                                                                                                      |
+| RW-G02 | medium              | A new Go module dependency, noting a missing checksum                                                                                                                                                                                                                         |
+| RW-G03 | low                 | A Go helper lost `-trimpath`                                                                                                                                                                                                                                                  |
+| RW-G04 | medium              | A new helper executable                                                                                                                                                                                                                                                       |
+| RW-D01 | low                 | New third-party packages imported, one finding per component                                                                                                                                                                                                                  |
+| RW-C01 | high / medium       | REA examined only part of the new release (truncation, node ceilings, failed or unparsed files, a use of child_process REA classified no process call for, such as `promisify(exec)`); high when that code changed, unless its source map names no changed original source    |
+| RW-C02 | low                 | A component, capture or module pairing available on one side only                                                                                                                                                                                                             |
+| RW-C03 | medium              | The old release's fuses were readable and the new release's are not                                                                                                                                                                                                           |
+| RW-C04 | medium              | A helper REA identified before is not identified now                                                                                                                                                                                                                          |
+| RW-C05 | medium / low        | New or changed modules use an HTTP client library and REA recognised no request site in them, or import or are imported by such a module (low); low when a capture covers the release                                                                                         |
+| RW-C06 | high / medium       | Changed modules import a library that starts processes (execa, cross-spawn, shelljs, zx, node-pty and the like), whose calls REA does not classify; high when a module imports it for the first time, medium when every such module imported it before                        |
 
 Coverage findings exist because a rule that found nothing only means
 something for code REA examined; a truncated analysis is reviewed rather than
@@ -343,13 +344,38 @@ passed.
 - An unresolved request pairs with a removed one across components only when
   its file moved unchanged; otherwise a request with no known destination
   that moved between components is reported medium. An HTML sink pairs only
-  with one in an unchanged file. Browser placement, shipped original sources
-  and known hosts are compared with the whole old release, so code that
-  moved between components keeps what it had.
+  with one in an unchanged file. Browser placement, shipped original sources,
+  known, guessed and named hosts and the schemes they were reached over are
+  compared with the whole old release. An `eval` in a file whose content the
+  old release shipped is not new, nor is a cleartext request whose request,
+  URL constant and client modules, and the modules an import of the URL
+  passed through, all have such content, so code that moved between
+  components keeps what it had. Page scripts, service workers,
+  direct `eval` and HTML sinks are compared per component: one another
+  component of the old release had is reported as new to its component, and
+  the claim says another component had it rather than that the old release
+  lacked it.
 - A URL literal in a module that imports an HTTP client REA does not model
-  (axios, got, ky) is a possible destination, not an observed one: it is
-  reported medium, labelled a guess, and a host the old release only
-  guessed at is new once the new release is seen contacting it.
+  (axios, got, ky), or one such a module reads from an import (a constant,
+  an object property, a namespace member), is a possible destination, not
+  an observed one: it is reported medium, titled and explained as a guess.
+  A URL in a module that only imports such a module is not taken as one;
+  RW-C05 notes the module when it changed. REA reports no literal for a URL
+  in an anonymous default-exported object, so such a URL is not reported. A host the
+  old release only guessed at is new once the new release is seen
+  contacting it, and the finding says the old release held its URL. A URL
+  old browser code only held is not an old browser call.
+- Calls through a provider SDK carry no host REA reports: browser code that
+  imports one (openai, @anthropic-ai/sdk and other single-provider clients)
+  is reported as a possible direct call to that provider, medium.
+  Frameworks and clients that may call the vendor's own or a local server
+  instead (Vercel AI SDK, LangChain, LlamaIndex, Ollama) are not.
+- A request that reads a URL constant or an object property REA reports a
+  literal for (`TELEMETRY_URL`, `ENDPOINTS.telemetry`, `C.TELEMETRY_URL`
+  through a namespace import), in its module or imported through export
+  bindings and named, namespace and star re-exports, is attributed to that
+  URL, and RW-N02 does not count it. A computed member (`ENDPOINTS[key]`)
+  is not attributed and stays an unresolved request.
 - REA reports strings assigned to variables and URLs it resolved. A key
   written inline in a call or a header is not seen by RW-A02, and a request
   that reads a URL variable is attributed to that URL even if it transforms

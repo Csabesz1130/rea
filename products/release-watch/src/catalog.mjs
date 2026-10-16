@@ -47,26 +47,53 @@ export const aiProviderOf = (host) =>
     : (AI_PROVIDERS.find((entry) => exactOrSuffix(host, entry))?.provider ??
       null);
 
+// `provider` names the one provider whose API an SDK's client calls itself.
+// Frameworks and UI hooks (Vercel AI SDK, LangChain) may call the vendor's
+// own server instead, and Ollama a local one, so they name none.
 const AI_SDKS = [
-  { name: "openai", label: "OpenAI SDK" },
-  { name: "@openai/agents", label: "OpenAI Agents SDK" },
-  { name: "@anthropic-ai/sdk", label: "Anthropic SDK" },
-  { name: "@anthropic-ai/claude-agent-sdk", label: "Claude Agent SDK" },
-  { name: "@google/genai", label: "Google Gen AI SDK" },
-  { name: "@google/generative-ai", label: "Google Generative AI SDK" },
-  { name: "@google-cloud/vertexai", label: "Vertex AI SDK" },
-  { name: "@aws-sdk/client-bedrock-runtime", label: "Amazon Bedrock SDK" },
-  { name: "@mistralai/mistralai", label: "Mistral SDK" },
-  { name: "cohere-ai", label: "Cohere SDK" },
-  { name: "groq-sdk", label: "Groq SDK" },
+  { name: "openai", label: "OpenAI SDK", provider: "OpenAI" },
+  { name: "@openai/agents", label: "OpenAI Agents SDK", provider: "OpenAI" },
+  { name: "@anthropic-ai/sdk", label: "Anthropic SDK", provider: "Anthropic" },
+  {
+    name: "@anthropic-ai/claude-agent-sdk",
+    label: "Claude Agent SDK",
+    provider: "Anthropic",
+  },
+  {
+    name: "@google/genai",
+    label: "Google Gen AI SDK",
+    provider: "Google Gemini",
+  },
+  {
+    name: "@google/generative-ai",
+    label: "Google Generative AI SDK",
+    provider: "Google Gemini",
+  },
+  {
+    name: "@google-cloud/vertexai",
+    label: "Vertex AI SDK",
+    provider: "Google Vertex AI",
+  },
+  {
+    name: "@aws-sdk/client-bedrock-runtime",
+    label: "Amazon Bedrock SDK",
+    provider: "Amazon Bedrock",
+  },
+  { name: "@mistralai/mistralai", label: "Mistral SDK", provider: "Mistral" },
+  { name: "cohere-ai", label: "Cohere SDK", provider: "Cohere" },
+  { name: "groq-sdk", label: "Groq SDK", provider: "Groq" },
   { name: "ollama", label: "Ollama client" },
   { name: "ai", label: "Vercel AI SDK" },
   { scope: "@ai-sdk/", label: "Vercel AI SDK provider" },
   { name: "langchain", label: "LangChain" },
   { scope: "@langchain/", label: "LangChain" },
   { name: "llamaindex", label: "LlamaIndex" },
-  { name: "@huggingface/inference", label: "Hugging Face Inference" },
-  { name: "replicate", label: "Replicate client" },
+  {
+    name: "@huggingface/inference",
+    label: "Hugging Face Inference",
+    provider: "Hugging Face",
+  },
+  { name: "replicate", label: "Replicate client", provider: "Replicate" },
 ];
 
 const MCP_SERVER = /^@modelcontextprotocol\/sdk\/server(\/|$)/;
@@ -82,7 +109,8 @@ export const packageNameOf = (specifier) => {
 
 /**
  * Classify an import specifier or package name: `{ kind: "mcp-server" | "mcp" | "ai", label }`
- * for AI and MCP SDKs, otherwise null.
+ * for AI and MCP SDKs, with `provider` for an AI SDK that calls one
+ * provider's API itself, otherwise null.
  */
 export const sdkOf = (specifier) => {
   if (MCP_SERVER.test(specifier))
@@ -93,7 +121,9 @@ export const sdkOf = (specifier) => {
   const entry = AI_SDKS.find((sdk) =>
     sdk.name !== undefined ? sdk.name === name : name.startsWith(sdk.scope),
   );
-  return entry ? { kind: "ai", label: entry.label } : null;
+  return entry
+    ? { kind: "ai", label: entry.label, provider: entry.provider ?? null }
+    : null;
 };
 
 const AI_ENVIRONMENT = new Set([

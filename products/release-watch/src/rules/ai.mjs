@@ -1,5 +1,5 @@
-// AI rules: new AI providers receiving data, credentials shipped in code, new
-// AI or MCP SDKs, changed prompts and model output rendered as HTML.
+// AI rules: where prompts go (ai-placement.mjs), credentials shipped in
+// code, new AI or MCP SDKs, changed prompts and model output rendered as HTML.
 import {
   aiProviderOf,
   credentialOf,
@@ -11,13 +11,17 @@ import { textPreview } from "../source-line.mjs";
 import { sdkUses } from "../surfaces.mjs";
 import { hostOf, maskTag } from "../urls.mjs";
 import {
-  absenceUnknowns,
-  browserHosts,
-  hostAbsence,
-  isGuess,
-  sourceModule,
-} from "./network.mjs";
-import { sourceEvidence, sourceUnknowns } from "./network-evidence.mjs";
+  BROWSER_CODE,
+  BROWSER_LIMIT,
+  providerFindings,
+  sdkPlacementFindings,
+  union,
+} from "./ai-placement.mjs";
+import {
+  componentAbsence,
+  heldElsewhere,
+  perComponent,
+} from "./component-absence.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
@@ -26,74 +30,6 @@ import {
   newGroups,
   packResult,
 } from "./shared.mjs";
-
-const BROWSER_LIMIT =
-  "Release Watch classifies browser code by what HTML pages and service workers load; dedicated workers and scripts loaded at runtime are not classified, so the old placement may also have been in the browser.";
-
-const BROWSER_CODE = heuristic(
-  "Release Watch treats scripts an HTML page or service worker loads, and the modules they import, as browser code",
-);
-
-/**
- * RW-A01: an AI provider host the old release never contacted, or one only
- * its server code contacted that browser code now calls directly.
- */
-const providerFindings = (context) => {
-  const { right, labels, network } = context;
-  const findings = [];
-  const hosts = [];
-  // Browser placement anywhere in the old release, so code that moved
-  // between components keeps its old classification.
-  const oldBrowser = new Set([
-    ...browserHosts(context.left),
-    ...(context.baseline.browserHosts ?? []),
-  ]);
-  for (const [host, sources] of network.current) {
-    const provider = aiProviderOf(host);
-    if (provider === null) continue;
-    const seenInBrowser = sources.some((source) => source.kind === "capture");
-    const browserModule = sources.some((source) =>
-      right.app?.browserModules.has(sourceModule(source)),
-    );
-    const fromBrowser = seenInBrowser || browserModule;
-    const fresh = network.fresh.has(host);
-    if (!fresh && !(fromBrowser && !oldBrowser.has(host))) continue;
-    // A URL found only near requests REA could not resolve is a guess.
-    const guess = isGuess(sources);
-    hosts.push(host);
-    findings.push({
-      rule: "RW-A01",
-      // Only the browser placement is new when the host was known; that
-      // placement is Release Watch's classification, so it reviews, not
-      // blocks, and so does a destination Release Watch only guessed.
-      severity: fresh && !guess ? "high" : "medium",
-      title: fromBrowser
-        ? `Browser code calls ${provider} directly (${host})`
-        : `New AI provider ${guess ? "may receive" : "receives"} data: ${provider} (${host})`,
-      summary: !fresh
-        ? `${labels.right} calls ${provider} from code Release Watch classifies as browser code; no module of ${labels.left} that contacted ${host} was classified that way.`
-        : guess
-          ? `${labels.right} holds a URL for ${provider} (${host}) next to requests REA could not resolve or does not model; ${host} was ${hostAbsence(context)}.`
-          : `${labels.right} sends requests to ${provider}; ${host} was ${hostAbsence(context)}.`,
-      why: fromBrowser
-        ? `Prompts and user data now go to ${provider} straight from users' browsers. A browser cannot authenticate to ${provider} without a credential anyone can read, unless the vendor issues short-lived tokens.`
-        : `Prompts and user data now go to ${provider}. That is a new processor for privacy, contract and AI-governance reviews.`,
-      recommendation: fromBrowser
-        ? "Route model calls through the vendor's server, and confirm how the browser authenticates."
-        : "Confirm the provider is covered by your data processing agreements and the vendor's AI disclosures.",
-      evidence: [
-        ...sourceEvidence(sources, labels),
-        ...(browserModule && !seenInBrowser ? [BROWSER_CODE] : []),
-      ],
-      unknowns: [
-        ...sourceUnknowns(sources),
-        "Release Watch does not see what the requests contain.",
-        ...(fresh ? absenceUnknowns(context) : [BROWSER_LIMIT]),
-      ],
-    });
-  }
-  return { findings, hosts };
-};
 
 // Credential-format tokens in one string: the whole literal, or tokens
 // inside a longer one (a header value, a config blob).
@@ -138,8 +74,6 @@ export const shippedTokens = (app) => {
     ),
   };
 };
-
-const union = (...sets) => new Set(sets.flatMap((set) => [...(set ?? [])]));
 
 /**
  * RW-A02. Every new-side string is checked, not only new or changed keys, so
@@ -219,10 +153,12 @@ const credentialFindings = (context) => {
 const statusesOf = (items) =>
   new Map(items.map((item) => [item.key, item.status]));
 
-const sdkFindings = (context) => {
+// An SDK RW-A01 reports in browser code is not repeated.
+const sdkFindings = (context, placed) => {
   const before = new Set([
     ...sdkUses(context.left.app).keys(),
     ...context.baseline.sdks,
+    ...placed,
   ]);
   const statuses = new Map([
     ...statusesOf(context.diff.app.imports),
@@ -336,7 +272,7 @@ const promptFindings = (context) => {
 };
 
 const htmlSinkFindings = (context) => {
-  const { right, labels, surfaces } = context;
+  const { right, surfaces } = context;
   if (!right.app || !surfaces.includes("ai")) return [];
   return (
     newGroups(context.diff.app.htmlSinks)
@@ -356,12 +292,13 @@ const htmlSinkFindings = (context) => {
         );
         if (request === undefined) return [];
         const property = fact.data.sink.replace(/^(read|write):\//, "");
+        const held = heldElsewhere(context, "htmlSinks", group);
         return [
           {
             rule: "RW-A05",
             severity: "medium",
             title: `Model output may be rendered as HTML in ${fact.data.module}`,
-            summary: `A new ${property} sink sits in browser code that also fetches data, in a component that calls AI models (${absencePhrase(group.status, labels.left, group.counts)}).`,
+            summary: `A new ${property} sink sits in browser code that also fetches data, in a component that calls AI models (${componentAbsence(context, { ...group, held, had: "had one in a module at this path" })}).`,
             why: "Model output is untrusted: a prompt-injected answer rendered as HTML runs script in the user's session.",
             recommendation:
               "Render model output as text, or sanitize it with an allow-list sanitizer before inserting HTML.",
@@ -381,6 +318,7 @@ const htmlSinkFindings = (context) => {
             ],
             unknowns: [
               "REA does not trace data from the response to the HTML sink.",
+              ...(held ? [perComponent("HTML sinks")] : []),
             ],
           },
         ];
@@ -391,11 +329,13 @@ const htmlSinkFindings = (context) => {
 /** AI rules; claims AI provider hosts so RW-N01 does not repeat them. */
 export const aiPack = (context) => {
   const providers = providerFindings(context);
+  const placements = sdkPlacementFindings(context);
   return packResult(
     [
       ...providers.findings,
+      ...placements.findings,
       ...credentialFindings(context),
-      ...sdkFindings(context),
+      ...sdkFindings(context, placements.sdks),
       ...promptFindings(context),
       ...htmlSinkFindings(context),
     ],

@@ -1,6 +1,7 @@
 // Evidence lines and unknowns for a destination host, one table entry per
 // kind of source that shows it, most direct first.
 import { displayUrl } from "../urls.mjs";
+import { assignedName } from "./destinations.mjs";
 import {
   APP_SOURCE,
   CAPTURE_SOURCE,
@@ -13,11 +14,24 @@ import {
 const MAX_LINES = 8;
 
 const literalLine = (source, url) => {
-  const binding = source.fact.data.binding;
+  const name = assignedName(source.fact);
   return cite(
-    `URL literal ${url}${binding ? ` assigned to ${binding}` : ""}`,
+    `URL literal ${url}${name ? ` assigned to ${name}` : ""}`,
     source.fact,
     APP_SOURCE,
+  );
+};
+// How a URL literal relates to code that uses an HTTP client REA does not
+// model: the client module holds it, or imports it (directly or through
+// re-exports).
+const clientLine = ({ fact, client }) => {
+  const unmodeled = `${client.package}, an HTTP client whose requests REA does not model`;
+  const where = {
+    self: `${client.module} imports ${unmodeled}`,
+    imports: `${client.module} imports ${unmodeled}, and imports the value ${fact.data.module} assigns to ${assignedName(fact)}`,
+  }[client.via];
+  return heuristic(
+    `${where}, so Release Watch takes this URL as a possible destination`,
   );
 };
 const requestLine = (source) =>
@@ -54,7 +68,7 @@ const SOURCE_LINES = {
     requestLine(source),
     literalLine(source, url),
     heuristic(
-      `The request reads ${source.fact.data.binding} inside its call; REA reports the read and the assignment, Release Watch connects them`,
+      `The request reads ${source.reads} inside its call; REA reports the read and the assignment, Release Watch connects them`,
       source.read.location,
     ),
   ],
@@ -67,9 +81,7 @@ const SOURCE_LINES = {
   ],
   "client-literal": (source, url) => [
     literalLine(source, url),
-    heuristic(
-      `${source.fact.data.module} imports an HTTP client whose requests REA does not model, so Release Watch takes this URL as a possible destination`,
-    ),
+    clientLine(source),
   ],
   "build-setting": (source, url) => [
     reported(

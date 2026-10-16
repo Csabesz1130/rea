@@ -270,3 +270,27 @@ describe("compare: what a value holds after its declaration", { skip }, () => {
     );
   });
 });
+
+describe("compare: functions imported through re-exports", { skip }, () => {
+  it("follows an imported function through a named re-export", () => {
+    // REA reports `export { runGit } from` without a local binding, as it
+    // reports an anonymous default export; it is still a re-export.
+    const index = (git) =>
+      `import { runGit } from "./tools/index.js";\n${SDK}${server("1")}server.registerTool("echo", {}, async ({ text }) => ({ content: [{ type: "text", text }] }));\n${git ? 'server.registerTool("git", {}, async ({ args }) => ({ content: [], out: runGit(args) }));\n' : ""}export const run = runGit;\nexport default server;\n`;
+    const shared = {
+      "src/git.js": GIT,
+      "src/tools/index.js": 'export { runGit } from "../git.js";\n',
+    };
+    const result = compare(
+      { ...shared, "src/index.js": index(false) },
+      { ...shared, "src/index.js": index(true) },
+      MCP,
+    );
+    assert.equal(result.result.status, 2, result.result.stderr);
+    assert.deepEqual(graded(result), [["RW-M01", "critical"]]);
+    assert.match(
+      claims(finding(result, "RW-M01")),
+      /reads runGit, imported from src\/tools\/index\.js; execFile\(\) runs there/,
+    );
+  });
+});

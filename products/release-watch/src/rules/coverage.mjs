@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { SECURITY_HEADERS, isHttpClient, packageNameOf } from "../catalog.mjs";
 import { captureUnread } from "../facts/capture.mjs";
+import { clientImports, clientModules } from "./destinations.mjs";
 import { displayPath } from "../urls.mjs";
 import {
   MAX_FILES,
@@ -239,50 +240,65 @@ const helperCoverage = (context) =>
  * requests are not examined by the network or AI rules. Medium unless a
  * runtime capture of the new release covers what they send.
  */
-// Clients REA reads as fetch calls; for the others a recognised request
-// site in the module says nothing about the client's own requests.
-const FETCH_LIKE = new Set(["node-fetch", "cross-fetch", "undici"]);
+// The modules one module imports, directly or through one more local
+// import, each with the module it goes through (null when direct).
+const reachable = (app, from) => {
+  const found = new Map();
+  for (const first of app.modules.get(from)?.local ?? []) {
+    if (!found.has(first)) found.set(first, null);
+    for (const second of app.modules.get(first)?.local ?? [])
+      if (!found.has(second)) found.set(second, first);
+  }
+  return found;
+};
 
-// Changed modules that reach a client module through up to two local imports.
-const transitiveSites = (app, clientModules, changed) =>
-  [...app.modules]
-    .filter(([module]) => !clientModules.has(module) && changed(module))
-    .flatMap(([module, entry]) => {
-      for (const first of entry.local) {
-        const hops = [first, ...(app.modules.get(first)?.local ?? [])];
-        const target = hops.find((candidate) => clientModules.has(candidate));
-        if (target)
-          return [
-            {
-              module,
-              client: clientModules.get(target),
-              direct: false,
-              line: heuristic(
-                `${module} changed and imports ${first === target ? target : `${first}, which imports ${target}`}, which imports ${clientModules.get(target)}`,
-                { file: module, line: null, column: null },
-              ),
-            },
-          ];
+const indirectSite = (module, client, claim) => ({
+  module,
+  client,
+  direct: false,
+  line: heuristic(claim, { file: module, line: null, column: null }),
+});
+
+// Changed modules within two local imports of a client module, either way:
+// code that calls through a client another module set up, and the module a
+// client reads its base URL or options from.
+const transitiveSites = (app, clients, changed) => {
+  const sites = new Map();
+  const add = (site) => {
+    if (!sites.has(site.module)) sites.set(site.module, site);
+  };
+  for (const [module] of app.modules) {
+    if (clients.has(module) || !changed(module)) continue;
+    for (const [target, via] of reachable(app, module))
+      if (clients.has(target)) {
+        add(
+          indirectSite(
+            module,
+            clients.get(target),
+            `${module} changed and imports ${via ? `${via}, which imports ${target}` : target}, which imports ${clients.get(target)}`,
+          ),
+        );
+        break;
       }
-      return [];
-    });
+  }
+  for (const [client, name] of clients)
+    for (const [module, via] of reachable(app, client))
+      if (!clients.has(module) && changed(module))
+        add(
+          indirectSite(
+            module,
+            name,
+            `${module} changed, and ${client}, which imports ${name}, imports it${via ? ` through ${via}` : ""}`,
+          ),
+        );
+  return [...sites.values()];
+};
 
 const unmodeledClients = (context) => {
   const app = context.right.app;
   if (!app) return [];
-  const requesting = new Set(
-    app.requests.map((request) => request.data.module),
-  );
-  const direct = app.imports.filter((fact) => {
-    const name = packageNameOf(fact.key);
-    return (
-      isHttpClient(name) &&
-      !(FETCH_LIKE.has(name) && requesting.has(fact.data.module))
-    );
-  });
-  const clientModules = new Map(
-    direct.map((fact) => [fact.data.module, packageNameOf(fact.key)]),
-  );
+  const direct = clientImports(app);
+  const clients = clientModules(app);
   const before = new Set(
     (context.left.app?.imports ?? [])
       .filter((fact) => isHttpClient(packageNameOf(fact.key)))
@@ -306,10 +322,10 @@ const unmodeledClients = (context) => {
         line: cite(`${fact.data.module} imports ${fact.key}`, fact, APP_SOURCE),
       })),
     // A changed module that calls through a client another module set up.
-    ...transitiveSites(app, clientModules, changed),
+    ...transitiveSites(app, clients, changed),
   ];
   if (fresh.length === 0) return [];
-  const clients = [...new Set(fresh.map((site) => site.client))];
+  const names = [...new Set(fresh.map((site) => site.client))];
   const moduleCount = new Set(fresh.map((site) => site.module)).size;
   const captured = context.right.capture !== null;
   // Medium for code that imports the client itself, without a capture.
@@ -318,9 +334,9 @@ const unmodeledClients = (context) => {
     {
       rule: "RW-C05",
       severity: captured || !imports ? "low" : "medium",
-      title: `Requests through ${clients.join(", ")} in new or changed code are not examined`,
+      title: `Requests through ${names.join(", ")} in new or changed code are not examined`,
       summary: `${moduleCount} new or changed module${moduleCount === 1 ? "" : "s"} of ${context.labels.right} reach${moduleCount === 1 ? "es" : ""} an HTTP client library whose requests REA does not model.`,
-      why: "Destinations reached through these libraries, AI provider APIs among them, are invisible to the network and AI rules, so a new third-party host there would not be reported.",
+      why: "REA does not model requests through these libraries, so the network and AI rules see their destinations, AI provider APIs among them, only as URL literals REA reports in this code or in a constant, object property or namespace member it imports, which they report as possible destinations. A URL REA reports no literal for (one in an anonymous default-exported object, for example), a host built at runtime and one read from configuration are not reported.",
       recommendation: captured
         ? "The runtime capture covers what the release sent while it was recorded; review these modules' requests for paths the capture did not exercise."
         : "Capture the release's traffic with release-watch record, or review these modules' requests.",
@@ -333,7 +349,7 @@ const unmodeledClients = (context) => {
       unknowns: imports
         ? []
         : [
-            "Only modules that import a module using the client changed; the client module itself did not.",
+            "Only modules that import a module using the client, or that such a module imports, changed; the client module itself did not.",
           ],
     },
   ];

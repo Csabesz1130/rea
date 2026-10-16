@@ -7,6 +7,7 @@ import { coverageOf, unreachedModules } from "./coverage.mjs";
 import { comparableExpression } from "./expression.mjs";
 import { browserModules, importIndex } from "./modules.mjs";
 import { processUnknowns } from "./process.mjs";
+import { definedProperties } from "./properties.mjs";
 import { withLoads } from "./windows.mjs";
 import {
   firstObservation,
@@ -299,7 +300,14 @@ const SEMANTIC_PROJECTIONS = {
     if (typeof value !== "string") return;
     const modulePath = node.identity?.module_path ?? null;
     const binding = scope.definedBinding.get(node.node_id) ?? null;
-    const data = { module: modulePath, value, binding, range: rangeOf(node) };
+    const property = scope.definedProperty.get(node.node_id) ?? null;
+    const data = {
+      module: modulePath,
+      value,
+      binding,
+      property,
+      range: rangeOf(node),
+    };
     scope.facts.stringLiterals.push(
       semanticFact(
         node,
@@ -435,6 +443,7 @@ const semanticFacts = (semantic, modules) => {
     facts,
     contexts,
     definedBinding,
+    definedProperty: definedProperties(semantic),
     fact,
     trackedReads: [],
     callSites: [],

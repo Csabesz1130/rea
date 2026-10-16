@@ -131,30 +131,42 @@ const forwardedTarget = (state, entry, { name, local, hops }) => {
     : exportTarget(state, through.module, through.name, hops + 1);
 };
 
+// A resolution found through `module`: `through` lists the modules it
+// passed, from the one asked to the one that defines the name.
+const passing = (module, found) =>
+  found && !found.unknown
+    ? { ...found, through: [module, ...(found.through ?? [])] }
+    : found;
+
 /**
  * What a module exports under `name`: `{ fn }`, `{ value }` (a binding that
- * is not a function, or an anonymous default export), `{ namespace }`
- * (another module) or `{ unknown }`.
+ * is not a function, or an anonymous default export by its range), `{
+ * namespace }` (another module) or `{ unknown }`. A resolution also lists in
+ * `through` the modules it passed, from `module` to the one that defines
+ * the name. The one owner of export resolution: reach and destination
+ * attribution (destinations.mjs) both use it.
  */
-const exportTarget = ({ app, index }, module, name, hops = 0) => {
+export const exportTarget = ({ app, index }, module, name, hops = 0) => {
   const entry = app.modules.get(module);
   const exported = entry?.exports?.get(name);
   const local = exported?.local ?? name;
-  // An exported local that is itself an import leads to its module first.
-  if (entry?.imported?.has(local))
-    return forwardedTarget({ app, index }, entry, { name, local, hops });
+  // An exported local that is itself an import leads to its module first,
+  // and so does a named re-export (`export { run } from "./shell.js"`),
+  // whose export REA reports without a local binding, as it reports an
+  // anonymous default export's.
+  if (entry?.imported?.has(local) || entry?.reexports?.has(name))
+    return (
+      passing(
+        module,
+        forwardedTarget({ app, index }, entry, { name, local, hops }),
+      ) ?? { unknown: module }
+    );
   const own = ownExport(index, module, name, exported);
-  if (own) return own;
-  const forwarded = forwardedTarget({ app, index }, entry, {
-    name,
-    local: null,
-    hops,
-  });
-  if (forwarded) return forwarded;
+  if (own) return passing(module, own);
   for (const star of entry?.stars ?? [])
     if (hops < MAX_EXPORT_HOPS) {
       const found = exportTarget({ app, index }, star, name, hops + 1);
-      if (!found.unknown) return found;
+      if (!found.unknown) return passing(module, found);
     }
   return { unknown: module };
 };

@@ -206,7 +206,7 @@ describe("network destinations", () => {
     });
     assert.deepEqual(
       findings.map((finding) => finding.title),
-      ["New third-party destination: telemetry.other.example.net"],
+      ["Possible new third-party destination: telemetry.other.example.net"],
     );
   });
 

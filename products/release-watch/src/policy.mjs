@@ -1,24 +1,30 @@
 // Turns a component diff into graded findings, and findings into a verdict.
 import { deploymentHosts } from "./facts/capture.mjs";
 import { aiPack, shippedTokens } from "./rules/ai.mjs";
+import { browserSdkUses } from "./rules/ai-placement.mjs";
 import { coveragePack } from "./rules/coverage.mjs";
 import { dependencyPack, packagesOf } from "./rules/dependencies.mjs";
 import { electronPack } from "./rules/electron.mjs";
 import { goPack } from "./rules/go.mjs";
 import { mcpPack } from "./rules/mcp.mjs";
 import {
+  browserGuessedHosts,
   browserHosts,
+  contactSchemes,
   guessedHosts,
   knownHosts,
-  networkPack,
-  networkView,
-} from "./rules/network.mjs";
+  mergeSchemes,
+  namedHosts,
+  withoutDestination,
+} from "./rules/destinations.mjs";
+import { PER_COMPONENT } from "./rules/component-absence.mjs";
+import { networkPack, networkView } from "./rules/network.mjs";
 import { processPack } from "./rules/process.mjs";
 import { runtimePack } from "./rules/runtime.mjs";
 import { maxSeverity, severityRank } from "./rules/shared.mjs";
 import { shipsOriginals, webPack } from "./rules/web.mjs";
 import { releaseWindowPairing } from "./rules/window-pairing.mjs";
-import { releaseMoves } from "./moves.mjs";
+import { fileDigests, releaseMoves } from "./moves.mjs";
 import { sdkUses } from "./surfaces.mjs";
 
 // Specific packs run first and claim the hosts and process sites they
@@ -37,12 +43,6 @@ const PACKS = [
 ];
 
 /**
- * What the whole old release contained, across components: hosts it
- * contacted, packages it imported and AI or MCP SDKs it used. A component
- * that is new, renamed or split off is graded against this, not against an
- * empty side.
- */
-/**
  * Sites the release gained and lost, paired one to one across components.
  * `components` is `[{ name, diff, comparable, left, right }]`; a component
  * is not comparable when REA could not analyze its new side.
@@ -56,12 +56,18 @@ export const releaseMovesOf = (components) => ({
     })),
     { field: "command" },
   ),
-  requests: releaseMoves(withDigests(components, "requests"), {
-    field: "endpoint",
-    keep: (fact) => !fact.data.endpoint,
-    unresolvedPairs: true,
-    sameFile: "across",
-  }),
+  // Only requests with no known destination move as unresolved sites; one
+  // Release Watch binds to a URL literal is compared by its host instead.
+  requests: releaseMoves(
+    withDigests(components, "requests").map((component, index) => ({
+      ...component,
+      keep: {
+        left: withoutDestination(components[index].left?.app),
+        right: withoutDestination(components[index].right?.app),
+      },
+    })),
+    { field: "endpoint", unresolvedPairs: true, sameFile: "across" },
+  ),
   // A sink means what the code around it does, so it moves with its file.
   htmlSinks: releaseMoves(withDigests(components, "htmlSinks"), {
     field: "sink",
@@ -74,24 +80,38 @@ const withDigests = (components, family) =>
     name,
     items: diff.app[family],
     comparable,
-    digests: { left: digestsOf(left), right: digestsOf(right) },
+    digests: { left: fileDigests(left?.app), right: fileDigests(right?.app) },
   }));
 
-const digestsOf = (side) =>
-  new Map(
-    (side?.app?.assets ?? []).map((asset) => [asset.key, asset.data.sha256]),
-  );
-
+/**
+ * What the whole old release contained, across components: hosts it
+ * contacted, only guessed at or named, and how it reached them, browser
+ * placement, packages, AI or MCP SDKs, credentials, file contents, and the
+ * keys of facts rules compare per component (`keys`). Windows are paired
+ * release-wide instead (releaseWindowPairing). A component that is new,
+ * renamed or split off is graded against this, not against an empty side.
+ */
 export const releaseBaseline = (leftSides) => ({
   apps: leftSides.filter((side) => side.app).length,
   hosts: new Set(leftSides.flatMap((side) => [...knownHosts(side)])),
   browserHosts: new Set(leftSides.flatMap((side) => [...browserHosts(side)])),
+  browserGuessed: new Set(
+    leftSides.flatMap((side) => [...browserGuessedHosts(side)]),
+  ),
+  schemes: mergeSchemes(...leftSides.map(contactSchemes)),
   shipsOriginals: leftSides.some((side) => shipsOriginals(side.app)),
   guessed: new Set(leftSides.flatMap((side) => [...guessedHosts(side)])),
+  named: new Set(leftSides.flatMap((side) => [...namedHosts(side)])),
   packages: new Set(
     leftSides.flatMap((side) => [...packagesOf(side.app).keys()]),
   ),
   sdks: new Set(leftSides.flatMap((side) => [...sdkUses(side.app).keys()])),
+  browserSdks: new Set(
+    leftSides.flatMap((side) => [...browserSdkUses(side.app).keys()]),
+  ),
+  keys: Object.fromEntries(
+    PER_COMPONENT.map((family) => [family, keysOf(leftSides, family)]),
+  ),
   credentials: new Set(
     leftSides.flatMap((side) =>
       (side.capture?.credentials ?? []).map((fact) => fact.key),
@@ -105,6 +125,14 @@ export const releaseBaseline = (leftSides) => ({
       .filter(Boolean),
   ),
 });
+
+// The keys of one fact family across the old release's components.
+const keysOf = (leftSides, family) =>
+  new Set(
+    leftSides.flatMap((side) =>
+      (side.app?.[family] ?? []).map((fact) => fact.key),
+    ),
+  );
 
 // Credential tokens the old release shipped anywhere, and in browser code.
 const shippedTokensOf = (leftSides) => {
