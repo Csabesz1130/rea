@@ -365,10 +365,10 @@ passed.
   an observed one: it is reported medium, titled and explained as a guess.
   A URL in a module that only imports such a module is not taken as one;
   RW-C05 notes the module when it changed. REA reports no literal for a URL
-  in an anonymous default-exported object, so such a URL is not reported. A host the
-  old release only guessed at is new once the new release is seen
-  contacting it, and the finding says the old release held its URL. A URL
-  old browser code only held is not an old browser call.
+  in an anonymous default-exported object, so such a URL is not reported.
+  A host the old release only guessed at is new once the new release is
+  seen contacting it, and the finding says the old release held its URL. A
+  URL old browser code only held is not an old browser call.
 - Calls through a provider SDK carry no host REA reports: browser code that
   imports one (openai, @anthropic-ai/sdk and other single-provider clients)
   is reported as a possible direct call to that provider, medium.

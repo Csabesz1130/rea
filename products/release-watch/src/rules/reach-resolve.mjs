@@ -206,6 +206,19 @@ const targetsWith = (resolved, stepOf) => [
   ...(resolved.region ? [{ region: resolved.region, step: stepOf(null) }] : []),
 ];
 
+// The module that defines an imported name when the module it is imported
+// from re-exports it (`export { runGit } from "../git.js"`), else null.
+const definingModule = (state, imported, { target, path }) => {
+  const found =
+    imported.name !== "*"
+      ? target
+      : path
+        ? exportTarget(state, imported.module, path[0])
+        : null;
+  const through = found?.through ?? [];
+  return through.length > 1 ? through.at(-1) : null;
+};
+
 const importedReads = (state, item, imported, { path, forwarded }) => {
   const namespaced = imported.name === "*";
   const target = namespaced
@@ -214,6 +227,7 @@ const importedReads = (state, item, imported, { path, forwarded }) => {
   const resolved = targetsOf(state, target, path, forwarded);
   const details = {
     module: imported.module,
+    defined: definingModule(state, imported, { target, path }),
     imported: (namespaced ? path?.[0] : imported.name) ?? imported.name,
     namespaced,
     forwarded,

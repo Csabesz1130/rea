@@ -53,7 +53,10 @@ const importText = (step) => {
     step.imported === "default" && !step.namespaced
       ? `${step.name}${member}, the default export of ${step.module}`
       : `${importedName(step)}${member}, imported from ${step.module}`;
-  return `reads ${origin}${settled(step)}`;
+  const defined = step.defined
+    ? `, which re-exports it from ${step.defined}`
+    : "";
+  return `reads ${origin}${defined}${settled(step)}`;
 };
 
 const localText = (step) => {

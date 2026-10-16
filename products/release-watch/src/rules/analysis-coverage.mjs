@@ -1,9 +1,8 @@
 // RW-C01: what REA could not examine in the new release, graded by whether
-// that code changed since the old release. RW-C06, for process libraries REA
-// does not model, is reported with it.
+// that code changed since the old release, and the changed-file tests the
+// coverage rules share.
 import { isScriptPath } from "../facts/modules.mjs";
 import { gapLine, processGapsOf } from "./process-gaps.mjs";
-import { processLibraries } from "./process-libraries.mjs";
 import { APP_SOURCE, cite, reported } from "./shared.mjs";
 
 const COMPONENT = "Release Watch";
@@ -229,7 +228,7 @@ const unexaminedFiles = (app, processGaps) => [
  * unexamined files changed since the old release, since a change there is
  * exactly what this report cannot see; medium otherwise.
  */
-const unexaminedAnalysis = (context) => {
+export const unexaminedAnalysis = (context) => {
   const app = context.right.app;
   const captureGaps = context.right.capture?.gaps ?? [];
   const processGaps = app ? processGapsOf(app, changedFiles(context)) : [];
@@ -277,13 +276,3 @@ const unexaminedAnalysis = (context) => {
     },
   ];
 };
-
-/**
- * Coverage of the new release's code: RW-C01 for what REA did not examine,
- * and RW-C06 for modules that start processes through a library REA does
- * not model.
- */
-export const incompleteAnalysis = (context) => [
-  ...unexaminedAnalysis(context),
-  ...processLibraries(context, unmodeledChanges(context)),
-];

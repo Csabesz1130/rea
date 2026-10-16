@@ -290,7 +290,7 @@ describe("compare: functions imported through re-exports", { skip }, () => {
     assert.deepEqual(graded(result), [["RW-M01", "critical"]]);
     assert.match(
       claims(finding(result, "RW-M01")),
-      /reads runGit, imported from src\/tools\/index\.js; execFile\(\) runs there/,
+      /reads runGit, imported from src\/tools\/index\.js, which re-exports it from src\/git\.js; execFile\(\) runs there/,
     );
   });
 });

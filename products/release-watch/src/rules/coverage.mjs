@@ -9,9 +9,10 @@ import { clientImports, clientModules } from "./destinations.mjs";
 import { displayPath } from "../urls.mjs";
 import {
   MAX_FILES,
-  incompleteAnalysis,
+  unexaminedAnalysis,
   unmodeledChanges,
 } from "./analysis-coverage.mjs";
+import { processLibraries } from "./process-libraries.mjs";
 import {
   APP_SOURCE,
   cite,
@@ -349,7 +350,8 @@ const unmodeledClients = (context) => {
 /** Coverage rules. */
 export const coveragePack = (context) =>
   packResult([
-    ...incompleteAnalysis(context),
+    ...unexaminedAnalysis(context),
+    ...processLibraries(context, unmodeledChanges(context)),
     ...oneSided(context),
     ...fuseCoverage(context),
     ...helperCoverage(context),
