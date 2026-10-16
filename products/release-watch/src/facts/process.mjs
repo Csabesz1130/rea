@@ -130,10 +130,10 @@ const importersOf = (modules) => {
   return importers;
 };
 
-// Adds the entries `found` has that `known` lacks; true when it added one.
+// Records the entries of `found` in `known`; true when one is a new key.
 const addNew = (known, found) => {
   const before = known.size;
-  for (const [key, value] of found) if (!known.has(key)) known.set(key, value);
+  for (const [key, value] of found) known.set(key, value);
   return known.size > before;
 };
 
@@ -202,8 +202,8 @@ export const processUnknowns = (
   const importers = importersOf(modules);
   const results = new Map();
   const held = new Map();
-  while (pending.length > 0) {
-    const module = pending.shift();
+  for (let next = 0; next < pending.length; next += 1) {
+    const module = pending[next];
     queued.delete(module);
     const result = usesOf(module);
     if (result) {
