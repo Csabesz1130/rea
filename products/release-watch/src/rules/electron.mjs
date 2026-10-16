@@ -1,6 +1,7 @@
 // Electron boundary rules: renderer-reachable process execution, new bridge
 // APIs, webPreferences regressions and fuse regressions.
-import { reachClaim, reachOf, reachUnknowns } from "./reach.mjs";
+import { reachOf } from "./reach.mjs";
+import { reachClaim, reachUnknowns } from "./reach-text.mjs";
 import { webPreferenceRegressions } from "./windows.mjs";
 import {
   APP_SOURCE,
@@ -103,7 +104,7 @@ const rendererProcessExecution = (context) => {
         rule: "RW-E01",
         severity: "critical",
         title: `Renderer can reach ${group.status === "existing" ? "" : "new "}process execution via "${member.data.channel}"`,
-        summary: `${labels.right} exposes ${member.data.member}() to web content; its handler reaches ${exec.data.method}() in ${exec.data.module}.`,
+        summary: `${labels.right} exposes ${member.data.member}() to web content; its handler ${path.guess ? "may reach" : "reaches"} ${exec.data.method}() in ${exec.data.module}.`,
         why: "Any script running in the window, including injected content, could ask the main process to start programs with the user's privileges.",
         recommendation:
           "Ask the vendor why a renderer-exposed IPC channel can start processes, and require an allow-list of commands plus sender validation before deployment.",

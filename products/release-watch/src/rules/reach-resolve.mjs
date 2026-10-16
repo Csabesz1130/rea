@@ -1,190 +1,118 @@
-// Where a binding read leads, from REA's facts: the function a binding names
-// (a declaration, or a function its initializer assigns), the functions an
-// object or table binding's initializer defines (a member read picks one by
-// name), and imports through REA's imported names, export bindings, named,
-// namespace and star re-exports. An import that names no function, object
-// or value Release Watch can find in its module is "unknown": the whole
-// module is then followed, so a gap in the call graph is never read as no
-// reach. A value with no functions in its initializer reaches nothing.
-import { sameStart, startsBefore, within } from "../ranges.mjs";
-import { firstStarting, inside, namedFunctions } from "./reach-index.mjs";
+// Where a binding read leads, from REA's facts: the function a binding
+// names (a declaration, or a function its initializer assigns) or the
+// method of it a member read names; what an object, table or instance
+// binding holds (reach-region.mjs places it, reach-value.mjs says what a
+// read of it gives); a parameter of a callback an iteration method runs,
+// to the elements it iterates (reach-calls.mjs finds the iteration); and
+// imports through REA's imported names, export bindings, named, namespace
+// and star re-exports. An import that names no function, object or value
+// Release Watch can find in its module is "unknown": the whole module is
+// then followed, so a gap in the call graph is never read as no reach.
+import { startsBefore } from "../ranges.mjs";
+import { CALL_MEMBERS, WHOLE_VALUE_MEMBERS } from "./reach-builtins.mjs";
+import { iterationsOf } from "./reach-calls.mjs";
+import { bindingAt, childFunctions, memberAt } from "./reach-index.mjs";
+import { declaredFunction, valueRegion } from "./reach-region.mjs";
+import { valueOf } from "./reach-value.mjs";
 
 const MAX_EXPORT_HOPS = 8;
-// `const name = (` or `const name = async function (`: the gap between a
-// binding and the function it is assigned.
-const MAX_GAP = 40;
-const WHOLE = {
-  start: { line: 0, column: 0 },
-  end: { line: Number.MAX_SAFE_INTEGER, column: 0 },
-};
 
-const scopeOf = (index, fn) => index.scope.get(fn.id) ?? null;
 const topFunction = (index, module, name) =>
-  namedFunctions(index, module, name).find(
-    (fn) => scopeOf(index, fn) === null,
-  ) ?? null;
+  childFunctions(index, module, null).find((fn) => fn.name === name) ?? null;
 const topBinding = (index, module, name) =>
   (index.bindings.get(module) ?? []).find(
     (binding) => binding.name === name && binding.owner === null,
   ) ?? null;
 
-// The function a binding's declaration or initializer is: REA gives a
-// declaration's binding the declared function as owner; an assigned
-// function starts just after the binding, in the binding's scope.
-export const declaredFunction = (index, module, binding) => {
-  const declared = index.byId.get(binding.owner);
-  if (declared?.name === binding.name && within(binding.range, declared.range))
-    return declared;
-  const between = (fn) =>
-    (index.bindings.get(module) ?? []).some(
-      (other) =>
-        other !== binding &&
-        startsBefore({ start: binding.range.end }, other.range) < 0 &&
-        startsBefore(other.range, fn.range) < 0,
-    );
-  return (
-    namedFunctions(index, module, binding.name).find((fn) => {
-      const { end } = binding.range;
-      const { start } = fn.range;
-      return (
-        scopeOf(index, fn) === (binding.owner ?? null) &&
-        startsBefore(binding.range, fn.range) <= 0 &&
-        ((start.line === end.line && start.column - end.column <= MAX_GAP) ||
-          (start.line === end.line + 1 && start.column <= MAX_GAP)) &&
-        !between(fn)
-      );
-    }) ?? null
-  );
-};
-
-// Where a later binding's statement starts: a declaration's binding sits
-// after the `function` keyword, so its function's start is used instead.
-const statementStart = (index, binding) => {
-  const declared = index.byId.get(binding.owner);
-  return declared?.name === binding.name &&
-    within(binding.range, declared.range)
-    ? declared.range.start
-    : binding.range.start;
-};
-
-// The innermost function of a module that contains `range`: the last one
-// starting at or before it, or one of the functions enclosing that one.
-const enclosingFunction = (index, module, range) => {
-  const list = index.functions.get(module) ?? [];
-  const last = firstStarting(list, range, { after: true }) - 1;
-  for (let fn = list[last]; fn; fn = index.byId.get(scopeOf(index, fn)))
-    if (within(range, fn.range)) return fn;
-  return null;
-};
-
-// An initializer cannot read its own binding outside a function it defines,
-// so it ends before the first statement that does: the outermost call REA
-// reports around that read, else the read itself.
-const firstUse = (index, module, binding) => {
-  const after = { start: binding.range.end };
-  const use = (index.reads.get(module) ?? []).find(
-    ({ read, range }) =>
-      read.data.name === binding.name &&
-      read.data.binding_range &&
-      sameStart(read.data.binding_range, binding.range) &&
-      startsBefore(after, range) <= 0 &&
-      (enclosingFunction(index, module, range)?.id ?? null) ===
-        (binding.owner ?? null),
-  );
-  if (!use) return null;
-  const calls = index.calls.get(module) ?? [];
-  for (let next = firstStarting(calls, after); next < calls.length; next += 1) {
-    const call = calls[next];
-    if (startsBefore(use.range, call.range) < 0) break;
-    if (within(use.range, call.range)) return call.range.start;
-  }
-  return use.range.start;
-};
-
-// The source a binding's initializer can occupy: from the binding to the
-// next binding's statement or the binding's first use, within the binding's
-// own function.
-const initializerRegion = (index, module, binding) => {
-  const key = `${module}\u0000${JSON.stringify(binding.range.start)}`;
-  if (!index.regions.has(key))
-    index.regions.set(key, regionOf(index, module, binding));
-  return index.regions.get(key);
-};
-
-const regionOf = (index, module, binding) => {
-  const owner = index.byId.get(binding.owner);
-  const limit = owner && !within(binding.range, owner.range) ? null : owner;
-  let end = limit?.range.end ?? WHOLE.end;
-  const used = firstUse(index, module, binding);
-  if (used && startsBefore({ start: used }, { start: end }) < 0) end = used;
-  for (const other of index.bindings.get(module) ?? []) {
-    const begins = statementStart(index, other);
-    if (
-      startsBefore(binding.range, { start: begins }) < 0 &&
-      startsBefore({ start: begins }, { start: end }) < 0
-    )
-      end = begins;
-  }
-  return { start: binding.range.start, end };
-};
-
-// Functions that start inside a region, not those that enclose it.
-const startingIn = (functions = [], region) =>
-  functions.filter(
-    (fn) =>
-      startsBefore({ start: region.start }, fn.range) <= 0 &&
-      startsBefore(fn.range, { start: region.end }) < 0,
-  );
-
-// Where an object, array or instance binding leads. With a member read, the
-// functions of that name its initializer defines, else a function of that
-// name anywhere in the module (a class method). Otherwise, or when neither
-// exists, the initializer itself: every function it defines (a tool table, a
-// handler map) and the bindings it reads (`for (const tool of TOOLS)`).
-const valueTargets = (index, module, binding, member) => {
-  const region = initializerRegion(index, module, binding);
-  const defined = startingIn(index.functions.get(module), region);
-  if (member !== null) {
-    const named = defined.filter((fn) => fn.name === member);
-    if (named.length > 0) return { fns: named };
-    const methods = namedFunctions(index, module, member);
-    if (methods.length > 0) return { fns: methods };
-  }
-  return { fns: defined, region: { module, range: region } };
-};
-
-const memberAt = (index, module, range) =>
-  (index.members.get(module) ?? []).find((candidate) =>
-    sameStart(candidate.range, range),
-  )?.path ?? null;
-
 /**
- * What a module exports under `name`: `{ fn }`, `{ value }` (a binding that
- * is not a function), `{ namespace }` (another module) or `{ unknown }`.
+ * What a function gives a member read of it: itself (no member, or
+ * `call`, `apply`, `bind`), the functions it defines under that name (a
+ * class's methods, `prototype` members), or, when it defines none, all of
+ * it as Release Watch's guess. A function a value holds that defines no
+ * such member, when that value forwards the member read to it (`{ status,
+ * deploy }`), is not a container of the member but may be it: a
+ * "candidate".
  */
-// A module's own definition of an exported name: an anonymous default
-// export by its range, else the top-level function or binding it names.
-// An anonymous default export, by its export range, else the module's one
-// top-level function without a name (REA reports no export binding for
-// `export default function () {}`).
-const anonymousDefault = (index, module, exported) => {
-  if (exported?.range) {
-    const [fn] = inside(index.functions.get(module), exported.range);
-    if (fn) return fn;
-  }
-  const unnamed = (index.functions.get(module) ?? []).filter(
-    (fn) => fn.name === null && scopeOf(index, fn) === null,
+const functionMembers = (index, fn, path, forwarded = false) => {
+  const member = path?.[0] === "prototype" ? path[1] : path?.[0];
+  if (!member || CALL_MEMBERS.has(member))
+    return { fns: [fn], how: "self", selects: null };
+  const named = childFunctions(index, fn.module, fn.id).filter(
+    (child) => child.name === member,
   );
-  return unnamed.length === 1 ? unnamed[0] : null;
+  if (named.length > 0) return { fns: named, how: "member", selects: member };
+  return { fns: [fn], how: forwarded ? "candidate" : "whole", selects: member };
 };
 
+// What a value binding, or an anonymous default export, gives a read with
+// `path`: reach-value.mjs's answer, with the path the bindings it reads
+// take when it only forwards them (`for (const tool of TOOLS)`, a spread).
+// Built once per value and path: a binding can be read thousands of times.
+const valueTargets = (index, value, path) => {
+  const first = value.binding?.range ?? value.parts[0] ?? null;
+  const key = `${value.module}\u0000${JSON.stringify(first?.start ?? null)}\u0000${value.binding ? "binding" : value.parts.length}\u0000${path?.join("\u0000") ?? ""}`;
+  if (!index.values.has(key))
+    index.values.set(key, resolveValue(index, value, path));
+  return index.values.get(key);
+};
+
+// The path a value's reads take: the whole path when the value only
+// forwards the bindings it reads, the rest of it after a written member.
+const pathAfter = (how, path) => {
+  if (how === "forward") return path;
+  return how === "written" && path.length > 1 ? path.slice(1) : null;
+};
+
+const resolveValue = (index, value, path) => {
+  const member = path?.[0] ?? null;
+  const record = value.binding
+    ? bindingAt(index, value.module, value.binding.range)
+    : null;
+  const region = value.binding
+    ? valueRegion(index, value.module, value.binding)
+    : { parts: value.parts, members: null, open: [], extended: false };
+  const found = valueOf(
+    index,
+    {
+      module: value.module,
+      parts: region.parts,
+      unwritten: region.unwritten ?? region.parts,
+      members: region.members,
+      open: region.open,
+      iterated: record?.iterated ?? false,
+      slots: record?.slots ?? [],
+      // Slots describe the initializer; a later site can change any member.
+      container: region.extended ? "partial" : (record?.container ?? null),
+    },
+    member,
+  );
+  return {
+    fns: found.fns,
+    region: found.region && {
+      ...found.region,
+      path: pathAfter(found.how, path),
+    },
+    how: found.how,
+    selects: member,
+    methods: found.methods ?? false,
+    assigned: region.extended,
+    unsure: found.unsure ?? null,
+  };
+};
+
+// A module's own definition of an exported name: an anonymous default
+// export by its range (a value: the function or object it is), else the
+// module's one top-level function without a name (REA reports no export
+// binding for `export default function () {}`), else the top-level
+// function or binding it names.
 const ownExport = (index, module, name, exported) => {
-  if (
-    (exported && exported.local === null) ||
-    (!exported && name === "default")
-  ) {
-    const fn = anonymousDefault(index, module, exported);
-    if (fn) return { fn };
+  if (exported?.local === null && exported.range)
+    return { value: { module, parts: [exported.range] } };
+  if (exported?.local === null || (!exported && name === "default")) {
+    const unnamed = childFunctions(index, module, null).filter(
+      (fn) => fn.name === null,
+    );
+    if (unnamed.length === 1) return { fn: unnamed[0] };
   }
   const local = exported?.local ?? name;
   const fn = topFunction(index, module, local);
@@ -203,7 +131,12 @@ const forwardedTarget = (state, entry, { name, local, hops }) => {
     : exportTarget(state, through.module, through.name, hops + 1);
 };
 
-export const exportTarget = ({ app, index }, module, name, hops = 0) => {
+/**
+ * What a module exports under `name`: `{ fn }`, `{ value }` (a binding that
+ * is not a function, or an anonymous default export), `{ namespace }`
+ * (another module) or `{ unknown }`.
+ */
+const exportTarget = ({ app, index }, module, name, hops = 0) => {
   const entry = app.modules.get(module);
   const exported = entry?.exports?.get(name);
   const local = exported?.local ?? name;
@@ -227,21 +160,17 @@ export const exportTarget = ({ app, index }, module, name, hops = 0) => {
 };
 
 // Targets of one resolved export, with the member read that follows it.
-const targetsOf = (state, target, path) => {
-  if (target.fn) return { fns: [target.fn] };
-  if (target.value)
-    return valueTargets(
-      state.index,
-      target.value.module,
-      target.value.binding,
-      path?.[0] ?? null,
-    );
+const targetsOf = (state, target, path, forwarded) => {
+  if (target.fn)
+    return functionMembers(state.index, target.fn, path, forwarded);
+  if (target.value) return valueTargets(state.index, target.value, path);
   if (target.namespace) {
     if (!path) return { unknown: target.namespace };
     return targetsOf(
       state,
       exportTarget(state, target.namespace, path[0]),
       path.slice(1).length > 0 ? path.slice(1) : null,
+      forwarded,
     );
   }
   return { unknown: target.unknown };
@@ -254,17 +183,28 @@ const step = (item, kind, extra = {}) => ({
   ...extra,
 });
 
-const importedReads = (state, item, imported, path) => {
-  const target =
-    imported.name === "*"
-      ? { namespace: imported.module }
-      : exportTarget(state, imported.module, imported.name);
-  const resolved = targetsOf(state, target, path);
-  const shown = imported.name === "*" ? path?.[0] : imported.name;
+// One target per function a resolution gives, and one for the value whose
+// reads it follows; `open` marks a function that may belong to a statement
+// after the value (reach-value.mjs).
+const targetsWith = (resolved, stepOf) => [
+  ...resolved.fns.map((fn) => ({
+    fn,
+    step: resolved.unsure?.has(fn) ? { ...stepOf(fn), open: true } : stepOf(fn),
+  })),
+  ...(resolved.region ? [{ region: resolved.region, step: stepOf(null) }] : []),
+];
+
+const importedReads = (state, item, imported, { path, forwarded }) => {
+  const namespaced = imported.name === "*";
+  const target = namespaced
+    ? { namespace: imported.module }
+    : exportTarget(state, imported.module, imported.name);
+  const resolved = targetsOf(state, target, path, forwarded);
   const details = {
     module: imported.module,
-    imported: shown ?? imported.name,
-    member: imported.name === "*",
+    imported: (namespaced ? path?.[0] : imported.name) ?? imported.name,
+    namespaced,
+    forwarded,
   };
   if (resolved.unknown)
     return [
@@ -276,43 +216,138 @@ const importedReads = (state, item, imported, path) => {
         }),
       },
     ];
+  return targetsWith(resolved, (fn) =>
+    step(item, "import", {
+      ...details,
+      how: resolved.how,
+      selects: resolved.selects,
+      methods: resolved.methods ?? false,
+      target: fn?.name ?? null,
+    }),
+  );
+};
+
+// A parameter of a callback an iteration method runs leads to each element
+// of each receiver it iterates, which takes the parameter's member read.
+// REA does not say whether a parameter read with no member holds a whole
+// element, a property of one (`({ name }) => …`) or a key, so all of each
+// element is followed as Release Watch's guess. Other parameters are values
+// callers pass, not followed.
+const elementTargets = (state, item, path) => {
+  const { index } = state;
+  const owner = index.byId.get(item.read.data.binding_owner);
+  if (!owner) return [];
+  return iterationsOf(index, owner).map((iteration) => ({
+    region: { module: owner.module, parts: [iteration.range], path },
+    step: step(item, "element", {
+      method: iteration.method,
+      selects: path?.[0] ?? null,
+      how: path ? "element" : "whole",
+    }),
+  }));
+};
+
+// The member path a read takes: its own member read, and when a value
+// forwards a member read to the bindings it reads, that member after the
+// read's own (a member that iterates or looks up the read value is not a
+// property of it).
+const pathOf = (index, item, forwarded) => {
+  const own = memberAt(index, item.read.data.module, item.range)?.path ?? null;
+  if (!forwarded) return own;
   return [
-    ...resolved.fns.map((fn) => ({ fn, step: step(item, "import", details) })),
-    ...(resolved.region
-      ? [{ region: resolved.region, step: step(item, "import", details) }]
-      : []),
+    ...(own && !WHOLE_VALUE_MEMBERS.has(own[0]) ? own : []),
+    ...forwarded,
   ];
 };
 
-/** The next places a binding read leads to, each with the step that explains it. */
-export const followRead = (state, item) => {
+/**
+ * The next places a binding read leads to, each with the step that
+ * explains it. `forwarded` is a member path a value forwards to the
+ * bindings its initializer reads.
+ */
+export const followRead = (state, item, forwarded = null) => {
+  const { index } = state;
   const { data } = item.read;
+  const path = pathOf(index, item, forwarded);
+  if (data.parameter) return elementTargets(state, item, path);
   const binding = {
     name: data.name,
     range: data.binding_range,
     owner: data.binding_owner ?? null,
   };
-  const path = memberAt(state.index, data.module, item.range);
   const imported =
     binding.owner === null
       ? state.app.modules.get(data.module)?.imported?.get(data.name)
       : null;
-  if (imported) return importedReads(state, item, imported, path);
+  const forwarding = forwarded !== null;
+  if (imported)
+    return importedReads(state, item, imported, {
+      path,
+      forwarded: forwarding,
+    });
   if (!binding.range) return [];
-  const fn = declaredFunction(state.index, data.module, binding);
-  if (fn) return [{ fn, step: step(item, "local") }];
-  const member = path?.[0] ?? null;
-  const value = valueTargets(state.index, data.module, binding, member);
-  return [
-    ...value.fns.map((target) => ({
-      fn: target,
-      step: step(item, "value", { member, target: target.name }),
-    })),
-    ...(value.region
-      ? [{ region: value.region, step: step(item, "initializer") }]
-      : []),
-  ];
+  const fn = declaredFunction(index, data.module, binding);
+  const found = fn
+    ? functionMembers(index, fn, path, forwarding)
+    : valueTargets(index, { module: data.module, binding }, path);
+  return targetsWith(found, (target) =>
+    step(item, fn ? "local" : target ? "value" : "initializer", {
+      how: found.how,
+      selects: found.selects,
+      methods: found.methods ?? false,
+      target: target?.name ?? null,
+      forwarded: forwarding,
+      assigned: found.assigned ?? false,
+    }),
+  );
 };
 
-/** The range that stands for a whole module when an import cannot be resolved. */
-export const WHOLE_MODULE = WHOLE;
+const producedStep = (kind, extra) => ({ kind, location: null, ...extra });
+
+/**
+ * What a call an initializer makes when the module loads gives the value:
+ * for `new`, the instance's methods (the one a member read names, else
+ * each, as a guess when one is named); otherwise what the called function
+ * returns. Code the call runs is not reached by reading the value.
+ */
+export const producedBy = (index, target, call, path) => {
+  const member = path?.[0] ?? null;
+  if (target.fn && call.construct) {
+    const methods = childFunctions(
+      index,
+      target.fn.module,
+      target.fn.id,
+    ).filter((fn) => fn.name !== "constructor");
+    const named = methods.filter((fn) => fn.name === member);
+    const how = member === null ? "all" : named.length > 0 ? "named" : "guess";
+    return (named.length > 0 ? named : methods).map((fn) => ({
+      fn,
+      step: producedStep("instance", { target: fn.name, selects: member, how }),
+    }));
+  }
+  if (target.fn) {
+    const parts = (index.returns.get(target.fn.id) ?? [])
+      .map((site) => site.range)
+      .sort(startsBefore);
+    const found = valueTargets(
+      index,
+      { module: target.fn.module, parts },
+      path,
+    );
+    return targetsWith(found, (fn) =>
+      producedStep("returns", {
+        target: fn?.name ?? null,
+        selects: member,
+        how: found.how,
+      }),
+    );
+  }
+  if (target.region)
+    return [
+      {
+        region: { ...target.region, path: path ?? target.region.path },
+        step: producedStep("returns", { selects: member, how: "forward" }),
+      },
+    ];
+  return [{ ...target, step: producedStep("returns", { how: "all" }) }];
+};

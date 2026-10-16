@@ -6,7 +6,8 @@
 // that only receive the server object.
 import { within } from "../ranges.mjs";
 import { isMcpServer } from "../surfaces.mjs";
-import { reachClaim, reachOf, reachUnknowns, reachedFrom } from "./reach.mjs";
+import { reachOf, reachedFrom } from "./reach.mjs";
+import { reachClaim, reachUnknowns } from "./reach-text.mjs";
 import {
   APP_SOURCE,
   absencePhrase,
@@ -48,6 +49,9 @@ const countBy = (items) =>
     new Map(),
   );
 
+// Connections a path REA's facts settle makes, with no guessed step.
+const settledBy = (items) => countBy(items.filter((item) => !item.path.guess));
+
 /** Connections per capability across a release's old and new apps: `Map(key → { before, after })`. */
 export const connectionTotals = (leftApps, rightApps) => {
   const totals = new Map();
@@ -77,10 +81,12 @@ const increased = (context, before, after) => (key) => {
 
 const toolExecution = (context) => {
   const { left, right, labels, diff } = context;
-  const before = countBy(connections(left.app));
+  const old = connections(left.app);
+  const before = countBy(old);
   const pairs = connections(right.app);
   const after = countBy(pairs);
   const isIncreased = increased(context, before, after);
+  const settled = { before: settledBy(old), after: settledBy(pairs) };
   const groups = new Map(
     newGroups(diff.app.childProcesses, { field: "command" }).map((group) => [
       group.key,
@@ -104,15 +110,24 @@ const toolExecution = (context) => {
         .get(pair.exec.key)
         ?.facts.forEach((fact) => nodes.add(fact.node_id));
     });
+    // A guessed path names a candidate, not a handler REA's facts identify:
+    // the tool reaches the site only when settled connections increased.
+    const reaches =
+      (settled.after.get(key) ?? 0) > (settled.before.get(key) ?? 0)
+        ? "reaches"
+        : "may reach";
     findings.push({
       rule: "RW-M01",
       severity: "critical",
       title: `MCP tool can start processes: ${call.data.member}() in ${call.data.module}`,
-      summary: `${labels.right} registers an MCP tool whose handler reaches ${exec.data.method}() in ${exec.data.module}.`,
+      summary: `${labels.right} registers an MCP tool whose handler ${reaches} ${exec.data.method}() in ${exec.data.module}.`,
       why: "Any agent connected to this server, and any prompt injection that steers that agent, can ask it to run commands on the host.",
       recommendation:
         "Remove the tool or restrict it to an allow-list of fixed commands, and require human confirmation for each call.",
-      evidence: [SERVER, ...connectionEvidence(context, keyed, groups)],
+      evidence: [
+        SERVER,
+        ...connectionEvidence(context, keyed, { groups, old }),
+      ],
       unknowns: [
         "REA does not report the tool's name, description or input schema.",
         "REA does not establish that the tool's input reaches the command.",
@@ -125,19 +140,29 @@ const toolExecution = (context) => {
 
 // Each registration, how it reaches its exec site, and each exec site once.
 // How the old release had an exec site: moved from another place in the
-// release, or the component's own diff status.
-const execAbsence = (context, groups, exec) => {
+// release, the component's own diff status, or unchanged, with how many old
+// registrations Release Watch connected to a site of that kind.
+const execAbsence = (context, { groups, old }, exec) => {
   const moved = context.moves?.childProcesses.pairs.get(exec.node_id);
   const left = context.releaseLabels?.left ?? context.labels.left;
   if (moved)
     return `${left} ran the same command from ${moved.fact.data.module}${moved.component === context.name ? "" : ` in component ${moved.component}`}`;
   const group = groups.get(exec.key);
-  return group
-    ? absencePhrase(group.status, context.labels.left, group.counts)
-    : `also in ${context.labels.left}, where no tool registration reached it`;
+  if (group)
+    return absencePhrase(group.status, context.labels.left, group.counts);
+  const registrations = new Set(
+    old
+      .filter(
+        (pair) =>
+          pair.exec.key === exec.key &&
+          (pair.exec.data.command ?? null) === (exec.data.command ?? null),
+      )
+      .map((pair) => pair.call.node_id),
+  ).size;
+  return `also in ${context.labels.left}, where Release Watch connected ${registrations === 0 ? "no" : registrations} tool registration${registrations === 1 ? "" : "s"} to it`;
 };
 
-const connectionEvidence = (context, keyed, groups) => {
+const connectionEvidence = (context, keyed, sides) => {
   const cited = new Set();
   return keyed.flatMap(({ call, exec, path }) => {
     const lines = [
@@ -151,7 +176,7 @@ const connectionEvidence = (context, keyed, groups) => {
     cited.add(exec.node_id);
     lines.push(
       cite(
-        `${exec.data.method}() creates a child process${exec.data.command ? "" : " with a command REA did not resolve"} (${execAbsence(context, groups, exec)})`,
+        `${exec.data.method}() creates a child process${exec.data.command ? "" : " with a command REA did not resolve"} (${execAbsence(context, sides, exec)})`,
         exec,
         APP_SOURCE,
       ),

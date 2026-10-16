@@ -151,23 +151,56 @@ between modules or components is low and a second copy is not.
 
 Reachability (RW-E01, RW-M01) follows REA's semantic graph: the functions
 REA reports, the calls it resolved, the binding reads each function owns,
-and imports through their imported names, export bindings, re-exports and
-namespace member reads. A read of an object or table (a handler map, a tool
-list) leads to the functions its initializer defines and the bindings it
-reads; the initializer ends before the binding's first use outside those
-functions. An import Release Watch cannot resolve to one of its module's
-functions reaches every process site of that module, and the finding says
-so.
+imports through their imported names, export bindings, re-exports and
+namespace member reads, a parameter of a callback that an iteration method
+runs, inline or through the binding that names it (`TOOLS.forEach((tool) =>
+…)`, `TOOLS.forEach(register)`), to the elements it iterates, and a member
+call on a receiver REA does not resolve (`this.run()`) to the method or
+class field of that name the enclosing class or object defines, else to that
+member of a binding the class reads outside its methods, such as the class
+it extends. A read of a value (a handler map, a tool list, an instance, a
+default-exported object) leads to what REA reports giving it a value: its
+initializer, later assignments, property writes (`handlers.git = …`, and
+`handlers[name] = …` for any member) and, by Release Watch's reading of the
+built-in methods, the arguments of `push`, `unshift`, `set` and `add` calls
+on it. A binding REA says holds a call's result gets that call's value; a
+call made when the module loads gives the value only what it returns (the
+class's methods for `new`, what a function written in place returns for
+`(() => …)()`), not the code it runs. By the same reading, a built-in method
+called on a value (`find`, `filter`, `slice`, `concat`, `get`, `values` and
+the like) gives that value's elements, `keys()` and `Object.keys()` give no
+function, and a callback whose result such a method does not keep (`find`,
+`filter`, `forEach`) is not part of the value. A receiver a method is bound
+back to (`repo.status.bind(repo)`) is reached only through `this`. REA
+reports where an object or array literal ends only as the range of an
+`export const` statement; Release Watch ends any other at the next
+declaration, use, assignment, property write, event listener registration,
+timer or discarded promise of its own scope (a later assignment ends only at
+a use inside a call, since it can read the binding itself). Bindings REA
+places in a nested function's scope, including a named function or class
+expression's own name, do not end it. A member read leads to the functions
+REA reports written to that member or names after it, or to every function
+there when REA's property slots show only that member can hold one and the
+value holds no more values than those slots; nowhere when they show it holds
+a literal. A method REA names after another member is never taken for this
+one. When REA's facts do not say which function a member read selects, which
+part of an element a callback parameter read without a member holds (a whole
+element, a destructured property or a key), or whether a call Release Watch
+read as part of a literal is a statement after it, Release Watch follows
+every candidate, the step says so, and the finding says the handler may
+reach the process site. An import Release Watch cannot resolve to one of its
+module's functions reaches every process site of that module, and the
+finding says so.
 
 ## Findings
 
 | Rule   | Severity            | Trigger                                                                                                                                                                                                                                                                    |
 | ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RW-E01 | critical            | A new renderer API whose IPC handler reaches process execution, inline, through an imported function that holds it, or through a same-module helper                                                                                                                        |
+| RW-E01 | critical            | A new renderer API whose IPC handler reaches process execution, inline, through an imported function that holds it, or through a same-module helper or value; "may reach" when the path follows a candidate Release Watch could not settle                                 |
 | RW-E02 | high / medium       | A window set a `webPreferences` safeguard to its unsafe (high) or a dynamic or unresolved (medium) value, or a new window has one; windows pair release-wide, one old to one new, by what they load, the functions creating them, what holds them, then their options      |
 | RW-E03 | high / medium       | A hardening fuse REA read as unsafe in any executable; medium when its old state was not established                                                                                                                                                                       |
 | RW-E04 | low                 | New renderer APIs, one finding per component                                                                                                                                                                                                                               |
-| RW-M01 | critical            | An MCP tool registration that reaches more process execution of a kind than before, inline, imported or through a same-module helper                                                                                                                                       |
+| RW-M01 | critical            | An MCP tool registration that reaches more process execution of a kind than before, inline, imported or through a same-module helper or value; "may reach" unless more registrations reach it than before by paths that follow no candidate Release Watch could not settle |
 | RW-M02 | medium / low        | More MCP tool registration calls across the release (medium); a switch between a CallTool dispatcher and per-tool registration (low)                                                                                                                                       |
 | RW-A01 | high / medium       | A new AI provider host (high; medium when only a URL near requests REA could not resolve suggests it), or one that browser code now calls when no old browser code did (medium)                                                                                            |
 | RW-A02 | critical / high     | A credential-format string not shipped before, or one moved into browser code; critical in browser code                                                                                                                                                                    |
@@ -236,6 +269,31 @@ passed.
   medium, without claiming the old window had the safeguard.
 - A capture records one session. It does not show which code sent a request
   or what other paths contact.
+- REA reports neither where an object or array literal ends (outside an
+  `export const` statement) nor which property an arrow function or a
+  binding in a literal is (`{ status, deploy }`). A statement between a
+  table and its first use that is not a declaration, a use, an assignment, a
+  property write, an event listener registration, a timer or a discarded
+  promise (a plain call such as `watch(() => …)`) is read as part of the
+  table, and a member read of a map whose functions REA does not name
+  reaches every function and binding the map holds that is not a method of
+  another name. Unless REA's property slots bound the table, what such a call
+  is given reaches only as a guess. Either way the finding says the handler
+  may reach the process site.
+- Arguments are not followed into the parameters of the function they are
+  passed to, except the elements an iteration method passes to its callback
+  and what `push`, `unshift`, `set` and `add` add to a value. REA does not
+  say which part of an element a callback parameter holds, so a parameter
+  read without a member (`({ name }) => …`, `([name, fn]) => …`) is followed
+  to all of each element as a guess. A callback passed by name is followed
+  only within its own module. `this.method()` is matched by name to a method
+  or class field of the enclosing class, or of a binding the class reads
+  outside its methods (the class it extends), and the finding says so; one
+  that matches none is not followed. REA relates no value to other members
+  of `this` (`this.tools[name]` after `this.tools = {…}`), and Release Watch
+  does not follow them. A function stored by a function the value is passed
+  to is not followed; one stored through a computed property
+  (`handlers[name] = fn`) may be any member's.
 - A process site whose command REA did not resolve is never taken as moved:
   a refactor that relocates one is reported high, with a note that it may be
   the same call.

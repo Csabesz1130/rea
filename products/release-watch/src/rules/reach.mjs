@@ -1,10 +1,23 @@
 // How a range of code (an IPC handler, an MCP tool registration) reaches
 // process-execution sites. From the range, Release Watch follows REA's
-// resolved same-module calls and every binding read (reach-resolve.mjs says
-// where each leads), breadth first, once per range. Every path is Release
-// Watch's correlation of REA facts, so callers label it heuristic.
-import { indexOf, inside } from "./reach-index.mjs";
-import { WHOLE_MODULE, followRead } from "./reach-resolve.mjs";
+// resolved same-module calls, every binding read (reach-resolve.mjs says
+// where each leads) and member reads on a receiver REA does not resolve
+// (`this.run()`, reach-this.mjs), breadth first, once per place. Every
+// path is Release Watch's correlation of REA facts, so callers label it
+// heuristic (reach-text.mjs words it).
+import { within } from "../ranges.mjs";
+import {
+  callRole,
+  constructedRead,
+  givesKeys,
+  isOwnReceiver,
+  runningCall,
+} from "./reach-calls.mjs";
+import { WHOLE_MODULE, indexOf, inside } from "./reach-index.mjs";
+import { followRead, producedBy } from "./reach-resolve.mjs";
+import { isGuess } from "./reach-text.mjs";
+import { followBareMember } from "./reach-this.mjs";
+import { outermostIn, outsideOf } from "./reach-value.mjs";
 
 // Path length bound; the search is already bounded by visiting each
 // function once, so this only cuts pathological chains.
@@ -14,47 +27,142 @@ const callStep = (fn) => ({ kind: "call", name: fn.name, location: null });
 
 const keyOf = (target) => {
   if (target.fn) return target.fn.id;
-  if (target.region)
-    return `value:${target.region.module}:${JSON.stringify(target.region.range.start)}`;
+  if (target.region) {
+    const { module, parts, path } = target.region;
+    return `value:${module}:${JSON.stringify(parts[0].start)}:${parts.length}:${path?.join(".") ?? ""}`;
+  }
   return `module:${target.whole}`;
 };
 
-// One queued place: its process sites and resolved calls, unless it is an
-// initializer, which runs when the module loads, not when the handler does;
-// then the bindings it reads, wherever they lead.
-const explore = ({ state, reached, visit }, entry) => {
+// Code that runs when the place runs: its process sites, the calls REA
+// resolved, the bindings it reads (except a receiver a method is bound back
+// to, which the method reaches only through `this`) and the methods `this`
+// names.
+const exploreCode = ({ state, record, visit }, entry) => {
   const { index } = state;
-  const { module: current, range: where, steps, readsOnly } = entry;
-  if (!readsOnly) {
-    for (const { exec } of inside(index.execs.get(current), where))
-      if (!reached.has(exec.node_id))
-        reached.set(exec.node_id, { exec, steps });
-    for (const call of inside(index.calls.get(current), where))
-      for (const fn of call.callees.map((id) => index.byId.get(id)))
-        if (fn) visit({ fn }, [...steps, callStep(fn)]);
-  }
+  const { module: current, range: where, steps } = entry;
+  for (const { exec } of inside(index.execs.get(current), where))
+    record(exec, steps);
+  for (const call of inside(index.calls.get(current), where))
+    for (const fn of call.callees.map((id) => index.byId.get(id)))
+      if (fn) visit({ fn }, [...steps, callStep(fn)]);
   for (const item of inside(index.reads.get(current), where))
-    for (const target of followRead(state, item))
-      visit(target, [...steps, target.step]);
+    if (!isOwnReceiver(index, current, item))
+      for (const target of followRead(state, item))
+        visit(target, [...steps, target.step]);
+  for (const member of inside(index.members.get(current), where))
+    if (member.bare)
+      for (const target of followBareMember(state, member))
+        visit(target, [...steps, ...target.steps]);
 };
 
+// Steps through a part of a value that may belong to a statement after it
+// (reach-value.mjs) say so.
+const marked = (steps, open) =>
+  open ? [{ ...steps[0], open: true }, ...steps.slice(1)] : steps;
+
+// One read at an initializer's own level: a value it holds (forwarding the
+// member read that reached the value), a call it makes when the module
+// loads (only what the call produces), the elements of a value a built-in
+// method gives (`TOOLS.find(…)`), or no function (`handlers.keys()`, or a
+// receiver a method is bound back to).
+const levelRead = ({ state, visit }, entry, item, constructs) => {
+  const { index } = state;
+  const { module, steps, path, uncertain = [] } = entry;
+  if (isOwnReceiver(index, module, item)) return;
+  const open = uncertain.some((range) => within(item.range, range));
+  const go = (target, more) => visit(target, [...steps, ...marked(more, open)]);
+  const role = constructs.has(item)
+    ? { kind: "call", call: constructs.get(item) }
+    : callRole(index, module, item);
+  if (role?.kind === "keys") return;
+  if (role?.kind !== "call") {
+    for (const target of followRead(state, item, path))
+      go(target, [target.step]);
+    return;
+  }
+  for (const target of followRead(state, item))
+    for (const made of producedBy(index, target, role.call, path))
+      go(made, [target.step, made.step]);
+};
+
+// An initializer, which runs when the module loads, not when the handler
+// does: what its own level reads is part of the value (functions it holds
+// are explored as values elsewhere), what it gives `Object.keys` holds no
+// function, and a function it runs there (`(() => …)()`) gives the value
+// only what it returns.
+const exploreValue = (context, entry) => {
+  const { index } = context.state;
+  const { module, parts, steps, path, uncertain = [] } = entry;
+  const defined = outermostIn(index, module, parts);
+  const level = outsideOf(defined);
+  const constructs = new Map();
+  const keys = [];
+  for (const part of parts)
+    for (const call of inside(index.callSites.get(module), part)) {
+      if (!level(call.range)) continue;
+      if (call.construct) {
+        const read = constructedRead(index, module, call);
+        if (read) constructs.set(read, call);
+      } else if (givesKeys(index, module, call)) keys.push(call.range);
+    }
+  for (const fn of defined) {
+    const call = runningCall(index, fn);
+    const open = uncertain.some((range) => within(fn.range, range));
+    if (call)
+      for (const made of producedBy(index, { fn }, call, path))
+        context.visit(made, [
+          ...steps,
+          ...marked([{ ...made.step, kind: "runs" }], open),
+        ]);
+  }
+  for (const part of parts)
+    for (const item of inside(index.reads.get(module), part))
+      if (level(item.range) && !keys.some((range) => within(item.range, range)))
+        levelRead(context, entry, item, constructs);
+};
+
+const placeOf = (target, steps) => {
+  if (target.fn)
+    return { module: target.fn.module, range: target.fn.range, steps };
+  if (target.region) return { ...target.region, steps, value: true };
+  return { module: target.whole, range: WHOLE_MODULE, steps };
+};
+
+// Breadth first, every path REA's facts settle before any path through a
+// guess (a member read Release Watch could not resolve to one function),
+// so a process site is reported through a guess only when nothing else
+// reaches it.
 const search = (app, index, { module, range }) => {
   const reached = new Map();
-  const seen = new Set();
-  const queue = [{ module, range, steps: [] }];
+  const seen = new Map();
+  const queues = { settled: [{ module, range, steps: [] }], guessed: [] };
   const state = { app, index };
   const visit = (target, steps) => {
     const key = keyOf(target);
-    if (seen.has(key) || steps.length > MAX_DEPTH) return;
-    seen.add(key);
-    if (target.fn)
-      queue.push({ module: target.fn.module, range: target.fn.range, steps });
-    else if (target.region)
-      queue.push({ ...target.region, steps, readsOnly: true });
-    else queue.push({ module: target.whole, range: WHOLE_MODULE, steps });
+    const guessed = steps.some(isGuess);
+    if (steps.length > MAX_DEPTH || seen.get(key) === "settled") return;
+    if (seen.has(key) && guessed) return;
+    seen.set(key, guessed ? "guessed" : "settled");
+    queues[guessed ? "guessed" : "settled"].push({
+      ...placeOf(target, steps),
+      key,
+    });
   };
-  for (let next = 0; next < queue.length; next += 1)
-    explore({ state, reached, visit }, queue[next]);
+  // Settled places are all explored first, so the first path recorded wins.
+  const record = (exec, steps) => {
+    if (!reached.has(exec.node_id)) reached.set(exec.node_id, { exec, steps });
+  };
+  for (const name of ["settled", "guessed"])
+    for (let next = 0; next < queues[name].length; next += 1) {
+      const place = queues[name][next];
+      // Reached by a settled path after it was queued through a guess.
+      if (name === "guessed" && seen.get(place.key) === "settled") continue;
+      (place.value ? exploreValue : exploreCode)(
+        { state, record, visit },
+        place,
+      );
+    }
   return reached;
 };
 
@@ -78,8 +186,9 @@ const kindOf = (steps) => {
 
 /**
  * The way code in `module` within `range` reaches `exec`, or null:
- * `{ kind, steps, read }` with kind inline, local-helper, imported or
- * unresolved-import, and `read` the first read step, for citing.
+ * `{ kind, steps, read, guess }` with kind inline, local-helper, imported
+ * or unresolved-import, `read` the first read step, for citing, and
+ * `guess` set when a step followed every candidate of a member read.
  */
 export const reachOf = (app, scope, exec) => {
   if (scope.module === null || scope.range === null) return null;
@@ -89,48 +198,6 @@ export const reachOf = (app, scope, exec) => {
     kind: kindOf(found.steps),
     steps: found.steps,
     read: found.steps.find((step) => step.location) ?? null,
+    guess: found.steps.some(isGuess),
   };
-};
-
-const importedName = (step) => {
-  if (step.member) return `${step.name}.${step.imported}`;
-  return step.imported === step.name
-    ? step.name
-    : `${step.imported} as ${step.name}`;
-};
-
-const stepText = (step) => {
-  if (step.kind === "call")
-    return `calls ${step.name ?? "a function"} through a call REA resolved`;
-  if (step.kind === "local")
-    return `reads ${step.name}, a function in the same module`;
-  if (step.kind === "value" && step.target)
-    return `reads ${step.member ? `${step.name}.${step.member}` : step.name}, whose initializer defines ${step.target}`;
-  if (step.kind === "value")
-    return step.member
-      ? `reads ${step.name}.${step.member}, and REA names none of the functions in the initializer of ${step.name}, so Release Watch followed each of them`
-      : `reads ${step.name}, whose initializer defines a function`;
-  if (step.kind === "initializer")
-    return `reads ${step.name}, whose initializer reads further bindings`;
-
-  if (step.kind === "import")
-    return `reads ${importedName(step)}, imported from ${step.module}`;
-  return `reads ${importedName(step)}, imported from ${step.module}, which Release Watch could not resolve to one of its functions, so it followed the whole module`;
-};
-
-/** The unknown a finding carries when a reach path crosses an unresolved import. */
-export const reachUnknowns = (paths) =>
-  paths.some((path) => path?.kind === "unresolved-import")
-    ? [
-        "Release Watch could not resolve an import to one of its module's functions, so it followed everything that module does.",
-      ]
-    : [];
-
-/** One heuristic sentence for a reach path; `owner` names the code that reaches, in lower case. */
-export const reachClaim = (path, exec, owner) => {
-  const subject = `${owner[0].toUpperCase()}${owner.slice(1)}`;
-  if (path.kind === "inline")
-    return `${subject} contains ${exec.data.method}() in its source range`;
-  const chain = path.steps.map(stepText).join(", which ");
-  return `${subject} ${chain}; ${exec.data.method}() runs there. REA reports each read, import and function; Release Watch connects them`;
 };
