@@ -164,7 +164,7 @@ so.
 | Rule   | Severity            | Trigger                                                                                                                                                                                                                                                                    |
 | ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | RW-E01 | critical            | A new renderer API whose IPC handler reaches process execution, inline, through an imported function that holds it, or through a same-module helper                                                                                                                        |
-| RW-E02 | high / medium       | A window set a `webPreferences` safeguard to its unsafe (high) or a dynamic (medium) value; windows pair by the variable that holds them, what they load (a call on the constructor, or on the variable after each assignment), then their options                         |
+| RW-E02 | high / medium       | A window set a `webPreferences` safeguard to its unsafe (high) or a dynamic or unresolved (medium) value, or a new window has one; windows pair release-wide, one old to one new, by what they load, the functions creating them, what holds them, then their options      |
 | RW-E03 | high / medium       | A hardening fuse REA read as unsafe in any executable; medium when its old state was not established                                                                                                                                                                       |
 | RW-E04 | low                 | New renderer APIs, one finding per component                                                                                                                                                                                                                               |
 | RW-M01 | critical            | An MCP tool registration that reaches more process execution of a kind than before, inline, imported or through a same-module helper                                                                                                                                       |
@@ -210,7 +210,30 @@ passed.
 - Correlations are labelled heuristic: an IPC handler reaching an imported
   exec site, an MCP registration containing one, a request attributed to a URL
   literal in the same module, a module counted as browser code because a page
-  loads it, an omitted `webPreferences` option relying on Electron's default.
+  loads it, an omitted `webPreferences` option relying on Electron's default,
+  the old BrowserWindow a new one is paired with.
+- Windows pair first by what they load, then by the named functions that
+  create them and the binding or member REA reports holding them, so a window
+  that now loads what another window loaded is paired with that window. A
+  call on one that holds several windows goes to the window created last
+  before it in the same function, so windows created in two branches of one
+  function are told apart by position; a call in another function leaves
+  those windows' loads unknown. Windows left unpaired by these pair by
+  options within their component, identical first and then the closest, so
+  options swapped between them, or a window replaced by another with similar
+  options, are not reported. Across components they pair by options only in
+  a component new in the release, with the old windows no other component
+  kept.
+- A `webPreferences` value REA did not resolve is compared by its tokens,
+  without spacing, comments, string quoting and the parentheses around a
+  name, a member path, a literal or the whole expression. A renamed variable
+  or other parentheses read as a change (medium), and REA reports a
+  minifier's `!0` or `!1` as such a value, so a change between them is graded
+  medium. REA gives no text for a whole options or `webPreferences` object it
+  reports as dynamic, so a change inside one both releases use is not seen.
+  An option set next to a spread or computed key is taken as set; REA does
+  not report which comes first, so an unsafe value after one is graded
+  medium, without claiming the old window had the safeguard.
 - A capture records one session. It does not show which code sent a request
   or what other paths contact.
 - A process site whose command REA did not resolve is never taken as moved:

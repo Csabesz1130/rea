@@ -17,6 +17,7 @@ import { processPack } from "./rules/process.mjs";
 import { runtimePack } from "./rules/runtime.mjs";
 import { maxSeverity, severityRank } from "./rules/shared.mjs";
 import { shipsOriginals, webPack } from "./rules/web.mjs";
+import { releaseWindowPairing } from "./rules/window-pairing.mjs";
 import { releaseMoves } from "./moves.mjs";
 import { sdkUses } from "./surfaces.mjs";
 
@@ -97,7 +98,6 @@ export const releaseBaseline = (leftSides) => ({
     ),
   ),
   ...shippedTokensOf(leftSides),
-  windows: leftSides.flatMap((side) => side.app?.windows ?? []),
   digests: new Set(
     leftSides
       .flatMap((side) => side.app?.assets ?? [])
@@ -174,6 +174,7 @@ export const evaluateComponent = (component) => {
     moves:
       component.release?.moves ??
       releaseMovesOf([{ ...component, comparable: true }]),
+    windows: component.release?.windows ?? releaseWindowPairing([component]),
     aliases: component.aliases ?? new Map(),
     network: networkView(component.left, component.right, baseline, {
       ignoreCapture: component.captureBaselineFailed === true,

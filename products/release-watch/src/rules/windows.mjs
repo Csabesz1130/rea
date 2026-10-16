@@ -1,28 +1,93 @@
 // RW-E02: BrowserWindow webPreferences regressions. REA reports each window's
-// options but not which window of one release is which window of the other,
-// so Release Watch pairs them: by the variable that holds a window and what
-// it loads first, then identical windows (a reorder or a move to another file changes nothing),
-// then the closest remaining ones by their other options, file and
-// position. A new window with no counterpart is judged on its own values.
-import { APP_SOURCE, cite, heuristic, reported } from "./shared.mjs";
+// options but not which window of one release is which window of the other;
+// window-pairing.mjs pairs them release-wide. A paired window regressed when
+// a safeguard became unsafe, became a dynamic value or one REA did not
+// resolve, or changed dynamic value (compared in the form the facts give
+// it); a new window with no counterpart is judged on its own values.
+import { windowFile } from "./window-pairing.mjs";
+import { APP_SOURCE, cite, heuristic } from "./shared.mjs";
 
-// Values Electron uses when the option is omitted (Electron 20 and later).
+// Values Electron uses when the option is omitted (Electron 20 and later),
+// and how a change to the unsafe value reads.
 const WEB_PREFERENCES = {
-  sandbox: { safe: true, label: "Renderer sandbox" },
-  contextIsolation: { safe: true, label: "Context isolation" },
+  sandbox: {
+    safe: true,
+    label: "Renderer sandbox",
+    change: "turned off",
+    state: "off",
+    newWindow: "without the renderer sandbox",
+  },
+  contextIsolation: {
+    safe: true,
+    label: "Context isolation",
+    change: "turned off",
+    state: "off",
+    newWindow: "without context isolation",
+  },
   nodeIntegration: {
     safe: false,
     label: "Node.js integration in the renderer",
+    change: "turned on",
+    state: "on",
+    newWindow: "with Node.js integration in the renderer",
   },
   nodeIntegrationInWorker: {
     safe: false,
     label: "Node.js integration in workers",
+    change: "turned on",
+    state: "on",
+    newWindow: "with Node.js integration in workers",
   },
-  webSecurity: { safe: true, label: "Web security (same-origin policy)" },
-  allowRunningInsecureContent: { safe: false, label: "Mixed-content blocking" },
+  webSecurity: {
+    safe: true,
+    label: "Web security (same-origin policy)",
+    change: "turned off",
+    state: "off",
+    newWindow: "without web security (same-origin policy)",
+  },
+  allowRunningInsecureContent: {
+    safe: false,
+    label: "Mixed-content blocking",
+    change: "turned off",
+    state: "off",
+    newWindow: "without mixed-content blocking",
+  },
 };
 
-// One window's setting of one preference: "default" when omitted.
+const unresolvedText = (unresolved) =>
+  unresolved
+    .map(({ source, expression }) =>
+      source === "spread"
+        ? `...${expression ?? "(spread)"}`
+        : source === "computed key"
+          ? `computed key ${expression ?? ""}`.trim()
+          : `the ${source} value`,
+    )
+    .join(", ");
+
+/**
+ * One window's setting of one preference: what REA reported for it, else
+ * the values REA did not resolve that may set it (`explicit: false`), else
+ * null when the window omits it. A value REA did not resolve has `value`,
+ * its text, and `compared`, the form it is compared in.
+ */
+const settingOf = (window, name) => {
+  const explicit = window.data.web_preferences[name];
+  if (explicit) return { ...explicit, explicit: true };
+  const unresolved = window.data.unresolved_preferences ?? [];
+  return unresolved.length === 0
+    ? null
+    : {
+        known: false,
+        value: unresolvedText(unresolved),
+        compared: JSON.stringify(
+          unresolved.map(({ source, compared }) => [source, compared]),
+        ),
+        explicit: false,
+      };
+};
+
+// "default" when omitted, "dynamic" when not statically known.
 const stateOf = (setting, rule) =>
   setting === null
     ? "default"
@@ -35,289 +100,264 @@ const stateOf = (setting, rule) =>
 const settingText = (name, setting) =>
   setting === null
     ? `${name} omitted`
-    : `${name} = ${setting.known ? JSON.stringify(setting.value) : `dynamic value ${setting.value ?? ""}`.trim()}`;
+    : setting.known
+      ? `${name} = ${JSON.stringify(setting.value)}`
+      : setting.explicit
+        ? `${name} = dynamic value ${setting.value ?? ""}`.trim()
+        : `${name} may be set by ${setting.value}, which REA did not resolve`;
 
-const windowFile = (window) => window.data.source_path ?? window.key;
-const settingOf = (window, name) => window.data.web_preferences[name] ?? null;
-const valueText = (setting) =>
-  setting === null ? "omitted" : JSON.stringify([setting.known, setting.value]);
-const signature = (window) =>
-  JSON.stringify(
-    Object.keys(window.data.web_preferences)
-      .sort()
-      .map((name) => [name, valueText(settingOf(window, name))]),
-  );
-
-const similarity = (a, b) => {
-  const names = new Set([
-    ...Object.keys(a.data.web_preferences),
-    ...Object.keys(b.data.web_preferences),
-  ]);
-  return [...names].filter(
-    (name) => valueText(settingOf(a, name)) === valueText(settingOf(b, name)),
-  ).length;
+// How one preference of one paired or new window regressed: "unsafe",
+// "dynamic" (an explicit value REA did not resolve), "unresolved" (a value
+// REA did not resolve that may set it), or null.
+const changeOf = (name, rule, { was, now }) => {
+  const after = settingOf(now, name);
+  const before = was === null ? null : settingOf(was, name);
+  const afterState = stateOf(after, rule);
+  const beforeState = was === null ? null : stateOf(before, rule);
+  if (afterState === "unsafe")
+    return beforeState === "unsafe" ? null : "unsafe";
+  if (afterState !== "dynamic" || beforeState === "unsafe") return null;
+  // The same unresolved value on both sides is not a change Release Watch
+  // can see; a different one is.
+  if (beforeState === "dynamic" && before.compared === after.compared)
+    return null;
+  return after.explicit ? "dynamic" : "unresolved";
 };
 
-const lineOf = (window) => window.location?.line ?? 0;
-
-const loadsOf = (window) =>
-  (window.data.loads ?? []).length > 0
-    ? JSON.stringify(window.data.loads)
-    : null;
-
-// Pairs each new window with the one old window that shares its key; a key
-// two old windows share pairs nothing.
-const pairUnique = (state, keyOf) => {
-  const remaining = [];
-  for (const window of state.now) {
-    const key = keyOf(window, "new");
-    const matches =
-      key === null ? [] : state.old.filter((was) => keyOf(was, "old") === key);
-    if (matches.length !== 1) {
-      remaining.push(window);
-      continue;
+// Regressions grouped into findings: one per preference, file, kind,
+// whether the windows are new and whether REA resolved their old value;
+// values REA did not resolve, one per file.
+const regressionGroups = (items) => {
+  const groups = new Map();
+  for (const [name, rule] of Object.entries(WEB_PREFERENCES))
+    for (const item of items) {
+      const kind = changeOf(name, rule, item);
+      if (kind === null) continue;
+      const file = windowFile(item.now);
+      const added = item.was === null;
+      const key = JSON.stringify([
+        kind,
+        kind === "unresolved" ? null : name,
+        file,
+        added,
+        kind !== "unresolved" &&
+          !added &&
+          stateOf(settingOf(item.was, name), rule) === "dynamic",
+      ]);
+      if (!groups.has(key))
+        groups.set(key, { kind, name, rule, file, added, items: new Map() });
+      const group = groups.get(key);
+      const entry = group.items.get(item.now) ?? { ...item, names: [] };
+      entry.names.push(name);
+      group.items.set(item.now, entry);
     }
-    state.old.splice(state.old.indexOf(matches[0]), 1);
-    state.pairs.push([matches[0], window]);
-  }
-  state.now = remaining;
-};
-
-// Identity first: the variable a window is assigned to in its file, what it
-// loads, then the variable alone, whatever its options.
-const pairByIdentity = (oldWindows, newWindows, fileOf) => {
-  const state = { old: [...oldWindows], now: [...newWindows], pairs: [] };
-  const variable = (window) => window.data.variable ?? null;
-  pairUnique(state, (window, side) =>
-    variable(window) === null
-      ? null
-      : `${side === "old" ? fileOf(window) : windowFile(window)}\u0000${variable(window)}`,
-  );
-  pairUnique(state, loadsOf);
-  pairUnique(state, variable);
-  return state;
-};
-
-// The windows left once identical ones are paired off, the same file first.
-const withoutIdentical = (oldWindows, newWindows, fileOf) => {
-  const old = [...oldWindows];
-  const now = [];
-  const take = (window, sameFile) => {
-    const index = old.findIndex(
-      (candidate) =>
-        signature(candidate) === signature(window) &&
-        (fileOf(candidate) === windowFile(window)) === sameFile,
-    );
-    if (index !== -1) old.splice(index, 1);
-    return index !== -1;
-  };
-  const unmatched = newWindows.filter((window) => !take(window, true));
-  for (const window of unmatched) if (!take(window, false)) now.push(window);
-  return { old, now };
-};
-
-/**
- * `{ pairs, added, tied }`: changed windows paired with their closest old
- * window, new windows with none, and whether any pairing had an equally
- * close alternative.
- */
-const pairWindows = (oldWindows, newWindows, fileOf) => {
-  const byIdentity = pairByIdentity(oldWindows, newWindows, fileOf);
-  const { old, now } = withoutIdentical(byIdentity.old, byIdentity.now, fileOf);
-  const score = (was, window) => [
-    similarity(was, window),
-    fileOf(was) === windowFile(window) ? 1 : 0,
-    -Math.abs(lineOf(was) - lineOf(window)),
-  ];
-  const candidates = now
-    .flatMap((window) =>
-      old.map((was) => ({ was, window, score: score(was, window) })),
-    )
-    .sort((a, b) =>
-      b.score.reduce(
-        (order, value, index) => order || value - a.score[index],
-        0,
-      ),
-    );
-  const pairs = [...byIdentity.pairs];
-  let tied = false;
-  const usedOld = new Set();
-  const usedNew = new Set();
-  for (const candidate of candidates) {
-    if (usedOld.has(candidate.was) || usedNew.has(candidate.window)) continue;
-    tied ||= candidates.some(
-      (other) =>
-        other !== candidate &&
-        !usedOld.has(other.was) &&
-        !usedNew.has(other.window) &&
-        (other.was === candidate.was || other.window === candidate.window) &&
-        JSON.stringify(other.score) === JSON.stringify(candidate.score),
-    );
-    usedOld.add(candidate.was);
-    usedNew.add(candidate.window);
-    pairs.push([candidate.was, candidate.window]);
-  }
-  return {
-    pairs,
-    added: now.filter((window) => !usedNew.has(window)),
-    removed: old.filter((window) => !usedOld.has(window)),
-    tied,
-  };
-};
-
-// Windows whose setting of one preference regressed, by new file.
-const regressionsOf = (paired, name, rule) => {
-  const files = new Map();
-  const state = (window) =>
-    window === null ? null : stateOf(settingOf(window, name), rule);
-  const items = [
-    ...paired.pairs,
-    ...paired.added.map((window) => [null, window]),
-  ];
-  for (const [was, now] of items) {
-    const before = state(was);
-    const after = state(now);
-    const kind =
-      after === "unsafe" && before !== "unsafe"
-        ? "unsafe"
-        : after === "dynamic" && before !== "dynamic" && before !== "unsafe"
-          ? "dynamic"
-          : null;
-    if (kind === null) continue;
-    const file = windowFile(now);
-    if (!files.has(file)) files.set(file, { unsafe: [], dynamic: [] });
-    files.get(file)[kind].push({ was, now });
-  }
-  return files;
-};
-
-// How the old release set the preference in the windows a regression pairs
-// with: explicit values are REA facts, omitted values Electron's default.
-const beforeLines = (context, name, rule, items) =>
-  items.map(({ was, now }) => {
-    if (was === null)
-      return reported(
-        `${context.labels.left}: no BrowserWindow corresponds to the one in ${windowFile(now)}`,
-        "derived",
-        APP_SOURCE,
-      );
-    const setting = settingOf(was, name);
-    return setting === null
-      ? heuristic(
-          `${context.labels.left}: BrowserWindow in ${windowFile(was)} omits ${name}; Electron 20+ defaults it to ${JSON.stringify(rule.safe)}`,
-          was.location,
-          { side: "left" },
-        )
-      : cite(
-          `${context.labels.left}: BrowserWindow in ${windowFile(was)}${was.data.component && was.data.component !== context.name ? ` of component ${was.data.component}` : ""}: ${settingText(name, setting)}`,
-          was,
-          APP_SOURCE,
-          { side: "left" },
-        );
-  });
-
-const regressionFinding = (
-  context,
-  { name, rule, file, items, known, tied },
-) => {
-  const oldDynamic =
-    known &&
-    items.some(
-      ({ was }) =>
-        was !== null && stateOf(settingOf(was, name), rule) === "dynamic",
-    );
-  const shown = settingOf(items[0].now, name);
-  const verb = rule.safe === true ? "turned off" : "turned on";
-  const omitted = items.some(
-    ({ was }) => was !== null && settingOf(was, name) === null,
-  );
-  return {
-    rule: "RW-E02",
-    severity: known && !oldDynamic ? "high" : "medium",
-    title: known
-      ? `${rule.label} ${verb} (${name}: ${JSON.stringify(shown.value)})`
-      : `${rule.label} no longer statically known (${name})`,
-    summary: `${items.length} BrowserWindow${items.length === 1 ? "" : "s"} in ${file} set ${name} to ${known ? "the unsafe value" : "a dynamic value"} in ${context.labels.right}, where the corresponding ${items.length === 1 ? "window" : "windows"} of ${context.labels.left} did not.`,
-    why: "This removes a layer that contains compromised or untrusted web content.",
-    recommendation:
-      "Ask the vendor to restore the setting or document the compensating control.",
-    evidence: [
-      ...beforeLines(context, name, rule, items),
-      ...items.map(({ now }) =>
-        cite(
-          `${context.labels.right}: BrowserWindow in ${file}: ${settingText(name, settingOf(now, name))}`,
-          now,
-          APP_SOURCE,
-        ),
-      ),
-      heuristic(
-        "Release Watch pairs windows across releases by the variable that holds them, what they load, their options, file and position; REA does not identify a window across releases",
-      ),
-    ],
-    unknowns: [
-      "Static webPreferences do not prove runtime enforcement; code can still change them before window creation.",
-      ...(oldDynamic
-        ? [
-            `${context.labels.left} set ${name} to a dynamic value REA did not resolve, so the old state is not established.`,
-          ]
-        : []),
-      ...(tied
-        ? [
-            "Several old windows matched equally well, so the pairing may not be the vendor's own.",
-          ]
-        : []),
-      ...(omitted
-        ? [
-            "Release Watch assumes Electron 20 or later defaults for omitted options; REA did not report the Electron version.",
-          ]
-        : []),
-    ],
-  };
-};
-
-/**
- * The old windows a component's new windows did not pair with, tagged with
- * the component, for the release's new components to pair with.
- */
-export const unpairedWindows = (component, oldWindows, newWindows, aliases) => {
-  const fileOf = (window) =>
-    aliases.get(windowFile(window))?.path ?? windowFile(window);
-  return pairWindows(oldWindows, newWindows, fileOf).removed.map((window) => ({
-    ...window,
-    data: { ...window.data, component },
+  return [...groups.values()].map((group) => ({
+    ...group,
+    items: [...group.items.values()],
   }));
 };
 
-/**
- * RW-E02 findings for one component. A component new in this release is
- * paired with every window of the old release.
- */
+// The old states of the options a paired or new window reports on.
+const oldStates = ({ was, names }) =>
+  was === null
+    ? []
+    : names.map((name) => stateOf(settingOf(was, name), WEB_PREFERENCES[name]));
+
+const counted = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+const themOrIt = (items) => (items.length === 1 ? "it" : "them");
+
+const defaultsText = (names) =>
+  names.length === 1
+    ? `defaults it to ${JSON.stringify(WEB_PREFERENCES[names[0]].safe)}`
+    : `defaults ${names.map((name) => `${name} to ${JSON.stringify(WEB_PREFERENCES[name].safe)}`).join(", ")}`;
+
+// How the old release set the preferences in the windows a regression pairs
+// with: what REA reported, and omitted values as Electron's default.
+const beforeLines = (context, items) =>
+  items
+    .filter(({ was }) => was !== null)
+    .flatMap(({ was, from, names }) => {
+      const where = `${context.labels.left}: BrowserWindow in ${windowFile(was)}${from && from !== context.name ? ` of component ${from}` : ""}`;
+      const settings = names.map((name) => [name, settingOf(was, name)]);
+      const omitted = settings
+        .filter(([, setting]) => setting === null)
+        .map(([name]) => name);
+      const set = settings.filter(([, setting]) => setting !== null);
+      return [
+        ...(set.length > 0
+          ? [
+              cite(
+                `${where}: ${set.map(([name, setting]) => settingText(name, setting)).join("; ")}`,
+                was,
+                APP_SOURCE,
+                { side: "left" },
+              ),
+            ]
+          : []),
+        ...(omitted.length > 0
+          ? [
+              heuristic(
+                `${where} omits ${omitted.join(", ")}; Electron 20+ ${defaultsText(omitted)}`,
+                was.location,
+                { side: "left" },
+              ),
+            ]
+          : []),
+      ];
+    });
+
+const afterLines = (context, group) =>
+  group.items.map(({ now, names }) =>
+    cite(
+      group.kind === "unresolved"
+        ? `${context.labels.right}: BrowserWindow in ${group.file}: ${names.join(", ")} may be set by ${settingOf(now, names[0]).value}, which REA did not resolve`
+        : `${context.labels.right}: BrowserWindow in ${group.file}: ${settingText(group.name, settingOf(now, group.name))}`,
+      now,
+      APP_SOURCE,
+    ),
+  );
+
+const pairingLine = (context, group) =>
+  group.added
+    ? heuristic(
+        `Release Watch paired no ${context.labels.left} BrowserWindow with ${group.items.length === 1 ? "this one" : "these"}: it pairs windows by what they load, the functions that create them, what holds them and their options, as REA does not identify a window across releases`,
+      )
+    : heuristic(
+        "Release Watch pairs windows across releases by what they load, the functions that create them, what holds them, their options, file and position; REA does not identify a window across releases",
+      );
+
+// What the evidence does not establish for one group.
+const unknownsOf = (context, group, oldDynamic) => {
+  const omitted = group.items.some(
+    ({ was, names }) =>
+      was !== null && names.some((name) => settingOf(was, name) === null),
+  );
+  const overridable =
+    group.kind !== "unresolved" &&
+    group.items.some(({ was, now }) =>
+      [was, now].some(
+        (window) =>
+          window !== null &&
+          settingOf(window, group.name)?.explicit === true &&
+          (window.data.unresolved_preferences ?? []).length > 0,
+      ),
+    );
+  return [
+    "Static webPreferences do not prove runtime enforcement; code can still change them before window creation.",
+    ...(oldDynamic
+      ? [
+          `${context.labels.left} took ${group.kind === "unresolved" ? "these options" : group.name} from a value REA did not resolve, so the old state is not established.`,
+        ]
+      : []),
+    ...(overridable
+      ? [
+          `REA reports ${group.name} next to values it did not resolve (a spread or computed key) but not their order, so one of them may override it.`,
+        ]
+      : []),
+    ...(group.items.some((item) => item.tied)
+      ? [
+          "Several old windows matched equally well, so the pairing may not be the vendor's own.",
+        ]
+      : []),
+    ...(omitted
+      ? [
+          "Release Watch assumes Electron 20 or later defaults for omitted options; REA did not report the Electron version.",
+        ]
+      : []),
+  ];
+};
+
+const unsafeText = (context, group, oldDynamic) => {
+  const { name, rule, items, added, file } = group;
+  const shown = JSON.stringify(settingOf(items[0].now, name).value);
+  const paired = `the ${context.labels.left} ${items.length === 1 ? "window" : "windows"} Release Watch paired with ${themOrIt(items)}`;
+  if (oldDynamic)
+    return {
+      title: `${rule.label} ${rule.state}, old value not established (${name}: ${shown})`,
+      summary: `${counted(items.length, "BrowserWindow")} in ${file} set ${name} to the unsafe value in ${context.labels.right}, where ${paired} took it from a value REA did not resolve.`,
+      why: "If the old window had this safeguard, this removes a layer that contains compromised or untrusted web content.",
+      recommendation:
+        "Ask the vendor what the old setting was, and to restore it or document the compensating control.",
+    };
+  return added
+    ? {
+        title: `New BrowserWindow ${rule.newWindow} (${name}: ${shown})`,
+        summary: `${counted(items.length, "new BrowserWindow")} in ${file} set ${name} to the unsafe value in ${context.labels.right}; Release Watch paired no ${context.labels.left} window with ${themOrIt(items)}.`,
+        why: "The window runs without a layer that contains compromised or untrusted web content.",
+        recommendation:
+          "Ask the vendor why the new window needs this setting, or to document the compensating control.",
+      }
+    : {
+        title: `${rule.label} ${rule.change} (${name}: ${shown})`,
+        summary: `${counted(items.length, "BrowserWindow")} in ${file} set ${name} to the unsafe value in ${context.labels.right}, where ${paired} did not.`,
+        why: "This removes a layer that contains compromised or untrusted web content.",
+        recommendation:
+          "Ask the vendor to restore the setting or document the compensating control.",
+      };
+};
+
+const dynamicText = (context, group) => {
+  const { name, rule, items, added, file, kind } = group;
+  const unresolved = kind === "unresolved";
+  const names = Object.keys(WEB_PREFERENCES).filter((option) =>
+    items.some((item) => item.names.includes(option)),
+  );
+  const what = unresolved
+    ? `took ${names.join(", ")} from values REA did not resolve`
+    : `set ${name} to a dynamic value REA did not resolve`;
+  // Every paired window already had a value REA did not resolve, another one.
+  const changed = items.every(
+    (item) =>
+      item.was !== null &&
+      oldStates(item).every((state) => state === "dynamic"),
+  );
+  const paired = `the ${context.labels.left} ${items.length === 1 ? "window" : "windows"} Release Watch paired with ${themOrIt(items)}`;
+  return {
+    title: added
+      ? `New BrowserWindow with ${unresolved ? "webPreferences" : name} not statically known`
+      : unresolved
+        ? `webPreferences ${changed ? "set from a different unresolved value" : "no longer statically known"}`
+        : `${rule.label} ${changed ? "set to a different dynamic value" : "no longer statically known"} (${name})`,
+    summary: added
+      ? `${counted(items.length, "new BrowserWindow")} in ${file} ${what} in ${context.labels.right}; Release Watch paired no ${context.labels.left} window with ${themOrIt(items)}.`
+      : `${counted(items.length, "BrowserWindow")} in ${file} ${what} in ${context.labels.right}, where ${paired} ${changed ? "used a different one" : "did not"}.`,
+    why: "Release Watch cannot tell whether the window keeps the layers that contain compromised or untrusted web content.",
+    recommendation:
+      "Ask the vendor what the settings are at runtime, or to document the compensating control.",
+  };
+};
+
+const regressionFinding = (context, group) => {
+  const oldDynamic = group.items.some((item) =>
+    oldStates(item).includes("dynamic"),
+  );
+  return {
+    rule: "RW-E02",
+    severity: group.kind === "unsafe" && !oldDynamic ? "high" : "medium",
+    ...(group.kind === "unsafe"
+      ? unsafeText(context, group, oldDynamic)
+      : dynamicText(context, group)),
+    evidence: [
+      ...beforeLines(context, group.items),
+      ...afterLines(context, group),
+      pairingLine(context, group),
+    ],
+    unknowns: unknownsOf(context, group, oldDynamic),
+  };
+};
+
+/** RW-E02 findings for one component, from the release-wide window pairing. */
 export const webPreferenceRegressions = (context) => {
   const { left, right } = context;
   if (!right.app) return [];
-  // A new component is paired with the old windows no surviving component
-  // kept, release-wide, so one old window explains at most one new one.
-  const oldWindows =
-    left.target === null
-      ? (context.release?.orphanWindows ?? context.baseline.windows ?? [])
-      : (left.app?.windows ?? null);
   // An old side REA could not analyze is coverage, not an empty release.
-  if (oldWindows === null) return [];
-  const aliases = context.aliases ?? new Map();
-  const fileOf = (window) =>
-    aliases.get(windowFile(window))?.path ?? windowFile(window);
-  const paired = pairWindows(oldWindows, right.app.windows, fileOf);
-  return Object.entries(WEB_PREFERENCES).flatMap(([name, rule]) =>
-    [...regressionsOf(paired, name, rule)].map(([file, kinds]) => {
-      const known = kinds.unsafe.length > 0;
-      return regressionFinding(context, {
-        name,
-        rule,
-        file,
-        items: known ? kinds.unsafe : kinds.dynamic,
-        known,
-        tied: paired.tied,
-      });
-    }),
+  if (left.target !== null && !left.app) return [];
+  const paired = context.windows.get(context.name);
+  const items = [
+    ...paired.pairs,
+    ...paired.added.map((now) => ({ was: null, now, tied: false, from: null })),
+  ];
+  return regressionGroups(items).map((group) =>
+    regressionFinding(context, group),
   );
 };

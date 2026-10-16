@@ -22,7 +22,7 @@ import { deploymentOf } from "./facts/capture.mjs";
 import { isScriptPath } from "./facts/modules.mjs";
 import { pairComponents, pairHelpers, pairRuntimes } from "./pairing.mjs";
 import { connectionTotals, registrationTotals } from "./rules/mcp.mjs";
-import { unpairedWindows } from "./rules/windows.mjs";
+import { releaseWindowPairing } from "./rules/window-pairing.mjs";
 import {
   evaluateComponent,
   numberFindings,
@@ -350,30 +350,11 @@ const releaseContext = (prepared) => ({
     comparable(prepared).map((component) => component.left.app),
     comparable(prepared).map((component) => component.right.app),
   ),
-  orphanWindows: orphanWindows(prepared),
+  windows: releaseWindowPairing(prepared),
 });
 
 const comparable = (prepared) =>
   prepared.filter((component) => !failed(component.right));
-
-// Old windows of components the new release no longer has, and those their
-// surviving component did not pair: what a new component's windows can be.
-const orphanWindows = (prepared) =>
-  prepared.flatMap((component) => {
-    const old = component.left.app?.windows ?? [];
-    if (component.right.target === null)
-      return old.map((window) => ({
-        ...window,
-        data: { ...window.data, component: component.name },
-      }));
-    if (!component.right.app || component.left.target === null) return [];
-    return unpairedWindows(
-      component.name,
-      old,
-      component.right.app.windows,
-      component.aliases ?? new Map(),
-    );
-  });
 
 // Grade one prepared component and attach source lines.
 const gradeComponent = async ({

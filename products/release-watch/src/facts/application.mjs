@@ -4,6 +4,7 @@ import { HTML_SINKS } from "../catalog.mjs";
 import { isUrl, scriptKey } from "../urls.mjs";
 import { callGraph } from "./calls.mjs";
 import { coverageOf, unreachedModules } from "./coverage.mjs";
+import { comparableExpression } from "./expression.mjs";
 import { browserModules, importIndex } from "./modules.mjs";
 import { processUnknowns } from "./process.mjs";
 import { withLoads } from "./windows.mjs";
@@ -28,10 +29,62 @@ const trackedMember = (label) => {
   return TRACKED_MEMBERS.has(member) ? member : null;
 };
 
-const webPreferenceValue = (entry) =>
-  entry.value?.status === "literal"
-    ? { known: true, value: entry.value.value }
-    : { known: false, value: entry.value?.expression ?? null };
+// What REA did not resolve keeps its text for display, with the form it is
+// compared in (expression.mjs).
+const unresolved = (source, expression) => ({
+  source,
+  expression,
+  compared: comparableExpression(expression),
+});
+
+const webPreferenceValue = (entry) => {
+  if (entry.value?.status === "literal")
+    return { known: true, value: entry.value.value };
+  const expression = entry.value?.expression ?? null;
+  return {
+    known: false,
+    value: expression,
+    compared: comparableExpression(expression),
+  };
+};
+
+// REA names a webPreferences spread or computed key by its source offset.
+const UNNAMED_ENTRY = /^\[(spread|dynamic)@-?\d+\]$/;
+const STATIC_STATUSES = new Set(["object-literal", "missing"]);
+
+/**
+ * A window's options as REA reports them: the webPreferences it names, and
+ * what it did not resolve that may set any of them (an options object or
+ * webPreferences value REA reports as dynamic, a spread, a computed key).
+ * REA does not read an omitted option as Electron's default
+ * (`absence_means_default` is false); the rules label that default as
+ * Release Watch's, and only for a window with nothing unresolved. Values
+ * REA did not resolve carry `compared`, the form the rules compare them in.
+ */
+const windowOptions = (properties) => {
+  const entries = properties.web_preferences ?? [];
+  const named = entries.filter((entry) => !UNNAMED_ENTRY.test(entry.name));
+  const whole = !STATIC_STATUSES.has(properties.options_status)
+    ? [unresolved("options", null)]
+    : !STATIC_STATUSES.has(properties.web_preferences_status)
+      ? [unresolved("webPreferences", null)]
+      : [];
+  const unnamed = entries
+    .map((entry) => [UNNAMED_ENTRY.exec(entry.name)?.[1], entry])
+    .filter(([kind]) => kind)
+    .map(([kind, entry]) =>
+      unresolved(
+        kind === "spread" ? "spread" : "computed key",
+        entry.value?.expression ?? null,
+      ),
+    );
+  return {
+    web_preferences: Object.fromEntries(
+      named.map((entry) => [entry.name, webPreferenceValue(entry)]),
+    ),
+    unresolved_preferences: [...whole, ...unnamed],
+  };
+};
 
 const assetFact = (node, properties, facts) => {
   if (properties.path)
@@ -71,14 +124,10 @@ const GRAPH_PROJECTIONS = {
     );
   },
   "browser-window": (node, properties, facts) => {
-    const preferences = (properties.web_preferences ?? []).map((entry) => [
-      entry.name,
-      webPreferenceValue(entry),
-    ]);
     facts.windows.push(
       graphFact(node, properties.source_path ?? node.node_id, {
         source_path: properties.source_path ?? null,
-        web_preferences: Object.fromEntries(preferences),
+        ...windowOptions(properties),
       }),
     );
   },
@@ -435,6 +484,7 @@ export const applicationFacts = (evidence) => {
   const semantic = result.semantic_graph ?? null;
   const { modules, imports } = importIndex(graph);
   const graphPart = graphFacts(graph);
+  const calls = callGraph(semantic);
   return {
     evidence_id: evidence.evidence_id,
     root_sha256: result.root_artifact_sha256,
@@ -452,9 +502,9 @@ export const applicationFacts = (evidence) => {
     imports,
     browserModules: browserModules(graph, modules),
     ...graphPart,
-    windows: withLoads(graphPart.windows, graph, semantic),
+    windows: withLoads(graphPart.windows, graph, semantic, calls.functions),
     embeddedSources: withBundles(graphPart.embeddedSources, graph),
     ...semanticFacts(semantic, modules),
-    ...callGraph(semantic),
+    ...calls,
   };
 };
