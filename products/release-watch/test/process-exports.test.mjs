@@ -9,6 +9,7 @@ import { exportHolder, wholeHolder } from "../src/facts/process-exports.mjs";
 const entry = (overrides = {}) => ({
   externalExports: new Map(),
   exports: new Map(),
+  imported: new Map(),
   reexports: new Map(),
   stars: new Set(),
   ...overrides,
@@ -35,17 +36,17 @@ describe("exports that hold child_process", () => {
         "b.js",
         entry({
           reexports: new Map([
-            ["default", { module: "a.js", name: "default" }],
+            [
+              "default",
+              { module: "a.js", name: "default", form: "commonjs-export" },
+            ],
           ]),
         }),
       ],
     ]);
+    assert.equal(exportHolder(modules, "b.js", "default", NONE).member, null);
     assert.equal(
-      exportHolder(modules, "b.js", "default", NONE.named).member,
-      null,
-    );
-    assert.equal(
-      exportHolder(modules, "b.js", "execSync", NONE.named).member,
+      exportHolder(modules, "b.js", "execSync", NONE).member,
       "execSync",
     );
     assert.equal(wholeHolder(modules, "b.js", NONE).commonjs, true);
@@ -65,10 +66,10 @@ describe("exports that hold child_process", () => {
       ["index.mjs", entry({ stars: new Set(["cp.mjs"]) })],
     ]);
     assert.equal(
-      exportHolder(modules, "index.mjs", "spawn", NONE.named).member,
+      exportHolder(modules, "index.mjs", "spawn", NONE).member,
       "spawn",
     );
-    assert.equal(exportHolder(modules, "index.mjs", "name", NONE.named), null);
+    assert.equal(exportHolder(modules, "index.mjs", "name", NONE), null);
     assert.equal(wholeHolder(modules, "index.mjs", NONE).namespace.star, true);
   });
 
@@ -78,9 +79,20 @@ describe("exports that hold child_process", () => {
     const modules = new Map([
       ["spawn.js", entry({ exports: new Map([["run", { local: "runIt" }]]) })],
     ]);
-    assert.equal(exportHolder(modules, "spawn.js", "spawn", named), guessed);
+    const correlated = { named, namedList: () => [] };
     assert.equal(
-      exportHolder(modules, "spawn.js", "run", () => guessed),
+      exportHolder(modules, "spawn.js", "spawn", correlated).member,
+      "spawn",
+    );
+    assert.equal(
+      exportHolder(modules, "spawn.js", "spawn", correlated).heuristic,
+      true,
+    );
+    assert.equal(
+      exportHolder(modules, "spawn.js", "run", {
+        named: () => guessed,
+        namedList: () => [],
+      }),
       null,
     );
     const whole = wholeHolder(modules, "spawn.js", {
@@ -88,9 +100,11 @@ describe("exports that hold child_process", () => {
       namedList: () => ["spawn"],
     });
     assert.equal(whole.heuristic, true);
-    assert.equal(whole.namespace.names.get("spawn"), guessed);
+    assert.equal(whole.namespace.names.get("spawn").member, "spawn");
   });
+});
 
+describe("exports that hold no child_process", () => {
   it("ends a re-export cycle without a holder", () => {
     const modules = new Map([
       [
@@ -105,7 +119,7 @@ describe("exports that hold child_process", () => {
         }),
       ],
     ]);
-    assert.equal(exportHolder(modules, "a.js", "x", NONE.named), null);
+    assert.equal(exportHolder(modules, "a.js", "x", NONE), null);
     assert.equal(wholeHolder(modules, "b.js", NONE), null);
   });
 

@@ -10,6 +10,7 @@
 // is not a process API.
 import { within } from "../ranges.mjs";
 import { moduleUses } from "./process-flow.mjs";
+import { wholeHolder } from "./process-exports.mjs";
 import { processGraph, rangeOf } from "./process-graph.mjs";
 import {
   isRequireValue,
@@ -96,16 +97,18 @@ const loaderModules = (semantic, modules) => {
   return found;
 };
 
-// Where a module's top-level bindings that hold child_process go where
-// REA's graph does not show: the names an importer may find them under
-// when REA traced no export (Release Watch's correlation).
+// Where a module's top-level bindings that hold child_process (or a
+// namespace of a module that exports it) go where REA's graph does not
+// show: the names an importer may find them under when REA traced no
+// export (Release Watch's correlation).
 const escapedNames = (module, result) => {
   const names = new Map();
   for (const use of result.uses)
     if (use.kind === "value" && use.holder.node?.kind === "binding")
-      if (!use.holder.node.function_node_id && !use.holder.namespace)
+      if (!use.holder.node.function_node_id)
         names.set(use.holder.name, {
           member: use.holder.member,
+          namespace: use.holder.namespace ?? null,
           module,
           name: use.holder.name,
           site: null,
@@ -115,12 +118,44 @@ const escapedNames = (module, result) => {
   return names;
 };
 
+// The modules that import each module.
+const importersOf = (modules) => {
+  const importers = new Map();
+  for (const [module, entry] of modules)
+    for (const site of entry.localSites) {
+      if (!importers.has(site.data.module))
+        importers.set(site.data.module, new Set());
+      importers.get(site.data.module).add(module);
+    }
+  return importers;
+};
+
+// Adds the entries `found` has that `known` lacks; true when it added one.
+const addNew = (known, found) => {
+  const before = known.size;
+  for (const [key, value] of found) if (!known.has(key)) known.set(key, value);
+  return known.size > before;
+};
+
+// The names under which importing all of a module holds child_process
+// (`*` for module.exports or every child_process export), as a map.
+const heldNames = (whole) => {
+  if (!whole) return new Map();
+  if (!whole.namespace || whole.namespace.star) return new Map([["*", true]]);
+  return new Map([...whole.namespace.names.keys()].map((name) => [name, true]));
+};
+
 /**
  * Process gaps of one semantic graph: every place a module uses a value
  * REA ties to child_process and REA reported no process site for it.
  * `modules` is the import index and `childProcesses` the process sites
  * already projected from the graph; a module without semantic facts is
- * left to the coverage rules that report it unexamined.
+ * left to the coverage rules that report it unexamined. Modules that use
+ * child_process are examined first, then the modules importing them; a
+ * module that now exports child_process under more names (its bindings
+ * escape under new names, Release Watch's correlation, or a module it
+ * re-exports gained some) has its importers examined again, through any
+ * number of local modules, until no module's names grow.
  */
 export const processUnknowns = (
   semantic,
@@ -135,52 +170,55 @@ export const processUnknowns = (
   );
   for (const module of loaders) direct.add(module);
   if (direct.size === 0) return [];
-  // A module that imports a local module may hold what it exports.
-  const wanted = new Set(direct);
-  for (const [module, entry] of modules)
-    if (
-      entry.localSites.some((site) => mayImportProcess(modules, site, direct))
-    )
-      wanted.add(module);
-  const graph = processGraph(semantic, wanted, childProcesses);
+  const graph = processGraph(semantic, childProcesses);
   const escaped = new Map();
   const exports = {
     named: (module, name) => escaped.get(module)?.get(name) ?? null,
     namedList: (module) => [...(escaped.get(module)?.keys() ?? [])],
   };
   const usesOf = (module) => {
-    const index = graph.modules.get(module);
+    const index = graph.include(module);
     if (!index) return null;
-    const entry = modules.get(module);
     const seeds = seedsOf({
       modules,
       graph,
       index,
-      entry,
+      entry: modules.get(module),
       exports,
       importBinding,
       loaders: loaders.has(module),
     });
     return moduleUses(graph, index, seeds, importBinding);
   };
-  // Modules that use child_process first, so that the names their bindings
-  // escape under are known to the modules importing them.
+  // A module that imports a local module may hold what it exports.
+  const pending = [...direct];
+  for (const [module, entry] of modules)
+    if (
+      !direct.has(module) &&
+      entry.localSites.some((site) => mayImportProcess(modules, site, direct))
+    )
+      pending.push(module);
+  const queued = new Set(pending);
+  const importers = importersOf(modules);
   const results = new Map();
-  for (const module of direct) {
+  const held = new Map();
+  while (pending.length > 0) {
+    const module = pending.shift();
+    queued.delete(module);
     const result = usesOf(module);
-    if (!result) continue;
-    results.set(module, result);
-    escaped.set(module, escapedNames(module, result));
-  }
-  // The rest, and a module again when it imports names correlated above.
-  const correlated = (module) =>
-    (modules.get(module)?.localSites ?? []).some(
-      (site) => escaped.get(site.data.module)?.size > 0,
-    );
-  for (const module of wanted) {
-    if (results.has(module) && !correlated(module)) continue;
-    const result = usesOf(module);
-    if (result) results.set(module, result);
+    if (result) {
+      results.set(module, result);
+      if (!escaped.has(module)) escaped.set(module, new Map());
+      addNew(escaped.get(module), escapedNames(module, result));
+    }
+    if (!held.has(module)) held.set(module, new Map());
+    const whole = wholeHolder(modules, module, exports);
+    if (!addNew(held.get(module), heldNames(whole))) continue;
+    for (const importer of importers.get(module) ?? [])
+      if (!queued.has(importer)) {
+        queued.add(importer);
+        pending.push(importer);
+      }
   }
   return [...results].flatMap(([module, result]) =>
     result.uses.map((use) => factOf(use, contexts, module)),

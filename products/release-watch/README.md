@@ -152,8 +152,10 @@ file moved unchanged pairs with its old copy first, wherever it is.
 
 Reachability (RW-E01, RW-M01) follows REA's semantic graph: the functions
 REA reports, the calls it resolved, the binding reads each function owns,
-imports through their imported names, export bindings, re-exports and
-namespace member reads, a parameter of a callback that an iteration method
+imports through their imported names, export bindings, re-exports
+(`export *` never gives `default`; a CommonJS `module.exports =
+require("./other")` gives the other module's names) and namespace member
+reads, a parameter of a callback that an iteration method
 runs, inline or through the binding that names it (`TOOLS.forEach((tool) =>
 …)`, `TOOLS.forEach(register)`), to the elements it iterates, and a member
 call on a receiver REA does not resolve (`this.run()`) to the method or
@@ -308,7 +310,8 @@ passed.
   bindings destructured from them, the parameters REA passes them to, and
   imports of a local module's export that REA traces to child_process
   (`module.exports = require("child_process")`, `export { execSync } from
-  "node:child_process"`), followed through re-exports. A `require(name)`
+  "node:child_process"`), followed through re-exports and any number of
+  local modules. A `require(name)`
   counts when REA reports `name` constant "child_process". Release Watch's
   correlations are labelled heuristic: a binding declared or assigned right
   before a read of such a value, when REA gives it the same unknown value
@@ -318,7 +321,8 @@ passed.
   `const ok = typeof cp.spawn === "function"`, which is taken alike); an
   interop wrapper of the `require` (`__importStar(require(...))`); an
   export REA traced no source for, matched by the name of a binding of the
-  exporting module that holds child_process (`module.exports = { spawn }`);
+  exporting module that holds child_process (`module.exports = { spawn }`,
+  also when that binding is imported from another such module);
   a pattern destructured right before a load REA links to no binding; and
   a load REA resolves no module for (`require(name)`, `module.require`,
   `process.mainModule.require`, `window.require`, the function

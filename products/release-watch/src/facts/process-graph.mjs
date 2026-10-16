@@ -40,6 +40,7 @@ const emptyModule = () => ({
   arguments: [],
   memberReads: [],
   bindings: [],
+  processes: [],
 });
 
 const NODE_GROUPS = [
@@ -53,106 +54,117 @@ const NODE_GROUPS = [
   ],
 ];
 
-const groupNodes = (semantic, wanted) => {
-  const modules = new Map();
-  const slots = new Map();
-  for (const node of semantic.nodes) {
-    const module = moduleOf(node);
-    if (!wanted.has(module)) continue;
+const bucket = (items, keyOf) => {
+  const groups = new Map();
+  for (const item of items) push(groups, keyOf(item), item);
+  return groups;
+};
+
+// One module's nodes by group, sorted by start, and its property slots by
+// the binding id of their object; null when REA reports no positioned node.
+const groupNodes = (nodes, module, slots) => {
+  let entry = null;
+  for (const node of nodes) {
     const objectId = node.properties?.object_binding_id;
     if (node.kind === "property-slot" && objectId)
       push(slots, `${module}\u0000${objectId}`, node);
     if (!rangeOf(node)) continue;
-    if (!modules.has(module)) modules.set(module, emptyModule());
-    const entry = modules.get(module);
+    entry ??= emptyModule();
     entry.nodes.push(node);
     for (const [test, group] of NODE_GROUPS)
       if (test(node)) entry[group].push(node);
   }
-  for (const entry of modules.values())
-    for (const list of Object.values(entry)) list.sort(byStart);
-  return { modules, slots };
+  if (entry) for (const list of Object.values(entry)) list.sort(byStart);
+  return entry;
 };
 
-// The ranges of the process sites REA classified in each wanted module.
-const processRanges = (childProcesses, modules) => {
-  for (const fact of childProcesses) {
-    const entry = modules.get(fact.data.module);
-    if (entry && fact.data.range) entry.processes.push(fact.data.range);
+// One relation of an included module into the index.
+const indexRelation = (graph, relation, source, target) => {
+  push(graph.out, source.node_id, { ...relation, target });
+  const kind = relation.relation;
+  if (kind === "defines" && isBinding(target)) {
+    push(graph.defines, source.node_id, target);
+    if (source.kind === "literal")
+      graph.literals.set(target.node_id, source.properties?.value);
+  }
+  if (kind === "reads" && isBinding(source))
+    graph.readBinding.set(target.node_id, source);
+  if (kind === "aliases") {
+    push(graph.aliasedFrom, target.node_id, source);
+    if (source.kind === "call-site" && isBinding(target))
+      graph.callAssigned.add(target.node_id);
   }
 };
 
 // What REA reports about each binding's value: the reasons it gives for a
 // value it could not establish (`unknown-value` unknowns name the binding).
-const valueReasons = (semantic, byId, wanted) => {
-  const reasons = new Map();
-  for (const unknown of semantic.unknowns ?? []) {
+const indexReasons = (graph, unknowns, byId) => {
+  for (const unknown of unknowns) {
     if (unknown.reason !== "unknown-value") continue;
     const node = byId.get(unknown.node_id);
-    if (!isBinding(node) || !wanted.has(moduleOf(node))) continue;
-    if (!reasons.has(node.node_id)) reasons.set(node.node_id, new Set());
-    reasons.get(node.node_id).add(unknown.detail ?? "");
-  }
-  return reasons;
-};
-
-const emptyIndex = () => ({
-  out: new Map(),
-  defines: new Map(),
-  readBinding: new Map(),
-  aliasedFrom: new Map(),
-  literals: new Map(),
-  callAssigned: new Set(),
-});
-
-// One relation of a wanted module into the index.
-const indexRelation = (index, relation, source, target) => {
-  push(index.out, source.node_id, { ...relation, target });
-  const kind = relation.relation;
-  if (kind === "defines" && isBinding(target)) {
-    push(index.defines, source.node_id, target);
-    if (source.kind === "literal")
-      index.literals.set(target.node_id, source.properties?.value);
-  }
-  if (kind === "reads" && isBinding(source))
-    index.readBinding.set(target.node_id, source);
-  if (kind === "aliases") {
-    push(index.aliasedFrom, target.node_id, source);
-    if (source.kind === "call-site" && isBinding(target))
-      index.callAssigned.add(target.node_id);
+    if (!isBinding(node)) continue;
+    if (!graph.reasons.has(node.node_id))
+      graph.reasons.set(node.node_id, new Set());
+    graph.reasons.get(node.node_id).add(unknown.detail ?? "");
   }
 };
 
 /**
- * The semantic index of the modules in `wanted`: per module its nodes, call
- * sites, arguments, member reads and bindings sorted by start, and the
+ * The semantic index of the modules a caller includes, one module at a
+ * time (`include(module)` builds it on first use and returns its entry, or
+ * null when REA reports no positioned node in it): per module its nodes,
+ * call sites, arguments, member reads and bindings sorted by start, and the
  * ranges of its process sites (`childProcesses`, the facts projected from
  * REA's child-process nodes); property slots by module and the binding id
  * of their object (a scope id, unique only within its file); the relations
- * from nodes of those modules by source node; the bindings each definition
- * node defines; the binding each read reads; the nodes that alias into each
- * node; the constant REA reports for a binding a literal defines; the
- * bindings a call's result is assigned to; and the reasons REA gives for
- * each binding's unknown value.
+ * from nodes of included modules by source node; the bindings each
+ * definition node defines; the binding each read reads; the nodes that
+ * alias into each node; the constant REA reports for a binding a literal
+ * defines; the bindings a call's result is assigned to; and the reasons REA
+ * gives for each binding's unknown value.
  */
-export const processGraph = (semantic, wanted, childProcesses) => {
+export const processGraph = (semantic, childProcesses) => {
   const byId = new Map(semantic.nodes.map((node) => [node.node_id, node]));
-  const { modules, slots } = groupNodes(semantic, wanted);
-  for (const entry of modules.values()) entry.processes = [];
-  processRanges(childProcesses, modules);
-  const index = emptyIndex();
-  for (const relation of semantic.relations) {
-    const source = byId.get(relation.source_node_id);
-    const target = byId.get(relation.target_node_id);
-    if (!target || !wanted.has(moduleOf(source))) continue;
-    indexRelation(index, relation, source, target);
-  }
-  return {
-    modules,
-    slots,
-    ...index,
-    reasons: valueReasons(semantic, byId, wanted),
+  const nodes = bucket(semantic.nodes, moduleOf);
+  const relations = bucket(semantic.relations, (relation) =>
+    moduleOf(byId.get(relation.source_node_id)),
+  );
+  const unknowns = bucket(semantic.unknowns ?? [], (unknown) =>
+    moduleOf(byId.get(unknown.node_id)),
+  );
+  const sites = bucket(childProcesses, (fact) => fact.data.module);
+  const graph = {
+    modules: new Map(),
+    slots: new Map(),
+    out: new Map(),
+    defines: new Map(),
+    readBinding: new Map(),
+    aliasedFrom: new Map(),
+    literals: new Map(),
+    callAssigned: new Set(),
+    reasons: new Map(),
   };
+  graph.include = (module) => {
+    if (graph.modules.has(module)) return graph.modules.get(module);
+    const entry = groupNodes(nodes.get(module) ?? [], module, graph.slots);
+    graph.modules.set(module, entry);
+    if (!entry) return null;
+    for (const fact of sites.get(module) ?? [])
+      if (fact.data.range) entry.processes.push(fact.data.range);
+    for (const relation of relations.get(module) ?? []) {
+      const target = byId.get(relation.target_node_id);
+      if (target)
+        indexRelation(
+          graph,
+          relation,
+          byId.get(relation.source_node_id),
+          target,
+        );
+    }
+    indexReasons(graph, unknowns.get(module) ?? [], byId);
+    return entry;
+  };
+  return graph;
 };
 
 /** Relations from `node` named `relation`, with their target nodes. */

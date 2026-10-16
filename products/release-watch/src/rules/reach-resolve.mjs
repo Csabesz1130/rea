@@ -4,18 +4,18 @@
 // binding holds (reach-region.mjs places it, reach-value.mjs says what a
 // read of it gives); a parameter of a callback an iteration method runs,
 // to the elements it iterates (reach-calls.mjs finds the iteration); and
-// imports through REA's imported names, export bindings, named, namespace
-// and star re-exports. An import that names no function, object or value
+// imports through REA's imported names and export resolution (named,
+// namespace and star re-exports: facts/exports.mjs owns it). An import that
+// names no function, object or value
 // Release Watch can find in its module is "unknown": the whole module is
 // then followed, so a gap in the call graph is never read as no reach.
+import { resolveExport } from "../facts/exports.mjs";
 import { startsBefore } from "../ranges.mjs";
 import { CALL_MEMBERS, WHOLE_VALUE_MEMBERS } from "./reach-builtins.mjs";
 import { iterationsOf } from "./reach-calls.mjs";
 import { bindingAt, childFunctions, memberAt } from "./reach-index.mjs";
 import { declaredFunction, valueRegion } from "./reach-region.mjs";
 import { valueOf } from "./reach-value.mjs";
-
-const MAX_EXPORT_HOPS = 8;
 
 const topFunction = (index, module, name) =>
   childFunctions(index, module, null).find((fn) => fn.name === name) ?? null;
@@ -104,7 +104,8 @@ const resolveValue = (index, value, path) => {
 // export by its range (a value: the function or object it is), else the
 // module's one top-level function without a name (REA reports no export
 // binding for `export default function () {}`), else the top-level
-// function or binding it names.
+// function or binding it names (for a name REA reports no export for,
+// Release Watch's correlation).
 const ownExport = (index, module, name, exported) => {
   if (exported?.local === null && exported.range)
     return { value: { module, parts: [exported.range] } };
@@ -121,54 +122,23 @@ const ownExport = (index, module, name, exported) => {
   return value ? { value: { module, binding: value } } : null;
 };
 
-// A name a module exports or holds by another route: an imported local it
-// re-exports (`export default runShell`), or a named re-export.
-const forwardedTarget = (state, entry, { name, local, hops }) => {
-  const through = entry?.imported?.get(local) ?? entry?.reexports?.get(name);
-  if (!through || hops >= MAX_EXPORT_HOPS) return null;
-  return through.name === "*"
-    ? { namespace: through.module }
-    : exportTarget(state, through.module, through.name, hops + 1);
-};
-
-// A resolution found through `module`: `through` lists the modules it
-// passed, from the one asked to the one that defines the name.
-const passing = (module, found) =>
-  found && !found.unknown
-    ? { ...found, through: [module, ...(found.through ?? [])] }
-    : found;
-
 /**
  * What a module exports under `name`: `{ fn }`, `{ value }` (a binding that
  * is not a function, or an anonymous default export by its range), `{
- * namespace }` (another module) or `{ unknown }`. A resolution also lists in
- * `through` the modules it passed, from `module` to the one that defines
- * the name. The one owner of export resolution: reach and destination
- * attribution (destinations.mjs) both use it.
+ * namespace }` (another module), `{ external }` (an external module's
+ * export, which holds none of the release's functions) or `{ unknown }`. A
+ * resolution also lists in `through` the modules it passed, from `module`
+ * to the one that defines the name. facts/exports.mjs resolves the name;
+ * reach and destination attribution (destinations.mjs) both use this.
  */
-export const exportTarget = ({ app, index }, module, name, hops = 0) => {
-  const entry = app.modules.get(module);
-  const exported = entry?.exports?.get(name);
-  const local = exported?.local ?? name;
-  // An exported local that is itself an import leads to its module first,
-  // and so does a named re-export (`export { run } from "./shell.js"`),
-  // whose export REA reports without a local binding, as it reports an
-  // anonymous default export's.
-  if (entry?.imported?.has(local) || entry?.reexports?.has(name))
-    return (
-      passing(
-        module,
-        forwardedTarget({ app, index }, entry, { name, local, hops }),
-      ) ?? { unknown: module }
-    );
-  const own = ownExport(index, module, name, exported);
-  if (own) return passing(module, own);
-  for (const star of entry?.stars ?? [])
-    if (hops < MAX_EXPORT_HOPS) {
-      const found = exportTarget({ app, index }, star, name, hops + 1);
-      if (!found.unknown) return passing(module, found);
-    }
-  return { unknown: module };
+export const exportTarget = ({ app, index }, module, name) => {
+  const found = resolveExport(app.modules, module, name, (at, own, exported) =>
+    ownExport(index, at, own, exported),
+  );
+  if (found.unknown || found.namespace || found.external) return found;
+  return found.defined
+    ? { ...found.defined, through: found.through }
+    : { unknown: found.module };
 };
 
 // Targets of one resolved export, with the member read that follows it.
@@ -185,6 +155,7 @@ const targetsOf = (state, target, path, forwarded) => {
       forwarded,
     );
   }
+  if (target.external) return { fns: [], how: "external", selects: null };
   return { unknown: target.unknown };
 };
 

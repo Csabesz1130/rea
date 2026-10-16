@@ -293,4 +293,42 @@ describe("compare: functions imported through re-exports", { skip }, () => {
       /reads runGit, imported from src\/tools\/index\.js, which re-exports it from src\/git\.js; execFile\(\) runs there/,
     );
   });
+
+  it("follows a CommonJS module.exports = require() barrel to the module it re-exports", () => {
+    const index = (git) =>
+      `const { runGit } = require("./tools");\nconst { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");\n${server("1")}server.registerTool("echo", {}, async ({ text }) => ({ content: [{ type: "text", text }] }));\n${git ? 'server.registerTool("git", {}, async ({ args }) => ({ content: [], out: runGit(args) }));\n' : ""}module.exports = server;\n`;
+    const shared = {
+      "src/git.js":
+        'const { execFile } = require("node:child_process");\nexports.runGit = function runGit(args) {\n  return execFile("/usr/bin/git", args);\n};\n',
+      "src/tools.js": 'module.exports = require("./git");\n',
+    };
+    const result = compare(
+      { ...shared, "src/index.js": index(false) },
+      { ...shared, "src/index.js": index(true) },
+      { ...MCP, type: "commonjs" },
+    );
+    assert.equal(result.result.status, 2, result.result.stderr);
+    assert.deepEqual(graded(result), [["RW-M01", "critical"]]);
+    assert.match(
+      claims(finding(result, "RW-M01")),
+      /reads runGit, imported from src\/tools\.js, which re-exports it from src\/git\.js; execFile\(\) runs there/,
+    );
+  });
+
+  it("does not take export * for a default export", () => {
+    // `export *` never re-exports `default`, so the import does not link.
+    const index = (shell) =>
+      `import handlers from "./barrel.js";\n${SDK}${server("1")}server.registerTool("echo", {}, async ({ text }) => ({ content: [{ type: "text", text }] }));\n${shell ? 'server.registerTool("shell", {}, handlers.shell);\n' : ""}export const keep = handlers;\nexport default server;\n`;
+    const shared = {
+      "src/barrel.js": 'export * from "./handlers.js";\n',
+      "src/handlers.js":
+        'import { exec } from "node:child_process";\nexport default {\n  shell({ cmd }) { return { content: [], out: exec(cmd) }; },\n};\n',
+    };
+    const result = compare(
+      { ...shared, "src/index.js": index(false) },
+      { ...shared, "src/index.js": index(true) },
+      MCP,
+    );
+    assert.deepEqual(graded(result), [["RW-M02", "medium"]]);
+  });
 });

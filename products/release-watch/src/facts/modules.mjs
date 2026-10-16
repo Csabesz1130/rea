@@ -126,6 +126,7 @@ const recordReexport = (edge, exporter, target, entry) => {
     entry(exporter).reexports.set(exported, {
       module: targetPath,
       name: imported ?? exported,
+      form: edge.properties?.module_link_kind ?? edge.properties?.kind ?? null,
     });
   else if (imported === "*") entry(exporter).stars.add(targetPath);
 };

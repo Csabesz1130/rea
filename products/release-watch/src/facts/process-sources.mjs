@@ -94,10 +94,10 @@ const externalSeeds = (entry) => {
 const localHolder = (modules, site, exports) => {
   const { module, imported, form } = site.data;
   if (imported === "default")
-    return exportHolder(modules, module, "default", exports.named);
+    return exportHolder(modules, module, "default", exports);
   return imported === null || imported === "*" || form === "dynamic-import"
     ? wholeHolder(modules, module, exports)
-    : exportHolder(modules, module, imported, exports.named);
+    : exportHolder(modules, module, imported, exports);
 };
 
 const NO_CORRELATION = { named: () => null, namedList: () => [] };
@@ -111,6 +111,8 @@ export const mayImportProcess = (modules, site, direct) =>
   direct.has(site.data.module) ||
   localHolder(modules, site, NO_CORRELATION) !== null;
 
+// A heuristic holder names the module whose binding holds it; any other,
+// the module imported from.
 const exportedSeed = (site, holder, name, binding) => ({
   site,
   binding,
@@ -119,7 +121,7 @@ const exportedSeed = (site, holder, name, binding) => ({
     member: holder.member,
     namespace: holder.namespace ?? null,
     via: holder.heuristic ? "export-name" : "export",
-    from: site.data.module,
+    from: holder.heuristic ? holder.module : site.data.module,
     exported: holder.name,
     heuristic: holder.heuristic,
   },

@@ -227,3 +227,77 @@ describe(
     });
   },
 );
+
+// Local modules that hold child_process only through another local module,
+// shipped unchanged in both releases.
+const CHAINS = {
+  "lib/a.js":
+    'const { spawn } = require("child_process");\nmodule.exports = { spawn };\n',
+  "lib/b.js":
+    'const { spawn } = require("./a");\nmodule.exports = { spawn };\n',
+  "lib/c.js": 'module.exports = require("./a");\n',
+  "lib/inner.js": 'module.exports = require("child_process");\n',
+  "lib/cp.js":
+    'const { execSync } = require("./inner");\nmodule.exports = { execSync };\n',
+  "lib/both.js":
+    'const cp = require("./inner");\nconst a = require("./a");\nmodule.exports = { cp, a };\n',
+};
+
+describe(
+  "compare: child_process through chains of local modules",
+  { skip },
+  () => {
+    it("follows names and re-exports through any number of unchanged modules", () => {
+      const { result, report } = compare(
+        { ...OLD, ...CHAINS },
+        {
+          ...OLD,
+          ...CHAINS,
+          "named.js":
+            'const { spawn } = require("./lib/b");\nexports.f = (c) => spawn(c, [], { shell: true });\n',
+          "reexported.js":
+            'const { spawn } = require("./lib/c");\nexports.f = (c) => spawn(c, [], { shell: true });\n',
+          "traced.js":
+            'const { execSync } = require("./lib/cp");\nexports.f = (c) => execSync(c);\n',
+          "whole.js":
+            'const lib = require("./lib/both");\nexports.f = (c) => lib.cp.execSync(c);\nexports.g = (c) => lib.a.spawn(c);\n',
+        },
+      );
+      assert.equal(result.status, 2, result.stderr);
+      assertGaps(report, "named.js", [
+        [
+          2,
+          "heuristic",
+          /^REA classified no process call where named\.js calls spawn \(Release Watch takes spawn to hold child_process's spawn: lib\/b\.js holds it in spawn, /,
+        ],
+      ]);
+      assertGaps(report, "reexported.js", [
+        [
+          2,
+          "heuristic",
+          /^REA classified no process call where reexported\.js calls spawn \(Release Watch takes spawn to hold child_process's spawn: lib\/a\.js holds it in spawn, /,
+        ],
+      ]);
+      assertGaps(report, "traced.js", [
+        [
+          2,
+          "heuristic",
+          /^REA classified no process call where traced\.js calls execSync \(Release Watch takes execSync to hold child_process's execSync: lib\/cp\.js holds it in execSync, /,
+        ],
+      ]);
+      assertGaps(report, "whole.js", [
+        [
+          2,
+          "heuristic",
+          /^REA classified no process call where whole\.js calls lib\.cp\.execSync /,
+        ],
+        [
+          3,
+          "heuristic",
+          /^REA classified no process call where whole\.js calls lib\.a\.spawn /,
+        ],
+      ]);
+      for (const file of Object.keys(CHAINS)) assertGaps(report, file, []);
+    });
+  },
+);
