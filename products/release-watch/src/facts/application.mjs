@@ -455,7 +455,6 @@ const semanticFacts = (semantic, modules) => {
   facts.processUnknowns = processUnknowns(semantic, contexts, {
     modules,
     childProcesses: facts.childProcesses,
-    bindingReads: facts.bindingReads,
   });
   return facts;
 };
