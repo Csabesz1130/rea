@@ -46,6 +46,18 @@ export const changedFiles = (context) => {
   };
 };
 
+/**
+ * The changed-file test of the rules that note what REA does not model in
+ * new or changed code (RW-C05, RW-C06): `changedFiles`, except that every
+ * module counts when REA could not analyze the old side of a component the
+ * old release shipped. A file whose content the old release shipped, in
+ * any component or under any path, did not change.
+ */
+export const unmodeledChanges = (context) =>
+  context.left.app || context.left.target === null
+    ? changedFiles(context)
+    : () => true;
+
 // What REA reported it could not examine in the new release: truncation,
 // files at the per-file ceiling, failed files, no semantic graph.
 const applicationGaps = (app) => {
@@ -269,15 +281,9 @@ const unexaminedAnalysis = (context) => {
 /**
  * Coverage of the new release's code: RW-C01 for what REA did not examine,
  * and RW-C06 for modules that start processes through a library REA does
- * not model. When REA could not analyze the old side of a component it
- * shipped, every module counts as changed for RW-C06.
+ * not model.
  */
 export const incompleteAnalysis = (context) => [
   ...unexaminedAnalysis(context),
-  ...processLibraries(
-    context,
-    context.left.app || context.left.target === null
-      ? changedFiles(context)
-      : () => true,
-  ),
+  ...processLibraries(context, unmodeledChanges(context)),
 ];

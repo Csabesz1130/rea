@@ -346,13 +346,14 @@ passed.
   that moved between components is reported medium. An HTML sink pairs only
   with one in an unchanged file. Browser placement, shipped original sources,
   known, guessed and named hosts and the schemes they were reached over are
-  compared with the whole old release. An `eval` in a file whose content the
-  old release shipped is not new, nor is a cleartext request whose request,
-  URL constant and client modules, and the modules an import of the URL
-  passed through, all have such content, so code that moved between
-  components keeps what it had. Page scripts, service workers,
-  direct `eval`, HTML sinks, renderer APIs, process sites, MCP tool
-  registration calls and native helpers are compared per component: one
+  compared with the whole old release. An `eval`, or an HTTP client import
+  RW-C05 would note, in a file whose content the old release shipped is not
+  new, nor is a cleartext request whose request, URL constant and client
+  modules, and the modules an import of the URL passed through, all have
+  such content, so code that moved between components keeps what it had.
+  Page scripts, service workers, direct `eval`, HTML sinks, renderer APIs,
+  process sites, MCP tool registration calls and native helpers are
+  compared per component: one
   another component of the old release had at the same key (an API name, a
   module path and method, a helper path) is reported as new to its
   component, and the claim says another component had it rather than that

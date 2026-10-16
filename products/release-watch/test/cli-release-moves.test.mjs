@@ -184,6 +184,53 @@ describe(
   },
 );
 
+describe(
+  "compare: what an unchanged HTTP client module keeps",
+  { skip },
+  () => {
+    // RW-C05 notes new or changed code that uses an HTTP client REA does
+    // not model; an unchanged copy of an old client module is neither.
+    it("does not take an HTTP client module that moved unchanged, within or between components, for new client code", () => {
+      const cjs = (name) =>
+        JSON.stringify({ name, version: "1.0.0", main: "index.js" });
+      const http =
+        'const axios = require("axios");\nexports.get = (u) => axios.get(u);\n';
+      const entry = (dir) =>
+        `const { get } = require("./${dir}/http");\nexports.get = get;\n`;
+      const { result, report } = compare(
+        ["1.0.0", "1.1.0"],
+        { left: ["api"], right: ["api", "net"] },
+        {
+          "api/package.json": cjs("notes-api"),
+          "api/index.js": entry("lib"),
+          "api/lib/http.js": http,
+        },
+        {
+          "api/package.json": cjs("notes-api"),
+          "api/index.js": entry("src"),
+          "api/src/http.js": http,
+          "net/package.json": cjs("notes-net"),
+          "net/index.js": entry("lib"),
+          "net/lib/http.js": http,
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(
+        graded(report).filter(([rule]) => rule !== "RW-C02"),
+        [["RW-C05", "low", "api"]],
+      );
+      const finding = report.findings.find((item) => item.rule === "RW-C05");
+      assert.deepEqual(
+        finding.evidence.map((item) => item.claim),
+        [
+          "index.js changed and imports src/http.js, which imports axios",
+          "Release Watch lists HTTP client packages whose calls REA's request extraction may not model",
+        ],
+      );
+    });
+  },
+);
+
 describe("compare: what a new component is compared with", { skip }, () => {
   it("does not say the old release lacked a service worker another component registered", () => {
     const page =

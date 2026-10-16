@@ -3,14 +3,14 @@
 // on the new side become findings instead of a silent pass.
 import path from "node:path";
 
-import { SECURITY_HEADERS, isHttpClient, packageNameOf } from "../catalog.mjs";
+import { SECURITY_HEADERS, packageNameOf } from "../catalog.mjs";
 import { captureUnread } from "../facts/capture.mjs";
 import { clientImports, clientModules } from "./destinations.mjs";
 import { displayPath } from "../urls.mjs";
 import {
   MAX_FILES,
-  changedFiles,
   incompleteAnalysis,
+  unmodeledChanges,
 } from "./analysis-coverage.mjs";
 import {
   APP_SOURCE,
@@ -299,22 +299,13 @@ const unmodeledClients = (context) => {
   if (!app) return [];
   const direct = clientImports(app);
   const clients = clientModules(app);
-  const before = new Set(
-    (context.left.app?.imports ?? [])
-      .filter((fact) => isHttpClient(packageNameOf(fact.key)))
-      .map((fact) => `${fact.data.module}#${fact.key}`),
-  );
-  // New imports, and modules that changed although they imported the
-  // client before: their requests may be new too. Without an analyzed old
-  // side, every module counts.
-  const changed = context.left.app ? changedFiles(context) : () => true;
+  // New and changed modules, which a new import of the client makes: code
+  // that moved or stayed unchanged, in any component, keeps the requests it
+  // had (unmodeledChanges).
+  const changed = unmodeledChanges(context);
   const fresh = [
     ...direct
-      .filter(
-        (fact) =>
-          !before.has(`${fact.data.module}#${fact.key}`) ||
-          changed(fact.data.module),
-      )
+      .filter((fact) => changed(fact.data.module))
       .map((fact) => ({
         module: fact.data.module,
         client: packageNameOf(fact.key),
