@@ -12,13 +12,17 @@
 // site's own function. Functions nested in the value, and their bindings
 // (a named function or class expression's own name too), are part of it,
 // not statements after it.
-import { startsBefore, within } from "../ranges.mjs";
+import {
+  comesBefore,
+  firstStarting,
+  startsBefore,
+  within,
+} from "../ranges.mjs";
 import { ADDERS } from "./reach-builtins.mjs";
 import {
   WHOLE_MODULE,
   bindingAt,
   enclosingFunction,
-  firstStarting,
   memberAt,
   namedFunctions,
   readsOfBinding,
@@ -29,8 +33,6 @@ import {
 // `const name = (` or `const name = async function (`: the gap between a
 // binding and the function it is assigned.
 const MAX_GAP = 40;
-
-const comesBefore = (a, b) => startsBefore({ start: a }, { start: b }) < 0;
 
 // The function a binding is declared as: REA gives a declaration's binding
 // the declared function (or class) as owner.

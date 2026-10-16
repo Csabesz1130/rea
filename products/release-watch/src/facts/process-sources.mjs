@@ -13,7 +13,8 @@
 //   `eval("require")`, a binding that holds `require`), which counts only
 //   through a read of a child_process export on what it loads.
 import { isNodeModule, isProcessModule } from "../catalog.mjs";
-import { sameStart, within } from "../ranges.mjs";
+import { sameRange, sameStart, within } from "../ranges.mjs";
+import { argumentPosition } from "./calls.mjs";
 import { exportHolder, wholeHolder } from "./process-exports.mjs";
 import {
   calleeOf,
@@ -21,7 +22,6 @@ import {
   definedBefore,
   rangeOf,
   relationsOf,
-  sameRange,
 } from "./process-graph.mjs";
 
 // What an import of the whole module binds; anything else is one export.
@@ -163,9 +163,7 @@ const loaderHolder = (name) => ({
 const constantArgument = (graph, index, call) => {
   const callRange = rangeOf(call);
   const first = index.arguments.find(
-    (node) =>
-      within(rangeOf(node), callRange) &&
-      (node.identity?.role_key ?? "").endsWith(":0"),
+    (node) => within(rangeOf(node), callRange) && argumentPosition(node) === 0,
   );
   const sources = first ? (graph.aliasedFrom.get(first.node_id) ?? []) : [];
   const binding =

@@ -4,7 +4,7 @@
 // value passed to a call REA did not resolve, returned, or used where REA's
 // graph does not show where it goes, or a load REA ties to no binding.
 import { isProcessExport } from "../catalog.mjs";
-import { within } from "../ranges.mjs";
+import { sameRange, within } from "../ranges.mjs";
 import {
   callOf,
   definedBefore,
@@ -15,7 +15,6 @@ import {
   processOf,
   rangeOf,
   relationsOf,
-  sameRange,
 } from "./process-graph.mjs";
 
 // A holder from a load Release Watch only takes to be child_process counts

@@ -211,10 +211,12 @@ export const processUnknowns = (
       if (!escaped.has(module)) escaped.set(module, new Map());
       addNew(escaped.get(module), escapedNames(module, result));
     }
+    // What a module no other module imports exports matters to none.
+    if (!importers.has(module)) continue;
     if (!held.has(module)) held.set(module, new Map());
     const whole = wholeHolder(modules, module, exports);
     if (!addNew(held.get(module), heldNames(whole))) continue;
-    for (const importer of importers.get(module) ?? [])
+    for (const importer of importers.get(module))
       if (!queued.has(importer)) {
         queued.add(importer);
         pending.push(importer);

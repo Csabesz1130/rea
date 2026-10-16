@@ -4,8 +4,15 @@
 // statement runs (`(() => …)()`), and the iteration calls a callback is
 // passed to, inline or through the binding that names it. REA reports no
 // syntax tree; these are Release Watch's correlations of REA's ranges.
-import { sameStart, startsBefore, within } from "../ranges.mjs";
-import { firstStarting, readsOfBinding, scopeOf } from "./reach-index.mjs";
+import {
+  comesBefore,
+  firstStarting,
+  sameRange,
+  sameStart,
+  startsBefore,
+  within,
+} from "../ranges.mjs";
+import { readsOfBinding, scopeOf } from "./reach-index.mjs";
 import { declaredFunction } from "./reach-region.mjs";
 import {
   CALL_MEMBERS,
@@ -16,10 +23,6 @@ import {
   RUN_MEMBERS,
   WHOLE_VALUE_MEMBERS,
 } from "./reach-builtins.mjs";
-
-const comesBefore = (a, b) => startsBefore({ start: a }, { start: b }) < 0;
-const sameRange = (a, b) =>
-  sameStart(a, b) && a.end.line === b.end.line && a.end.column === b.end.column;
 
 /** The innermost call site of `module` that holds `range` and is not it, or null. */
 export const callHolding = (index, module, range) => {

@@ -6,13 +6,17 @@
 // returns (`TOOLS.find((t) => …)`), is not one the value holds. Where a
 // value lies is reach-region.mjs's; which call a function is passed to is
 // reach-calls.mjs's.
-import { sameStart, startsBefore, within } from "../ranges.mjs";
+import {
+  comesBefore,
+  firstStarting,
+  sameStart,
+  startsBefore,
+  within,
+} from "../ranges.mjs";
 import { WHOLE_VALUE_MEMBERS } from "./reach-builtins.mjs";
 import { calleeMember, isPredicate, runningCall } from "./reach-calls.mjs";
-import { firstStarting, inside } from "./reach-index.mjs";
+import { inside } from "./reach-index.mjs";
 import { disjoint } from "./reach-region.mjs";
-
-const comesBefore = (a, b) => startsBefore({ start: a }, { start: b }) < 0;
 
 /** Functions that start in `parts` and are not nested in another of them. */
 export const outermostIn = (index, module, parts) => {

@@ -18,3 +18,36 @@ export const startsBefore = (a, b) =>
 /** True when two ranges start at the same position. */
 export const sameStart = (a, b) =>
   a.start.line === b.start.line && a.start.column === b.start.column;
+
+/** True when position `a` comes strictly before position `b`. */
+export const comesBefore = (a, b) =>
+  a.line < b.line || (a.line === b.line && a.column < b.column);
+
+/** True when two ranges start and end at the same positions. */
+export const sameRange = (a, b) =>
+  sameStart(a, b) && a.end.line === b.end.line && a.end.column === b.end.column;
+
+/** True when `inner` lies inside `outer` and is not the same range. */
+export const strictlyWithin = (inner, outer) =>
+  within(inner, outer) && !sameRange(inner, outer);
+
+/**
+ * In a list sorted by start, the position of the first item that starts at
+ * or after `range` (with `after`, strictly after it). `rangeOf` reads an
+ * item's range (its `range` by default).
+ */
+export const firstStarting = (
+  list,
+  range,
+  { after = false, rangeOf = (item) => item.range } = {},
+) => {
+  let low = 0;
+  let high = list.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const order = startsBefore(rangeOf(list[middle]), range);
+    if (order < 0 || (after && order === 0)) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};

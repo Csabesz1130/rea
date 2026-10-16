@@ -9,13 +9,23 @@
 // a statement discards). Functions carry the kind REA's identity gives
 // them, bindings whether they are a function or class expression's own name.
 // Ranges and node ids only; no source is read.
-import { sameStart } from "../ranges.mjs";
+import { comesBefore, sameStart } from "../ranges.mjs";
 
 const rangeOf = (node) => node?.identity?.source_range ?? null;
 const moduleOf = (node) => node?.identity?.module_path ?? null;
 const MEMBER_READ = /^read:\/(.+)$/;
 // REA labels the expression that wraps one call argument `argument N`.
 const ARGUMENT = /^(?:spread )?argument (\d+)$/;
+
+/**
+ * The position of the call argument a node REA reports wraps (`argument
+ * N`, `spread argument N`), or null for any other node.
+ */
+export const argumentPosition = (node) => {
+  if (node?.kind !== "expression") return null;
+  const found = ARGUMENT.exec(node.label ?? "");
+  return found ? Number(found[1]) : null;
+};
 // REA's identity of a name an expression refers to: `reference:<n>:read:<name>`.
 const REFERENCE = /^reference:\d+:read:(.+)$/;
 const startKey = (module, range) =>
@@ -95,14 +105,13 @@ const callSitesOf = (semantic) =>
   }));
 
 const argumentsOf = (semantic) =>
-  positioned(
-    semantic,
-    (node) => node.kind === "expression" && ARGUMENT.test(node.label ?? ""),
-  ).map((node) => ({
-    module: moduleOf(node),
-    range: rangeOf(node),
-    position: Number(ARGUMENT.exec(node.label)[1]),
-  }));
+  positioned(semantic, (node) => argumentPosition(node) !== null).map(
+    (node) => ({
+      module: moduleOf(node),
+      range: rangeOf(node),
+      position: argumentPosition(node),
+    }),
+  );
 
 // The names REA reports an expression referring to that no binding or
 // parameter of the source resolves: globals such as `Object`, and the key
@@ -142,7 +151,7 @@ const receiverEnds = (semantic, globals) => {
     (candidate) =>
       (candidate.kind === "expression" || candidate.kind === "call-site") &&
       !MEMBER_READ.test(candidate.label ?? "") &&
-      !ARGUMENT.test(candidate.label ?? ""),
+      argumentPosition(candidate) === null,
   )) {
     const key = startKey(moduleOf(node), rangeOf(node));
     if (!ends.has(key)) ends.set(key, []);
@@ -153,18 +162,14 @@ const receiverEnds = (semantic, globals) => {
   return ends;
 };
 
-const endsBefore = (end, limit) =>
-  end.line < limit.line ||
-  (end.line === limit.line && end.column < limit.column);
-
 // The receiver of a member read: the longest expression starting where it
 // starts that ends before it does.
 const receiverOf = (receivers, range) =>
   receivers
-    .filter((receiver) => endsBefore(receiver.end, range.end))
+    .filter((receiver) => comesBefore(receiver.end, range.end))
     .reduce(
       (longest, receiver) =>
-        !longest || endsBefore(longest.end, receiver.end) ? receiver : longest,
+        !longest || comesBefore(longest.end, receiver.end) ? receiver : longest,
       null,
     );
 

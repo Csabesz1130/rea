@@ -5,24 +5,33 @@
 // property slots REA destructures from a binding, which binding each
 // definition defines, the binding each read reads, constant and unknown
 // values REA reports for bindings. Ranges and node ids only; no source is
-// read.
-import { startsBefore, within } from "../ranges.mjs";
+// read. calls.mjs owns which node wraps a call argument and ranges.mjs how
+// ranges compare. Reach (rules/reach-index.mjs) indexes the same call sites,
+// arguments and member reads as calls.mjs projects them, without node ids;
+// this index keeps REA's nodes, whose relations the child_process flow
+// follows, and asks which call a range is the callee of rather than which
+// call holds it.
+import {
+  firstStarting,
+  sameRange,
+  startsBefore,
+  strictlyWithin,
+  within,
+} from "../ranges.mjs";
+import { argumentPosition } from "./calls.mjs";
 
 const rangeOf = (node) => node?.identity?.source_range ?? null;
 const moduleOf = (node) => node?.identity?.module_path ?? null;
 // REA's binding nodes carry the binding's id after this role-key prefix;
 // property slots name the object they belong to by that id.
 const BINDING_ROLE = "binding:";
-const ARGUMENT_ROLE = "argument:";
 // The definition nodes REA reports for a declaration's binding and for an
 // assignment to it; parameters and function declarations are defined by
 // their call or body, never by a value read after them.
 const VALUE_DEFINITIONS = new Set(["variable", "assignment"]);
 
-/** True for the node REA reports for one argument of a call. */
-const isArgument = (node) =>
-  node?.kind === "expression" &&
-  (node.identity?.role_key ?? "").startsWith(ARGUMENT_ROLE);
+/** True for the node REA reports for one argument of a call (calls.mjs reads it). */
+const isArgument = (node) => argumentPosition(node) !== null;
 
 const isBinding = (node) =>
   node?.kind === "binding" || node?.kind === "parameter";
@@ -190,39 +199,12 @@ export const destructured = (graph, binding) =>
     })),
   );
 
-// In a list sorted by start, the first item that starts after `position`.
-const firstAfter = (list, position) => {
-  let low = 0;
-  let high = list.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    if (startsBefore(rangeOf(list[middle]), { start: position }) <= 0)
-      low = middle + 1;
-    else high = middle;
-  }
-  return low;
-};
-
-// In a list sorted by start, the first item that starts at or after `position`.
-const firstAt = (list, position) => {
-  let low = 0;
-  let high = list.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    if (startsBefore(rangeOf(list[middle]), { start: position }) < 0)
-      low = middle + 1;
-    else high = middle;
-  }
-  return low;
-};
-
-const sameRange = (a, b) =>
-  startsBefore(a, b) === 0 &&
-  a.end.line === b.end.line &&
-  a.end.column === b.end.column;
-
-const strictlyWithin = (inner, outer) =>
-  within(inner, outer) && !sameRange(inner, outer);
+// In a list of nodes sorted by start, the first that starts after
+// `position`, and the first that starts at or after it.
+const firstAfter = (list, position) =>
+  firstStarting(list, { start: position }, { after: true, rangeOf });
+const firstAt = (list, position) =>
+  firstStarting(list, { start: position }, { rangeOf });
 
 // True when `range` lies inside one of the arguments of the call at
 // `callRange`. An argument starts after its call starts, so the call that
@@ -406,4 +388,4 @@ export const destructuredBefore = (graph, entry, range) => {
   );
 };
 
-export { rangeOf, moduleOf, sameRange, isArgument };
+export { rangeOf, moduleOf, isArgument };

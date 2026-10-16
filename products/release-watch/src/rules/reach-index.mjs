@@ -4,7 +4,7 @@
 // member reads, class field keys, property writes, assignments, bindings,
 // statement markers, export statements and process sites of each module
 // sorted by position.
-import { sameStart, startsBefore, within } from "../ranges.mjs";
+import { firstStarting, sameStart, startsBefore, within } from "../ranges.mjs";
 
 const indexes = new WeakMap();
 
@@ -24,22 +24,6 @@ const groupByModule = (items = [], moduleOf) => {
   for (const list of groups.values())
     list.sort((a, b) => startsBefore(a.range, b.range));
   return groups;
-};
-
-/**
- * In a list sorted by start, the position of the first item that starts at
- * or after `range` (with `after`, strictly after it).
- */
-export const firstStarting = (list, range, { after = false } = {}) => {
-  let low = 0;
-  let high = list.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    const order = startsBefore(list[middle].range, range);
-    if (order < 0 || (after && order === 0)) low = middle + 1;
-    else high = middle;
-  }
-  return low;
 };
 
 /** Items of a module whose range lies within `range`, from a list sorted by start. */
