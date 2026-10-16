@@ -271,6 +271,52 @@ describe("release-wide baseline", () => {
       ["RW-C02"],
     );
   });
+
+  // REA's Go build information for a helper whose linker flags set an endpoint.
+  const helper = (flags) => ({
+    relative: "resources/bin/updater",
+    name: "updater",
+    identified: "go",
+    go: {
+      go_version: "go1.23.4",
+      main: "example.com/updater",
+      dependencies: [],
+      settings: { "-ldflags": flags },
+    },
+  });
+
+  it("says another component of the old release shipped a helper a new component ships", () => {
+    const oldDesk = side("v1", app(), { helpers: [helper("-s -w")] });
+    const newDesk = side("v2", app(), {
+      helpers: [helper("-X main.endpoint=https://collect.metrics.example/v1")],
+    });
+    const absent = { ...side("v1", null), target: null };
+    const findings = evaluate(absent, newDesk, {
+      baseline: releaseBaseline([oldDesk]),
+    });
+    const held =
+      "component app is new; another component of v1 shipped one at this path";
+    const added = findings.find((finding) => finding.rule === "RW-G04");
+    assert.equal(
+      added.summary,
+      `v2 ships an executable at resources/bin/updater (${held}).`,
+    );
+    const injected = findings.find((finding) => finding.rule === "RW-G01");
+    assert.equal(injected.evidence[0].claim, `v1: no such helper (${held})`);
+    for (const finding of [added, injected])
+      assert.ok(
+        finding.unknowns.some((unknown) =>
+          /moved from or shared/.test(unknown),
+        ),
+        finding.unknowns.join("\n"),
+      );
+    // Without another component that shipped it, the old release did not.
+    const alone = evaluate(absent, newDesk);
+    assert.equal(
+      alone.find((finding) => finding.rule === "RW-G04").summary,
+      "v2 ships an executable that v1 did not.",
+    );
+  });
 });
 
 describe("moved process execution", () => {
