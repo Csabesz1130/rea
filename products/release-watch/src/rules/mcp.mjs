@@ -6,11 +6,17 @@
 // that only receive the server object.
 import { within } from "../ranges.mjs";
 import { isMcpServer } from "../surfaces.mjs";
+import {
+  componentAbsence,
+  heldElsewhere,
+  perComponent,
+  processAbsence,
+} from "./component-absence.mjs";
+import { oldRelease } from "./network.mjs";
 import { reachOf, reachedFrom } from "./reach.mjs";
 import { reachClaim, reachUnknowns } from "./reach-text.mjs";
 import {
   APP_SOURCE,
-  absencePhrase,
   cite,
   heuristic,
   newGroups,
@@ -132,6 +138,13 @@ const toolExecution = (context) => {
         "REA does not report the tool's name, description or input schema.",
         "REA does not establish that the tool's input reaches the command.",
         ...reachUnknowns(keyed.map((pair) => pair.path)),
+        ...(keyed.some(
+          ({ exec }) =>
+            groups.has(exec.key) &&
+            processAbsence(context, groups.get(exec.key)).held,
+        )
+          ? [perComponent("process execution sites")]
+          : []),
       ],
     });
   }
@@ -148,8 +161,7 @@ const execAbsence = (context, { groups, old }, exec) => {
   if (moved)
     return `${left} ran the same command from ${moved.fact.data.module}${moved.component === context.name ? "" : ` in component ${moved.component}`}`;
   const group = groups.get(exec.key);
-  if (group)
-    return absencePhrase(group.status, context.labels.left, group.counts);
+  if (group) return processAbsence(context, group).phrase;
   const registrations = new Set(
     old
       .filter(
@@ -268,38 +280,67 @@ const newRegistrations = (context, covered) => {
     .map((item) => ({
       before: item.left.filter((call) => counted.has(call.node_id)),
       after: item.right.filter((call) => counted.has(call.node_id)),
+      held: heldElsewhere(context, "memberCalls", item),
+      status: item.status,
     }))
     .filter(
       ({ before, after }) =>
         after.length > before.length && !covered.has(after[0].data.module),
     );
   if (gained.length === 0) return [];
-  const added = now.length - old.length;
   return [
     {
       rule: "RW-M02",
       severity: "medium",
       title: `New MCP tool registrations (${old.length} → ${now.length})`,
-      summary: `${context.labels.right} makes ${added} more tool registration call${added === 1 ? "" : "s"} than ${context.labels.left}, in ${gained.map((item) => item.after[0].data.module).join(", ")}.`,
+      summary: registrationSummary(context, { old, now, gained }),
       why: "Every new tool widens what a connected agent can do.",
       recommendation:
         "Review each new tool's handler and whether it needs human confirmation.",
       evidence: [
-        ...gained.flatMap((item) =>
-          item.after
-            .slice(item.before.length)
-            .map((call) =>
-              cite(`${call.data.member}() call`, call, APP_SOURCE),
-            ),
-        ),
+        ...gained.flatMap((item) => gainedCalls(context, item)),
         SERVER,
       ],
       unknowns: [
         "REA does not report tool names, so Release Watch counts registration calls across the component.",
+        ...(gained.some((item) => item.held)
+          ? [perComponent("tool registration calls")]
+          : []),
       ],
     },
   ];
 };
+
+// A new component's calls are counted against nothing, so the summary
+// gives the release's totals rather than calling them more than the old
+// release made.
+const registrationSummary = (context, { old, now, gained }) => {
+  const modules = gained.map((item) => item.after[0].data.module).join(", ");
+  const calls = (count, more = "") =>
+    `${count} ${more}tool registration call${count === 1 ? "" : "s"}`;
+  const release = context.release?.registrations;
+  if (context.left.target !== null || !release)
+    return `${context.labels.right} makes ${calls(now.length - old.length, "more ")} than ${context.labels.left}, in ${modules}.`;
+  const right = context.releaseLabels?.right ?? context.labels.right;
+  const cited = gained.reduce(
+    (sum, item) => sum + item.after.length - item.before.length,
+    0,
+  );
+  return `Component ${context.name} is new in ${right} and makes ${calls(now.length)}, ${cited === now.length ? "" : `${cited} of them `}in ${modules}; across the release, ${oldRelease(context)} made ${release.before} and ${right} makes ${release.after}.`;
+};
+
+// The calls a module gained, each with how the component lacked it when
+// another old component made one in a module at this path.
+const gainedCalls = (context, { before, after, held, status }) =>
+  after
+    .slice(before.length)
+    .map((call) =>
+      cite(
+        `${call.data.member}() call${held ? ` (${componentAbsence(context, { status, held, had: "made one in a module at this path" })})` : ""}`,
+        call,
+        APP_SOURCE,
+      ),
+    );
 
 /** MCP rules; claims the exec sites RW-M01 explains so RW-P01 skips them. */
 export const mcpPack = (context) => {

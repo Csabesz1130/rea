@@ -1,11 +1,16 @@
 // Electron boundary rules: renderer-reachable process execution, new bridge
 // APIs, webPreferences regressions and fuse regressions.
+import {
+  componentAbsence,
+  heldElsewhere,
+  perComponent,
+  processAbsence,
+} from "./component-absence.mjs";
 import { reachOf } from "./reach.mjs";
 import { reachClaim, reachUnknowns } from "./reach-text.mjs";
 import { webPreferenceRegressions } from "./windows.mjs";
 import {
   APP_SOURCE,
-  absencePhrase,
   cite,
   heuristic,
   maxSeverity,
@@ -17,14 +22,41 @@ import {
 
 const FUSE_SOURCE = "REA inspect_electron_fuses";
 
-const execEvidence = (group, labels) =>
+// How the component's old side had a renderer API or an exec site, and
+// whether another old component had what this one did not (`held`).
+const memberAbsence = (context, { fact, status }) => {
+  const held = heldElsewhere(context, "bridgeMembers", {
+    key: fact.key,
+    status,
+  });
+  return {
+    held,
+    phrase: componentAbsence(context, {
+      status,
+      held,
+      had: "exposed an API of this name",
+    }),
+  };
+};
+
+const execAbsence = (context, group) =>
+  group.status === "existing"
+    ? { held: false, phrase: `also in ${context.labels.left}` }
+    : processAbsence(context, group);
+
+const execEvidence = (group, absence) =>
   group.facts.map((exec) =>
     cite(
-      `${exec.data.method}() creates a child process in ${exec.data.module}${exec.data.command ? "" : " with a command REA did not resolve"} (${group.status === "existing" ? `also in ${labels.left}` : absencePhrase(group.status, labels.left, group.counts)})`,
+      `${exec.data.method}() creates a child process in ${exec.data.module}${exec.data.command ? "" : " with a command REA did not resolve"} (${absence.phrase})`,
       exec,
       APP_SOURCE,
     ),
   );
+
+const heldUnknowns = (member, exec) => [
+  ...(member.held ? [perComponent("renderer APIs")] : []),
+  ...(exec.held ? [perComponent("process execution sites")] : []),
+];
 
 /**
  * A new renderer-exposed bridge member whose IPC handler reaches a new,
@@ -57,9 +89,9 @@ const rendererProcessExecution = (context) => {
         left: item.left,
       })),
   ];
-  for (const { fact: member, status: memberStatus } of newFacts(
-    diff.app.bridgeMembers,
-  )) {
+  for (const added of newFacts(diff.app.bridgeMembers)) {
+    const member = added.fact;
+    const memberHeld = memberAbsence(context, added);
     const handler = handlers.get(member.data.channel);
     const scope = {
       module: handler?.location?.file ?? null,
@@ -75,9 +107,10 @@ const rendererProcessExecution = (context) => {
       group.facts.forEach((fact) => coveredExec.add(fact.node_id));
       group.left.forEach((fact) => coveredExec.add(fact.node_id));
       coveredMembers.add(member.key);
+      const execHeld = execAbsence(context, group);
       const evidence = [
         cite(
-          `Renderer API ${member.data.member} invokes IPC channel "${member.data.channel}" (${absencePhrase(memberStatus, labels.left)})`,
+          `Renderer API ${member.data.member} invokes IPC channel "${member.data.channel}" (${memberHeld.phrase})`,
           member,
           APP_SOURCE,
         ),
@@ -90,7 +123,7 @@ const rendererProcessExecution = (context) => {
           reachClaim(path, exec, "the handler"),
           path.read?.location ?? exec.location,
         ),
-        ...execEvidence(group, labels),
+        ...execEvidence(group, execHeld),
       ];
       if (app.summary?.sender_validation_observations === 0)
         evidence.push(
@@ -112,6 +145,7 @@ const rendererProcessExecution = (context) => {
         unknowns: [
           "REA did not establish that the IPC argument reaches the exec command; the path is a correlation of REA facts by location.",
           ...reachUnknowns([path]),
+          ...heldUnknowns(memberHeld, execHeld),
         ],
       });
     }
@@ -130,6 +164,7 @@ const newBridgeMembers = (context, coveredMembers) => {
   if (added.length === 0) return [];
   const names = added.map(({ fact }) => `${fact.data.member}()`);
   const shown = names.slice(0, 3).join(", ");
+  const absences = added.map((entry) => memberAbsence(context, entry));
   return [
     {
       rule: "RW-E04",
@@ -148,9 +183,9 @@ const newBridgeMembers = (context, coveredMembers) => {
       evidence: [
         ...added
           .slice(0, MAX_LISTED)
-          .map(({ fact, status }) =>
+          .map(({ fact }, index) =>
             cite(
-              `${fact.data.member} invokes "${fact.data.channel}" (${absencePhrase(status, context.labels.left)})`,
+              `${fact.data.member} invokes "${fact.data.channel}" (${absences[index].phrase})`,
               fact,
               APP_SOURCE,
             ),
@@ -165,7 +200,9 @@ const newBridgeMembers = (context, coveredMembers) => {
             ]
           : []),
       ],
-      unknowns: [],
+      unknowns: absences.some((absence) => absence.held)
+        ? [perComponent("renderer APIs")]
+        : [],
     },
   ];
 };

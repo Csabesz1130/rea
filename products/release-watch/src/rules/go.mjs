@@ -2,6 +2,11 @@
 // build information. Settings and dependencies are compared only when REA
 // found Go build information on both sides.
 import { displayUrl, hostOf, isUrl, urlsIn } from "../urls.mjs";
+import {
+  componentAbsence,
+  heldElsewhere,
+  perComponent,
+} from "./component-absence.mjs";
 import { GO_SOURCE, isVendorHost, packResult, reported } from "./shared.mjs";
 
 // `-X name=value` sets a string variable at link time; Go's flag parser
@@ -79,6 +84,31 @@ const hostsIn = (flags) =>
 
 const oldFailed = (helper) => helper.before?.identified === "failed";
 
+// A helper this component did not ship before that another component of
+// the old release shipped at the same path: `{ held, phrase }`, phrase null
+// when no other component did.
+const helperAbsence = (context, helper) => {
+  const held =
+    helper.before === null &&
+    heldElsewhere(context, "helpers", {
+      key: helper.relative,
+      status: "added",
+    });
+  return {
+    held,
+    phrase: held
+      ? componentAbsence(context, {
+          status: "added",
+          held,
+          had: "shipped one at this path",
+        })
+      : null,
+  };
+};
+
+const heldUnknowns = (absence) =>
+  absence.held ? [perComponent("helper executables")] : [];
+
 // The old helper existed but REA could not read its build information.
 const oldBuildUnknown = (helper) =>
   oldFailed(helper)
@@ -94,6 +124,7 @@ const ldflagsFindings = (helper, change, context) => {
       !before.has(host) && !isVendorHost(host, context.options.vendorDomains),
   );
   if (fresh.length === 0) return [];
+  const absence = helperAbsence(context, helper);
   const oldLine = helper.before?.go
     ? reported(
         `${context.labels.left}: -ldflags ${displayLdflags(change.before)}`,
@@ -101,7 +132,7 @@ const ldflagsFindings = (helper, change, context) => {
         GO_SOURCE,
       )
     : reported(
-        `${context.labels.left}: ${!helper.before ? "no such helper" : oldFailed(helper) ? "REA could not inspect the helper" : "REA found no Go build information"}`,
+        `${context.labels.left}: ${!helper.before ? `no such helper${absence.held ? ` (${absence.phrase})` : ""}` : oldFailed(helper) ? "REA could not inspect the helper" : "REA found no Go build information"}`,
         oldFailed(helper) ? "unknown" : "observed",
         GO_SOURCE,
         { side: "left" },
@@ -127,6 +158,7 @@ const ldflagsFindings = (helper, change, context) => {
       unknowns: [
         "Build settings record the linker flag; REA does not establish that the helper contacts the endpoint at runtime.",
         ...oldBuildUnknown(helper),
+        ...heldUnknowns(absence),
       ],
     },
   ];
@@ -183,11 +215,14 @@ const trimpathFinding = (helper, change, context) =>
 // A helper executable the old release did not ship.
 const newHelperFinding = (helper, context) => {
   const go = helper.after.go;
+  const absence = helperAbsence(context, helper);
   return {
     rule: "RW-G04",
     severity: "medium",
     title: `New native helper: ${helper.relative}`,
-    summary: `${context.labels.right} ships an executable that ${context.labels.left} did not.`,
+    summary: absence.held
+      ? `${context.labels.right} ships an executable at ${helper.relative} (${absence.phrase}).`
+      : `${context.labels.right} ships an executable that ${context.labels.left} did not.`,
     why: "A new executable runs outside the app's JavaScript sandbox with the user's privileges.",
     recommendation:
       "Ask the vendor what the helper does, when it runs and what it contacts.",
@@ -206,11 +241,14 @@ const newHelperFinding = (helper, context) => {
             "Release Watch discovery",
           ),
         ],
-    unknowns: go
-      ? []
-      : [
-          "REA found no Go build information; Release Watch did not analyze this executable further.",
-        ],
+    unknowns: [
+      ...(go
+        ? []
+        : [
+            "REA found no Go build information; Release Watch did not analyze this executable further.",
+          ]),
+      ...heldUnknowns(absence),
+    ],
   };
 };
 

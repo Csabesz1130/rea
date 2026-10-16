@@ -351,10 +351,13 @@ passed.
   URL constant and client modules, and the modules an import of the URL
   passed through, all have such content, so code that moved between
   components keeps what it had. Page scripts, service workers,
-  direct `eval` and HTML sinks are compared per component: one another
-  component of the old release had is reported as new to its component, and
-  the claim says another component had it rather than that the old release
-  lacked it.
+  direct `eval`, HTML sinks, renderer APIs, process sites, MCP tool
+  registration calls and native helpers are compared per component: one
+  another component of the old release had at the same key (an API name, a
+  module path and method, a helper path) is reported as new to its
+  component, and the claim says another component had it rather than that
+  the old release lacked it. A new component's RW-M02 gives the release's
+  registration totals instead of comparing its calls with the old release.
 - A URL literal in a module that imports an HTTP client REA does not model
   (axios, got, ky), or one such a module reads from an import (a constant,
   an object property, a namespace member), is a possible destination, not

@@ -3,10 +3,11 @@
 // a site's command differs from every old one. A new site that takes a site
 // the release lost, with the same method and resolved command, moved; it is
 // reported low with the old location. An unresolved command never pairs.
-import { movedFrom } from "../moves.mjs";
+import { movedFrom, shippedBefore } from "../moves.mjs";
+import { perComponent, processAbsence } from "./component-absence.mjs";
+import { oldRelease } from "./network.mjs";
 import {
   APP_SOURCE,
-  absencePhrase,
   cite,
   heuristic,
   newGroups,
@@ -20,6 +21,8 @@ const movedSites = (context, group) =>
     ? null
     : movedFrom(context.moves.childProcesses, group.facts);
 
+// A file the component's old side did not have is new in the release
+// unless another component of the old release shipped its content.
 const newFileNote = (context, modulePath) => {
   const renamed = new Set(
     [...context.aliases.values()].map((alias) => alias.path),
@@ -27,9 +30,11 @@ const newFileNote = (context, modulePath) => {
   const before = new Set(
     (context.left.app?.assets ?? []).map((asset) => asset.key),
   );
-  return context.left.app && !before.has(modulePath) && !renamed.has(modulePath)
-    ? ", a file new in this release"
-    : "";
+  if (!context.left.app || before.has(modulePath) || renamed.has(modulePath))
+    return "";
+  return shippedBefore(context.baseline, context.right.app)(modulePath)
+    ? `, a file whose content another component of ${oldRelease(context)} shipped`
+    : ", a file new in this release";
 };
 
 const siteLine = (fact) =>
@@ -81,6 +86,8 @@ const finding = (context, group) => {
       unknowns,
     };
   const changed = group.status === "changed";
+  const absence = processAbsence(context, group);
+  if (absence.held) unknowns.push(perComponent("process execution sites"));
   const gone = context.moves.childProcesses.lost
     .map((site) => site.fact)
     .filter(
@@ -102,7 +109,7 @@ const finding = (context, group) => {
       : `New process execution: ${method}() in ${module}`,
     summary: changed
       ? `${context.labels.right} runs a different command from ${module} than ${context.labels.left} did.`
-      : `${context.labels.right} creates child processes from ${module}${newFileNote(context, module)} (${absencePhrase(group.status, context.labels.left, group.counts)}).`,
+      : `${context.labels.right} creates child processes from ${module}${newFileNote(context, module)} (${absence.phrase}).`,
     why: "Process execution is a common step in supply-chain payloads and widens what the app can do on the machine it runs on.",
     recommendation:
       "Confirm the command source and that it cannot be influenced by web content, model output or network data.",

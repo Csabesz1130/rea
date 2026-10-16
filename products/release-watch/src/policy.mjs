@@ -17,7 +17,7 @@ import {
   namedHosts,
   withoutDestination,
 } from "./rules/destinations.mjs";
-import { PER_COMPONENT } from "./rules/component-absence.mjs";
+import { releaseKeys } from "./rules/component-absence.mjs";
 import { networkPack, networkView } from "./rules/network.mjs";
 import { processPack } from "./rules/process.mjs";
 import { runtimePack } from "./rules/runtime.mjs";
@@ -109,9 +109,7 @@ export const releaseBaseline = (leftSides) => ({
   browserSdks: new Set(
     leftSides.flatMap((side) => [...browserSdkUses(side.app).keys()]),
   ),
-  keys: Object.fromEntries(
-    PER_COMPONENT.map((family) => [family, keysOf(leftSides, family)]),
-  ),
+  keys: releaseKeys(leftSides),
   credentials: new Set(
     leftSides.flatMap((side) =>
       (side.capture?.credentials ?? []).map((fact) => fact.key),
@@ -125,14 +123,6 @@ export const releaseBaseline = (leftSides) => ({
       .filter(Boolean),
   ),
 });
-
-// The keys of one fact family across the old release's components.
-const keysOf = (leftSides, family) =>
-  new Set(
-    leftSides.flatMap((side) =>
-      (side.app?.[family] ?? []).map((fact) => fact.key),
-    ),
-  );
 
 // Credential tokens the old release shipped anywhere, and in browser code.
 const shippedTokensOf = (leftSides) => {
