@@ -148,6 +148,17 @@ const htmlLoaded = (app) =>
   );
 
 /**
+ * The old path of a new-side module `moduleAliases` paired with one, else
+ * undefined: `renamedFrom(aliases)(path)`.
+ */
+export const renamedFrom = (aliases) => {
+  const from = new Map(
+    [...(aliases ?? [])].map(([old, alias]) => [alias.path, old]),
+  );
+  return (modulePath) => from.get(modulePath);
+};
+
+/**
  * Map old module paths to new ones: REA's own pairing of changed assets
  * first, then bundles whose names match once their content hash is removed,
  * when that name is unique on both sides. Unpaired paths keep their name.

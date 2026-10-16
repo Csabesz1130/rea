@@ -1,7 +1,9 @@
 // RW-C01: what REA could not examine in the new release, graded by whether
 // that code changed since the old release, and the changed-file tests the
 // coverage rules share.
+import { renamedFrom } from "../diff.mjs";
 import { isScriptPath } from "../facts/modules.mjs";
+import { shippedBefore } from "../moves.mjs";
 import { gapLine, processGapsOf } from "./process-gaps.mjs";
 import { APP_SOURCE, cite, reported } from "./shared.mjs";
 
@@ -11,38 +13,16 @@ export const MAX_FILES = 6;
 const listed = (files) =>
   `${files.slice(0, MAX_FILES).join(", ")}${files.length > MAX_FILES ? ` and ${files.length - MAX_FILES} more` : ""}`;
 
-// Files whose content differs from the old release, or that are new there.
-// Every file of a component new in this release is new. Unknown when REA
-// could not analyze the old side: nothing is called changed then.
+// Files whose content the old release did not ship, in any component or
+// under any path (moves.mjs shippedBefore owns that test, so a file that
+// moved unchanged did not change, and one REA reported no digest for did).
+// Every file of a component new in this release is compared the same way.
+// Unknown when REA could not analyze the old side of a component the old
+// release had: nothing is called changed then.
 export const changedFiles = (context) => {
-  if (context.left.target === null) {
-    const shipped = context.baseline?.digests ?? new Set();
-    return (file) =>
-      !shipped.has(
-        context.right.app?.assets.find((asset) => asset.key === file)?.data
-          .sha256,
-      );
-  }
-  if (!context.left.app) return () => false;
-  const before = new Map(
-    (context.left.app?.assets ?? []).map((asset) => [
-      asset.key,
-      asset.data.sha256,
-    ]),
-  );
-  const renamed = new Map(
-    [...context.aliases].map(([from, alias]) => [alias.path, from]),
-  );
-  // A file whose content the old release shipped anywhere (it moved between
-  // components unchanged) did not change.
-  const shipped = context.baseline?.digests ?? new Set();
-  return (file) => {
-    const old = before.get(file) ?? before.get(renamed.get(file));
-    const now = context.right.app.assets.find((asset) => asset.key === file)
-      ?.data.sha256;
-    if (now && shipped.has(now)) return false;
-    return old === undefined || old !== now;
-  };
+  if (context.left.target !== null && !context.left.app) return () => false;
+  const shipped = shippedBefore(context.baseline, context.right.app);
+  return (file) => !shipped(file);
 };
 
 /**
@@ -132,8 +112,7 @@ const applicationGaps = (app) => {
 // What a bundle's source map says changed: `{ known, changed }`, with the
 // original sources added, changed or removed since the old bundle's map.
 const originalChanges = (context, file) => {
-  const oldFile =
-    [...context.aliases].find(([, alias]) => alias.path === file)?.[0] ?? file;
+  const oldFile = renamedFrom(context.aliases)(file) ?? file;
   const sourcesOf = (app, bundle) =>
     new Map(
       (app?.embeddedSources ?? [])

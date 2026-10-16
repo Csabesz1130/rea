@@ -202,6 +202,18 @@ describe("coverage", () => {
     );
     assert.equal(changed[0].severity, "high");
     assert.match(changed[0].title, /Changed code in v2 was not examined/);
+    // REA reported no digest for a renamed bundle on either side: not
+    // known to be unchanged.
+    const unknown = evaluate(
+      side("v1", app({ assets: [fact("vendor/old.js", { sha256: null })] })),
+      side("v2", truncated(null)),
+      {
+        aliases: new Map([
+          ["vendor/old.js", { path: "vendor/bundle.js", basis: "test" }],
+        ]),
+      },
+    );
+    assert.equal(unknown[0].severity, "high");
   });
 
   it("does not report REA's routine partial graph status as missing code", () => {

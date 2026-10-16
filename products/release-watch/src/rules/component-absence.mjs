@@ -3,7 +3,8 @@
 // MCP tool registrations and native helpers. A fact another component of
 // the old release had is new to this component only, so its claim names the
 // component instead of denying what REA saw elsewhere in the old release.
-import { fileDigests } from "../moves.mjs";
+import { renamedFrom } from "../diff.mjs";
+import { fileDigests, shippedBefore } from "../moves.mjs";
 import { oldRelease } from "./network.mjs";
 import { absencePhrase } from "./shared.mjs";
 
@@ -71,15 +72,14 @@ export const contentOrigin = (context, module) => {
   const own = context.left.app;
   if (
     (own?.assets ?? []).some((asset) => asset.key === module) ||
-    [...(context.aliases?.values() ?? [])].some(
-      (alias) => alias.path === module,
-    )
+    renamedFrom(context.aliases)(module) !== undefined
   )
     return "path";
+  if (!shippedBefore(context.baseline, context.right.app)(module)) return "new";
   const digest = fileDigests(context.right.app).get(module);
-  if (!digest) return "new";
-  if ([...fileDigests(own).values()].includes(digest)) return "component";
-  return context.baseline?.digests?.has(digest) ? "release" : "new";
+  return [...fileDigests(own).values()].includes(digest)
+    ? "component"
+    : "release";
 };
 
 // A site at a path the component's old side did not have, in a file whose

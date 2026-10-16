@@ -4,6 +4,7 @@
 // through one of these is not classified, and the process, Electron and MCP
 // rules cannot see it.
 import { isProcessLibrary, packageNameOf } from "../catalog.mjs";
+import { renamedFrom } from "../diff.mjs";
 import { APP_SOURCE, cite, heuristic } from "./shared.mjs";
 
 const MAX_LINES = 6;
@@ -31,11 +32,9 @@ export const processLibraries = (context, changed) => {
       importKey(fact.data.module, fact),
     ),
   );
-  const renamed = new Map(
-    [...context.aliases].map(([from, alias]) => [alias.path, from]),
-  );
+  const renamed = renamedFrom(context.aliases);
   const importedBefore = (fact) =>
-    [fact.data.module, renamed.get(fact.data.module)].some(
+    [fact.data.module, renamed(fact.data.module)].some(
       (module) => module !== undefined && before.has(importKey(module, fact)),
     );
   const fresh = libraryImports(context.right.app)
