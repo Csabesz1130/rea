@@ -449,16 +449,17 @@ as sensitive.
 
 ## Cost
 
-Measured on a 4-core Linux container (16 GB), three warm runs each, wall time,
-CPU (user + system of all processes) and peak process-tree memory sampled
-every 100 ms. No model is called, so no tokens are used.
+Measured on a 4-core Linux container (16 GB): wall time, CPU (user + system
+of all processes) and peak process-tree memory sampled every 100 ms. Ranges
+are three warm runs after a first run; the first runs fell inside or just
+above them. No model is called, so no tokens are used.
 
-| Review                                                         | Wall       | CPU     | Peak memory |
-| -------------------------------------------------------------- | ---------- | ------- | ----------- |
-| Acme Notes Cloud (2 components, HAR)                           | 9.4–10.9 s | 27–30 s | 1.3 GB      |
-| Acme Notes Electron distribution                               | 7.5–7.9 s  | 24–25 s | 1.6 GB      |
-| `@modelcontextprotocol/server-everything` 2026.1.26 → 2026.7.4 | 14.4 s     | 30 s    | 0.9 GB      |
-| `swagger-ui-dist` 5.32.15 → 5.33.1 (12 MB of bundles)          | 238 s      | 9.3 min | 5.0 GB      |
+| Review                                                         | Wall        | CPU     | Peak memory |
+| -------------------------------------------------------------- | ----------- | ------- | ----------- |
+| Acme Notes Cloud (2 components, HAR)                           | 9.1–9.9 s   | 25–27 s | 1.3 GB      |
+| Acme Notes Electron distribution                               | 9.8–10.7 s  | 32–33 s | 1.7 GB      |
+| `@modelcontextprotocol/server-everything` 2026.1.26 → 2026.7.4 | 14.8–15.3 s | 32–33 s | 0.9 GB      |
+| `swagger-ui-dist` 5.32.15 → 5.33.1 (12 MB of bundles, one run) | 234 s       | 9.7 min | 5.3 GB      |
 
 Each side's JavaScript analysis needs about 2.5 GB at the swagger-ui scale, so
 use `--jobs 1` on runners with less than 6 GB of memory; it roughly doubles
