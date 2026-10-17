@@ -8,7 +8,7 @@
 // packages, shipped original sources). Claims name each side of a renamed
 // component by that side's manifest name.
 import { renamedFrom } from "../diff.mjs";
-import { fileDigests, shippedBefore } from "../moves.mjs";
+import { fileDigests, lostUnresolved, shippedBefore } from "../moves.mjs";
 import { oldRelease } from "./network.mjs";
 import { absencePhrase } from "./shared.mjs";
 
@@ -169,6 +169,22 @@ export const processAbsence = (context, group) => {
 /** The unknown a fact another component had carries. */
 export const perComponent = (what) =>
   `Release Watch compares ${what} per component, so this may be the same one, moved from or shared with another component.`;
+
+/**
+ * The unknown a new process site with a command REA did not resolve carries
+ * when the release lost a site of its method with none, or null: such sites
+ * never pair as moved, so it may be the same call.
+ */
+export const relocatedUnresolved = (context, method) => {
+  const [gone] = lostUnresolved(
+    context.moves.childProcesses,
+    method,
+    "command",
+  );
+  return gone
+    ? `${context.labels.left} had a ${method}() with an unresolved command in ${gone.fact.data.module} that is gone now; this may be the same call, moved.`
+    : null;
+};
 
 /** The unknown a process site in a copied file carries. */
 export const copiedSite = (context) =>

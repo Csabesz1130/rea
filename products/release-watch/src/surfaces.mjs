@@ -14,28 +14,57 @@ const reason = (list, text) => {
   return list;
 };
 
+const specificity = (sdk) =>
+  sdk.kind === "mcp-server" ? 2 : sdk.role && sdk.role !== "shared" ? 1 : 0;
+
 /**
  * AI and MCP SDKs one application uses, by package name, with the import and
  * package facts that show each. The one place SDK facts are grouped.
  */
 export const sdkUses = (app) => {
   const uses = new Map();
-  for (const fact of [...(app?.imports ?? []), ...(app?.packages ?? [])]) {
-    const sdk = sdkOf(fact.key);
-    if (sdk === null) continue;
+  const add = (fact, imported) => {
+    const found = sdkOf(fact.key);
+    if (found === null) return;
+    // An MCP package is a server when any module imports its server entry;
+    // a package installed beside the code serves nothing by itself, and
+    // says no more than shared MCP code does.
+    const sdk =
+      found.kind === "mcp-server" && !imported
+        ? { kind: "mcp", label: "MCP SDK", role: "shared" }
+        : found;
     const name = packageNameOf(fact.key) ?? fact.key;
-    if (!uses.has(name)) uses.set(name, { sdk, facts: [] });
+    if (!uses.has(name)) uses.set(name, { sdk, facts: [], served: [] });
     const use = uses.get(name);
-    // An MCP package is a server when any module imports its server entry.
-    if (sdk.kind === "mcp-server") use.sdk = sdk;
+    // The most specific entry says what the package is: a server entry,
+    // then a client or transport entry (`@modelcontextprotocol/sdk/client`),
+    // then shared code (`@modelcontextprotocol/sdk/types.js`).
+    if (specificity(sdk) > specificity(use.sdk)) use.sdk = sdk;
+    if (sdk.kind === "mcp-server") use.served.push(fact);
     use.facts.push(fact);
-  }
+  };
+  for (const fact of app?.imports ?? []) add(fact, true);
+  for (const fact of app?.packages ?? []) add(fact, false);
   return uses;
 };
 
-/** True when any module of the application imports an MCP server SDK. */
-export const isMcpServer = (app) =>
-  [...sdkUses(app).values()].some((use) => use.sdk.kind === "mcp-server");
+/**
+ * The MCP server SDKs and frameworks the application's modules import:
+ * `[{ name, label, registers, facts }]`, with the member calls each
+ * registers tools through and the imports of its server entry.
+ */
+export const mcpServers = (app) =>
+  [...sdkUses(app)]
+    .filter(([, use]) => use.sdk.kind === "mcp-server")
+    .map(([name, use]) => ({
+      name,
+      label: use.sdk.label,
+      registers: use.sdk.registers,
+      facts: use.served,
+    }));
+
+/** True when any module of the application imports an MCP server SDK or framework. */
+export const isMcpServer = (app) => mcpServers(app).length > 0;
 
 const appSurfaces = (app, surfaces) => {
   if (

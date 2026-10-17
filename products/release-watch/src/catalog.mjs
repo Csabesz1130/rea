@@ -96,8 +96,87 @@ const AI_SDKS = [
   { name: "replicate", label: "Replicate client", provider: "Replicate" },
 ];
 
-const MCP_SERVER = /^@modelcontextprotocol\/sdk\/server(\/|$)/;
-const MCP_ANY = /^@modelcontextprotocol\/sdk(\/|$)/;
+// MCP server SDKs and frameworks, by import specifier, with the member calls
+// each registers tools through. The TypeScript SDK serves from
+// @modelcontextprotocol/sdk/server in v1 and @modelcontextprotocol/server in
+// v2; both register per-tool calls on McpServer. v1's Server dispatches tool
+// calls through setRequestHandler(CallToolRequestSchema, ...); v2's takes a
+// method string, which REA does not report, so its dispatcher calls are not
+// counted. mcp-handler (formerly @vercel/mcp-adapter) hands its callback the
+// SDK's McpServer; fastmcp and mcp-framework wrap the SDK and register tools
+// with addTool (fastmcp also with addTools).
+const MCP_SERVERS = [
+  {
+    pattern: /^@modelcontextprotocol\/sdk\/server(\/|$)/,
+    label: "MCP server SDK",
+    registers: [
+      "registerTool",
+      "registerToolTask",
+      "tool",
+      "setRequestHandler",
+    ],
+  },
+  {
+    pattern: /^@modelcontextprotocol\/server(\/|$)/,
+    label: "MCP server SDK",
+    registers: ["registerTool"],
+  },
+  {
+    pattern: /^(mcp-handler|@vercel\/mcp-adapter)(\/|$)/,
+    label: "MCP server adapter",
+    registers: ["registerTool", "registerToolTask", "tool"],
+  },
+  {
+    pattern: /^fastmcp(\/|$)/,
+    label: "MCP server framework",
+    registers: ["addTool", "addTools"],
+  },
+  {
+    pattern: /^mcp-framework(\/|$)/,
+    label: "MCP server framework",
+    registers: ["addTool"],
+  },
+];
+// The other packages of the TypeScript MCP SDK, by what they give a
+// component that runs no server through them: a client (v1's
+// @modelcontextprotocol/sdk/client, v2's @modelcontextprotocol/client),
+// the HTTP transports and middleware v2 serves a server through, or shared
+// code that says neither (v1's types and protocol, v2's core).
+const MCP_PACKAGES = [
+  {
+    pattern: /^@modelcontextprotocol\/(client|sdk\/client)(\/|$)/,
+    label: "MCP client SDK",
+    role: "client",
+  },
+  {
+    pattern: /^@modelcontextprotocol\/(node|express|hono|fastify)(\/|$)/,
+    label: "MCP HTTP transport",
+    role: "transport",
+  },
+  {
+    pattern: /^@modelcontextprotocol\/(sdk|core)(\/|$)/,
+    label: "MCP SDK",
+    role: "shared",
+  },
+];
+
+/**
+ * The method a framework bundled into a module that imports an MCP server
+ * SDK registers tools through (FastMCP's addTool, bundled in firecrawl-mcp).
+ */
+export const BUNDLED_REGISTRARS = ["addTool", "addTools"];
+
+/** The member every MCP server SDK dispatches requests through. */
+export const MCP_DISPATCHER = "setRequestHandler";
+
+/** The request schema a dispatcher's first argument names for tool calls. */
+export const MCP_TOOL_CALL = "CallToolRequestSchema";
+
+/** Every member name an MCP server SDK or framework registers tools through. */
+export const MCP_REGISTRATION_MEMBERS = new Set([
+  ...MCP_SERVERS.flatMap((server) => server.registers),
+  ...BUNDLED_REGISTRARS,
+]);
 
 /** The npm package name a module specifier refers to, or null for relative and URL specifiers. */
 export const packageNameOf = (specifier) => {
@@ -109,13 +188,22 @@ export const packageNameOf = (specifier) => {
 
 /**
  * Classify an import specifier or package name: `{ kind: "mcp-server" | "mcp" | "ai", label }`
- * for AI and MCP SDKs, with `provider` for an AI SDK that calls one
- * provider's API itself, otherwise null.
+ * for AI and MCP SDKs, with `registers` (the member calls it registers
+ * tools through) for an MCP server SDK or framework, `role` ("client",
+ * "transport" or "shared") for another MCP SDK package and `provider` for
+ * an AI SDK that calls one provider's API itself, otherwise null.
  */
 export const sdkOf = (specifier) => {
-  if (MCP_SERVER.test(specifier))
-    return { kind: "mcp-server", label: "MCP server SDK" };
-  if (MCP_ANY.test(specifier)) return { kind: "mcp", label: "MCP SDK" };
+  if (typeof specifier !== "string") return null;
+  const server = MCP_SERVERS.find((entry) => entry.pattern.test(specifier));
+  if (server)
+    return {
+      kind: "mcp-server",
+      label: server.label,
+      registers: server.registers,
+    };
+  const other = MCP_PACKAGES.find((entry) => entry.pattern.test(specifier));
+  if (other) return { kind: "mcp", label: other.label, role: other.role };
   const name = packageNameOf(specifier);
   if (name === null) return null;
   const entry = AI_SDKS.find((sdk) =>

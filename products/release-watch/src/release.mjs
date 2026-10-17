@@ -1,6 +1,7 @@
 // What the whole release gained and lost, decided once from every prepared
 // component before any component is graded.
-import { connectionTotals, registrationTotals } from "./rules/mcp.mjs";
+import { connectionTotals } from "./rules/mcp.mjs";
+import { registrationTotals } from "./rules/mcp-registrations.mjs";
 import { releaseWindowPairing } from "./rules/window-pairing.mjs";
 import { releaseMovesOf } from "./policy.mjs";
 import { appKnown } from "./sides.mjs";

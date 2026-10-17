@@ -14,6 +14,7 @@ import { failedFiles } from "../facts/coverage.mjs";
 import { localPath, localText, scrubDeep } from "../redact.mjs";
 import { RELEASE_WATCH_LIMITS, coverageOf } from "./coverage.mjs";
 import { displaySetting } from "../rules/go.mjs";
+import { registrationItems } from "../rules/mcp-registrations.mjs";
 import { headerChanges } from "../rules/runtime.mjs";
 import { sdkUses } from "../surfaces.mjs";
 import { displayScript } from "../urls.mjs";
@@ -173,10 +174,14 @@ const aiSections = (component) => {
         "mcp-registrations",
         "MCP tool registrations",
         ["Module", "Call", "Count"],
-        diff.app.memberCalls.map((item) => [
+        registrationItems(
+          diff.app.memberCalls,
+          component.left.app,
+          component.right.app,
+        ).map(({ item, before, after }) => [
           factOf(item).data.module,
           `${factOf(item).data.member}()`,
-          `${item.left.length} → ${item.right.length}`,
+          `${before.length} → ${after.length}`,
         ]),
       ),
     ),

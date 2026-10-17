@@ -1,6 +1,7 @@
 // Projects `analyze_javascript_application` Evidence into the capability
 // facts Release Watch compares. This module never reads application source.
-import { HTML_SINKS } from "../catalog.mjs";
+import { HTML_SINKS, MCP_REGISTRATION_MEMBERS } from "../catalog.mjs";
+import { comesBefore, sameStart } from "../ranges.mjs";
 import { isUrl, scriptKey } from "../urls.mjs";
 import { callGraph } from "./calls.mjs";
 import { coverageOf, unreachedModules } from "./coverage.mjs";
@@ -16,18 +17,13 @@ import {
   semanticFact,
 } from "./provenance.mjs";
 
-// Property reads Release Watch pairs with their calls: MCP tool registrations,
-// by the last name of REA's read path (`server.experimental.tasks.registerToolTask`).
-// The low-level MCP Server API dispatches tools through setRequestHandler.
-const TRACKED_MEMBERS = new Set([
-  "registerTool",
-  "registerToolTask",
-  "tool",
-  "setRequestHandler",
-]);
+// Property reads Release Watch pairs with their calls: the members MCP
+// server SDKs and frameworks register tools through (catalog.mjs), by the
+// last name of REA's read path (`server.experimental.tasks.registerToolTask`).
+// Which of these calls register tools in an app is the MCP rules' call.
 const trackedMember = (label) => {
   const member = /^read:\/(?:.+\/)?([^/]+)$/.exec(label)?.[1] ?? null;
-  return TRACKED_MEMBERS.has(member) ? member : null;
+  return MCP_REGISTRATION_MEMBERS.has(member) ? member : null;
 };
 
 // What REA did not resolve keeps its text for display, with the form it is
@@ -263,7 +259,6 @@ const graphFacts = (graph) => {
 };
 
 const rangeOf = (node) => node.identity?.source_range ?? null;
-const samePosition = (a, b) => a.line === b.line && a.column === b.column;
 
 // One projection per REA semantic-graph node kind.
 const SEMANTIC_PROJECTIONS = {
@@ -367,24 +362,38 @@ const bindingRelations = (semantic, facts, contexts) => {
 };
 
 /**
- * Pair each tracked property read (`server.registerTool`) with the call site
- * that starts at the same source position: the call it is the callee of.
+ * Pair each tracked property read (`server.registerTool`) with the call it
+ * is the callee of: of the call sites that start where it starts, the
+ * innermost one that ends after it. A call in the receiver
+ * (`getServer().setRequestHandler(…)`) starts there too but ends before
+ * the read does. The read's range (`callee`) ends where the call's own
+ * arguments begin.
  */
 const memberCalls = (scope) => {
   for (const read of scope.trackedReads) {
-    const start = rangeOf(read).start;
+    const range = rangeOf(read);
     const modulePath = read.identity?.module_path ?? null;
-    const call = scope.callSites.find(
-      (site) =>
-        site.identity?.module_path === modulePath &&
-        samePosition(rangeOf(site).start, start),
-    );
-    if (call === undefined) continue;
+    const call = scope.callSites
+      .filter(
+        (site) =>
+          site.identity?.module_path === modulePath &&
+          sameStart(rangeOf(site), range) &&
+          comesBefore(range.end, rangeOf(site).end),
+      )
+      .reduce(
+        (inner, site) =>
+          !inner || comesBefore(rangeOf(site).end, rangeOf(inner).end)
+            ? site
+            : inner,
+        null,
+      );
+    if (call === null) continue;
     scope.facts.memberCalls.push(
       semanticFact(call, scope.contexts, `${modulePath}#${read.label}`, {
         module: modulePath,
         member: trackedMember(read.label),
         range: rangeOf(call),
+        callee: range,
       }),
     );
   }

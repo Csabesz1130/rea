@@ -8,7 +8,7 @@ import {
 } from "../catalog.mjs";
 import { movedFrom } from "../moves.mjs";
 import { textPreview } from "../source-line.mjs";
-import { sdkUses } from "../surfaces.mjs";
+import { mcpServers, sdkUses } from "../surfaces.mjs";
 import { hostOf, maskTag } from "../urls.mjs";
 import {
   BROWSER_CODE,
@@ -152,6 +152,70 @@ const credentialFindings = (context) => {
 const statusesOf = (items) =>
   new Map(items.map((item) => [item.key, item.status]));
 
+// What RW-A03 says about a new SDK: a new MCP server, an MCP server SDK
+// or framework in a component that already served MCP through another one
+// (it switched packages and runs no new server), another MCP SDK package,
+// or an AI SDK.
+const SDK_TEXT = {
+  server: (context) => ({
+    severity: "medium",
+    title: (name) => `New MCP server: ${name}`,
+    summary: () =>
+      `${context.labels.right} now runs an MCP server that AI agents can call.`,
+    why: "Each MCP tool is an entry point that a model, and anyone who can steer it with a prompt, can invoke.",
+    recommendation:
+      "List the tools it exposes and what each can touch; require confirmation for tools with side effects.",
+  }),
+  switched: (context, served) => ({
+    severity: "low",
+    title: (name, sdk) => `New ${sdk.label}: ${name}`,
+    summary: (name) =>
+      `${context.labels.right} now serves MCP through ${name}; ${context.labels.left} already ran an MCP server through ${served.join(", ")}.`,
+    why: "A different server SDK can change how tools are registered, dispatched and validated.",
+    recommendation:
+      "Check that the server exposes the same tools, with the same handlers, as before.",
+  }),
+  other: (context) => ({
+    severity: "low",
+    title: (name, sdk) => `New ${sdk.label}: ${name}`,
+    summary: (name) => `${context.labels.right} now uses ${name}.`,
+    why: "The component now talks to AI models; prompts, user data and model output need review.",
+    recommendation:
+      "Review what data reaches the model and how its output is used.",
+  }),
+  mcp: (context, served, sdk) => ({
+    severity: "low",
+    title: (name) => `New ${sdk.label}: ${name}`,
+    summary: (name) =>
+      `${context.labels.right} now uses ${name}${MCP_TEXT[sdk.role].does}.`,
+    why: MCP_TEXT[sdk.role].why,
+    recommendation: MCP_TEXT[sdk.role].recommendation,
+  }),
+};
+
+// An MCP SDK package that runs no server in the component, by its role
+// (catalog.mjs): it talks to MCP servers or agents, not to AI models.
+const MCP_TEXT = {
+  client: {
+    does: ", which connects to MCP servers and calls their tools",
+    why: "What an MCP server's tools return comes from outside the component and can steer a model that reads it, and those tools act with the access the component gives them.",
+    recommendation:
+      "Check which MCP servers it connects to, what it sends them and how their results are used.",
+  },
+  transport: {
+    does: ", which serves an MCP server over HTTP",
+    why: "An HTTP transport makes a server's tools reachable to anyone who can reach its endpoint, not only to a local agent.",
+    recommendation:
+      "Check where the endpoint listens, how it authenticates callers and which tools it exposes.",
+  },
+  shared: {
+    does: "",
+    why: "MCP SDK code connects a component to MCP servers or serves one; Release Watch does not establish which from this package.",
+    recommendation:
+      "Check whether the component now connects to MCP servers or exposes tools, and to whom.",
+  },
+};
+
 // An SDK RW-A01 reports in browser code is not repeated.
 const sdkFindings = (context, placed) => {
   const before = new Set([
@@ -163,23 +227,26 @@ const sdkFindings = (context, placed) => {
     ...statusesOf(context.diff.app.imports),
     ...statusesOf(context.diff.app.packages),
   ]);
+  const served = mcpServers(context.left.app).map(({ name }) => name);
   return [...sdkUses(context.right.app)]
     .filter(([name]) => !before.has(name))
     .map(([name, { sdk, facts }]) => {
-      const server = sdk.kind === "mcp-server";
+      const kind =
+        sdk.kind === "mcp"
+          ? "mcp"
+          : sdk.kind !== "mcp-server"
+            ? "other"
+            : served.length > 0
+              ? "switched"
+              : "server";
+      const text = SDK_TEXT[kind](context, served, sdk);
       return {
         rule: "RW-A03",
-        severity: server ? "medium" : "low",
-        title: server ? `New MCP server: ${name}` : `New ${sdk.label}: ${name}`,
-        summary: server
-          ? `${context.labels.right} now runs an MCP server that AI agents can call.`
-          : `${context.labels.right} now uses ${name}.`,
-        why: server
-          ? "Each MCP tool is an entry point that a model, and anyone who can steer it with a prompt, can invoke."
-          : "The component now talks to AI models; prompts, user data and model output need review.",
-        recommendation: server
-          ? "List the tools it exposes and what each can touch; require confirmation for tools with side effects."
-          : "Review what data reaches the model and how its output is used.",
+        severity: text.severity,
+        title: text.title(name, sdk),
+        summary: text.summary(name),
+        why: text.why,
+        recommendation: text.recommendation,
         evidence: facts.map((fact) =>
           cite(
             `${fact.data.module ? `${fact.data.module} imports` : "Installed package"} ${fact.key}${fact.data.version ? ` ${fact.data.version}` : ""} (${componentAbsence(context, { status: statuses.get(fact.key), held: false })})`,

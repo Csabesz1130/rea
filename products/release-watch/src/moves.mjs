@@ -196,6 +196,15 @@ export const unknownCounterparts = (moves, facts) => [
   ),
 ];
 
+/**
+ * The sites a family lost with this method and no value (`field`): a gained
+ * site without one never pairs with them, so it may be one of them, moved.
+ */
+export const lostUnresolved = (moves, method, field) =>
+  moves.lost.filter(
+    (site) => site.fact.data.method === method && site.fact.data[field] == null,
+  );
+
 /** The paired lost sites of a group's gained facts, or null when any gained fact is unpaired. */
 export const movedFrom = (moves, facts) => {
   const gained = facts.filter((fact) => moves.gained.has(fact.node_id));

@@ -226,11 +226,11 @@ finding says so.
 | RW-E02 | high / medium       | A window set a `webPreferences` safeguard to its unsafe (high) or a dynamic or unresolved (medium) value, or a new window has one; windows pair release-wide, one old to one new, by what they load, the functions creating them, what holds them, then their options         |
 | RW-E03 | high / medium       | A hardening fuse REA read as unsafe in any executable; medium when its old state was not established                                                                                                                                                                          |
 | RW-E04 | low                 | New renderer APIs, one finding per component                                                                                                                                                                                                                                  |
-| RW-M01 | critical            | An MCP tool registration that reaches more process execution of a kind than before, inline, imported or through a same-module helper or value; "may reach" unless more registrations reach it than before by paths that follow no candidate Release Watch could not settle    |
+| RW-M01 | critical            | An MCP tool registration (per-tool or a CallTool dispatcher) reaching more process execution of a kind than before, inline, imported or via a helper or value; "may" unless more reach it by unguessed paths; "perhaps as before" via old files REA partly analyzed           |
 | RW-M02 | medium / low        | More MCP tool registration calls across the release (medium); a switch between a CallTool dispatcher and per-tool registration (low)                                                                                                                                          |
 | RW-A01 | high / medium       | A new AI provider host (high; medium when only a URL near requests REA could not resolve suggests it), or one that browser code now calls, or holds a URL for, when no old browser code did, or a provider SDK browser code now imports when no old browser code did (medium) |
 | RW-A02 | critical / high     | A credential-format string not shipped before, or one moved into browser code; critical in browser code                                                                                                                                                                       |
-| RW-A03 | medium / low        | A new MCP server SDK (medium) or AI SDK (low)                                                                                                                                                                                                                                 |
+| RW-A03 | medium / low        | A new MCP server SDK or framework (medium; low when the component already served MCP through another), another MCP SDK package (client, HTTP transport, shared code) or AI SDK (low)                                                                                          |
 | RW-A04 | low                 | Changed prose assigned to a variable in AI code                                                                                                                                                                                                                               |
 | RW-A05 | medium              | A new HTML sink in browser code that fetches, in a component with an AI surface                                                                                                                                                                                               |
 | RW-W01 | high / medium       | A new third-party `<script src>` host, or script code embedded in a `data:` or `javascript:` URL (high)                                                                                                                                                                       |
@@ -283,10 +283,11 @@ passed.
   relationship for it) is "not compared" rather than new or gone, and RW-D01
   does not call the package new.
 - Correlations are labelled heuristic: an IPC handler reaching an imported
-  exec site, an MCP registration containing one, a request attributed to a URL
-  literal in the same module, a module counted as browser code because a page
-  loads it, an omitted `webPreferences` option relying on Electron's default,
-  the old BrowserWindow a new one is paired with.
+  exec site, an MCP registration containing one, the calls counted as MCP
+  tool registrations, a request attributed to a URL literal in the same
+  module, a module counted as browser code because a page loads it, an
+  omitted `webPreferences` option relying on Electron's default, the old
+  BrowserWindow a new one is paired with.
 - Windows pair first by what they load, then by the named functions that
   create them and the binding or member REA reports holding them, so a window
   that now loads what another window loaded is paired with that window. A
@@ -338,7 +339,9 @@ passed.
   (`handlers[name] = fn`) may be any member's.
 - A process site whose command REA did not resolve is never taken as moved:
   a refactor that relocates one is reported high, with a note that it may be
-  the same call.
+  the same call. When an MCP tool reaches it, RW-M01 carries the same note and
+  says how many old tool registrations reached a site of that method with an
+  unresolved command.
 - RW-P01 compares a process site's method and the command REA resolved (its
   first argument). REA reports the length of a literal argv array (none for
   `exec` or a computed array), not the argument values or options such as
@@ -407,8 +410,44 @@ passed.
 - Browser code is classified from what HTML pages and service workers load.
   Dedicated workers and scripts loaded at runtime are not classified, so a
   call that moved from a worker into page code is reported at medium.
+- A component is an MCP server when one of its modules imports an MCP
+  server SDK or framework: `@modelcontextprotocol/sdk/server` (the TypeScript
+  SDK's v1), `@modelcontextprotocol/server` (v2), `mcp-handler`
+  (`@vercel/mcp-adapter`), `fastmcp` or `mcp-framework`; a package installed
+  beside the code is not one. Its tool registrations are the calls, on any
+  receiver, of a member the imported SDK or framework registers tools
+  through: `registerTool` (also `registerToolTask` and `tool` for v1 and
+  mcp-handler), `addTool` (also `addTools` for fastmcp), and a v1
+  `setRequestHandler` call whose own first argument (not one of a call in
+  its receiver, as in `sessions.get(id).setRequestHandler(…)`) reads
+  `CallToolRequestSchema`: as a member (`types.CallToolRequestSchema`), or
+  as a binding that REA's import facts show holding that export under any
+  name (a minified `import { CallToolRequestSchema as c }`, also through a
+  local module's re-export); ListTools, Initialize and resource handlers
+  are not. A module that imports
+  a server SDK and defines an `addTool` method, as a bundled FastMCP does, has
+  its component's `addTool()` calls counted too. REA does not report the
+  method string a v2 `setRequestHandler("tools/call", …)` is given, so v2
+  dispatchers are not counted, nor are tools mcp-framework discovers from a
+  directory as `MCPTool` classes or tools passed to a server's constructor;
+  RW-P01 still grades the process sites their handlers reach. A tool that
+  moved from `tool()` to `registerTool()` keeps its capability. Another
+  package of the SDK (a client, v2's HTTP transports and middleware, or
+  shared code such as types) is a new MCP SDK package for RW-A03, worded by
+  that role and not as code that talks to AI models.
+- RW-M01 compares, per kind of process execution, how many tool
+  registrations each side's facts connect to it; REA does not identify a
+  tool across releases. When the paths that make the count grow pass
+  through a file whose old counterpart REA analyzed only in part (a node
+  ceiling, a file it could not analyze, the global limit; for a
+  content-hashed bundle nothing paired, any old bundle of its name), the old
+  tools may have reached the site the same way: the finding is titled
+  "perhaps as before" and names those old files. A new tool whose path
+  crosses such a file is worded the same way.
 - REA does not report MCP tool names, so Release Watch counts registration
-  calls; a switch of registration API is reported low without a count.
+  calls and cites the last ones of a module by position, saying it cannot
+  tell which is new; a switch between a CallTool dispatcher and per-tool
+  registration is reported low without a count.
 - An unresolved request pairs with a removed one across components only when
   its file moved unchanged; otherwise a request with no known destination
   that moved between components is reported medium. An HTML sink pairs only

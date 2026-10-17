@@ -11,6 +11,7 @@ import {
   copiedSite,
   perComponent,
   processAbsence,
+  relocatedUnresolved,
 } from "./component-absence.mjs";
 import { changedClaims, commandText, unresolved } from "./process-commands.mjs";
 import { oldLabel, unexaminedNote } from "./unknown-moves.mjs";
@@ -103,18 +104,12 @@ const UNEXAMINED = {
     `ran ${fact.data.method}() with ${unresolved(fact) ? "a command REA did not resolve" : "the same command"}`,
 };
 
-// A new site with an unresolved command next to one the release lost.
+// A new site with an unresolved command next to one the release lost
+// (component-absence.mjs relocatedUnresolved, which RW-M01 shares).
 const goneNote = (context, group) => {
-  const { method } = group.facts[0].data;
-  const gone = context.moves.childProcesses.lost
-    .map((site) => site.fact)
-    .filter((site) => site.data.method === method && unresolved(site));
-  return group.status !== "changed" &&
-    gone.length > 0 &&
-    group.facts.every(unresolved)
-    ? [
-        `${context.labels.left} had a ${method}() with an unresolved command in ${gone[0].data.module} that is gone now; this may be the same call, moved.`,
-      ]
+  const note = relocatedUnresolved(context, group.facts[0].data.method);
+  return group.status !== "changed" && note && group.facts.every(unresolved)
+    ? [note]
     : [];
 };
 

@@ -1,10 +1,13 @@
 // MCP server rules: tools whose handlers start processes, and new tool
 // registrations. REA reports the registration call and the process site; it
-// does not report tool names, descriptions or schemas. A component is an MCP
-// server when any of its modules imports the MCP server SDK; registration
-// calls anywhere in it count, since servers often register tools in modules
+// does not report tool names, descriptions or schemas. Which calls register
+// tools is mcp-registrations.mjs's reading; registration calls anywhere in
+// a server component count, since servers often register tools in modules
 // that only receive the server object.
-import { within } from "../ranges.mjs";
+import { renamedFrom } from "../diff.mjs";
+import { examinedInPart } from "../facts/coverage.mjs";
+import { withoutHash } from "../facts/modules.mjs";
+import { startsBefore } from "../ranges.mjs";
 import { isMcpServer } from "../surfaces.mjs";
 import {
   componentAbsence,
@@ -13,7 +16,16 @@ import {
   heldElsewhere,
   perComponent,
   processAbsence,
+  relocatedUnresolved,
 } from "./component-absence.mjs";
+import {
+  isDispatcher,
+  registrationApi,
+  registrationClaim,
+  registrationItems,
+  serverEvidence,
+  toolRegistrations,
+} from "./mcp-registrations.mjs";
 import { oldRelease } from "./network.mjs";
 import { reachOf, reachedFrom } from "./reach.mjs";
 import { reachClaim, reachUnknowns } from "./reach-text.mjs";
@@ -25,31 +37,24 @@ import {
   packResult,
 } from "./shared.mjs";
 
-const SERVER = heuristic(
-  "Release Watch treats this component as an MCP server because one of its modules imports @modelcontextprotocol/sdk/server",
-);
-
 // What a registration reaches, independent of the module that holds the
-// exec site: moving the exec into a helper module is not a new capability.
+// exec site and of the member that registers it: moving the exec into a
+// helper module, or a tool from `tool()` to `registerTool()`, is not a new
+// capability.
 const capabilityOf = (call, exec) =>
-  `${call.data.member}|${exec.data.method}|${exec.data.command ?? "unresolved"}`;
+  `${registrationApi(call)}|${exec.data.method}|${exec.data.command ?? "unresolved"}`;
 
-/** Every registration-to-exec connection one side has. */
-const connections = (app) => {
-  if (!app || !isMcpServer(app)) return [];
-  const found = [];
-  for (const call of app.memberCalls) {
+/** Every tool-registration-to-exec connection one side has. */
+const connections = (app) =>
+  toolRegistrations(app).flatMap((call) => {
     const scope = { module: call.data.module, range: call.data.range };
-    for (const { exec } of reachedFrom(app, scope).values())
-      found.push({
-        key: capabilityOf(call, exec),
-        call,
-        exec,
-        path: reachOf(app, scope, exec),
-      });
-  }
-  return found;
-};
+    return [...reachedFrom(app, scope).values()].map(({ exec }) => ({
+      key: capabilityOf(call, exec),
+      call,
+      exec,
+      path: reachOf(app, scope, exec),
+    }));
+  });
 
 const countBy = (items) =>
   items.reduce(
@@ -59,6 +64,50 @@ const countBy = (items) =>
 
 // Connections a path REA's facts settle makes, with no guessed step.
 const settledBy = (items) => countBy(items.filter((item) => !item.path.guess));
+
+// The files a connection passes through: the registration's, each module
+// a step reads or imports from, and the process site's.
+const filesOf = ({ call, exec, path }) => [
+  call.data.module,
+  ...path.steps.flatMap((step) => [
+    step.location?.file,
+    step.module,
+    step.defined,
+  ]),
+  exec.data.module,
+];
+
+/**
+ * The old side's files that REA did not fully analyze and that a new-side
+ * connection's files may have been: `(pair) → [old file]`. A file's old
+ * counterpart is the one at its path or the one the release pairing gave
+ * it; a bundle nothing paired may be any old bundle of its name without
+ * the content hash. The old side may have made the same connection
+ * through such a file without REA's facts showing it.
+ */
+const partlyAnalyzedBefore = (context) => {
+  const old = context.left.app;
+  const unexamined = new Set(old ? examinedInPart(old) : []);
+  if (unexamined.size === 0) return () => [];
+  const renamed = renamedFrom(context.aliases);
+  const shipped = new Set(old.assets.map((asset) => asset.key));
+  const counterparts = (file) => {
+    const paired = renamed(file) ?? (shipped.has(file) ? file : null);
+    if (paired !== null) return [paired];
+    const bare = withoutHash(file);
+    return bare === file
+      ? []
+      : [...unexamined].filter((candidate) => withoutHash(candidate) === bare);
+  };
+  return (pair) => [
+    ...new Set(
+      filesOf(pair)
+        .filter((file) => typeof file === "string")
+        .flatMap(counterparts)
+        .filter((file) => unexamined.has(file)),
+    ),
+  ];
+};
 
 /** Connections per capability across a release's old and new apps: `Map(key → { before, after })`. */
 export const connectionTotals = (leftApps, rightApps) => {
@@ -87,14 +136,74 @@ const increased = (context, before, after) => (key) => {
   );
 };
 
+// The connection a finding's title and summary name: one REA's facts
+// settle when the finding says the tool reaches the site, preferring a new
+// process site over one the old release had.
+const named = (keyed, groups, reaches) => {
+  const fits = (pair) => !reaches || !pair.path.guess;
+  return (
+    keyed.find((pair) => fits(pair) && groups.has(pair.exec.key)) ??
+    keyed.find(fits) ??
+    keyed[0]
+  );
+};
+
+// How a finding names a registration and where it is.
+const at = (call) =>
+  `${call.data.module}${call.location?.line ? `:${call.location.line}` : ""}`;
+const registrationTitle = (call) =>
+  isDispatcher(call)
+    ? `CallTool request handler in ${call.data.module}`
+    : `${call.data.member}() in ${call.data.module}`;
+const summaryOf = (context, { call, exec }, reaches) => {
+  const site = `${exec.data.method}() in ${exec.data.module}`;
+  return isDispatcher(call)
+    ? `${context.labels.right} handles MCP tool calls through ${call.data.member}() at ${at(call)}, and that handler ${reaches} ${site}.`
+    : `${context.labels.right} registers an MCP tool with ${call.data.member}() at ${at(call)} whose handler ${reaches} ${site}.`;
+};
+
+// Who can use a tool that starts processes.
+const REACH =
+  "agent connected to this server, and any prompt injection that steers that agent, can ask it to run commands on the host.";
+
+// How a finding words its connection: settled and new; settled through
+// files the old side's analysis left partial (`partial`, its old files),
+// so the old tools may have reached the site the same way; or reached only
+// through a guess.
+const wording = (context, pair, { reaches, partial }) => {
+  const title = registrationTitle(pair.call);
+  if (!reaches)
+    return {
+      title: `MCP tool may start processes: ${title}`,
+      summary: summaryOf(context, pair, "may reach"),
+      why: `Release Watch could not settle that the handler reaches this site; if it does, any ${REACH}`,
+    };
+  if (partial.length === 0)
+    return {
+      title: `MCP tool can start processes: ${title}`,
+      summary: summaryOf(context, pair, "reaches"),
+      why: `Any ${REACH}`,
+    };
+  return {
+    title: `MCP tool can start processes, perhaps as before: ${title}`,
+    summary: `${summaryOf(context, pair, "reaches")} REA did not fully analyze ${partial.slice(0, 3).join(", ")}${partial.length > 3 ? ` and ${partial.length - 3} more` : ""} in ${context.labels.left}, through which its tools may have reached the site the same way.`,
+    why: `Release Watch could not settle that this connection is new; if it is, any ${REACH}`,
+  };
+};
+
 const toolExecution = (context) => {
-  const { left, right, labels, diff } = context;
+  const { left, right, diff } = context;
   const old = connections(left.app);
   const before = countBy(old);
   const pairs = connections(right.app);
   const after = countBy(pairs);
   const isIncreased = increased(context, before, after);
   const settled = { before: settledBy(old), after: settledBy(pairs) };
+  const partly = partlyAnalyzedBefore(context);
+  // Settled connections the old side's analysis could have shown as well.
+  const comparable = settledBy(
+    pairs.filter((pair) => partly(pair).length === 0),
+  );
   const groups = new Map(
     newGroups(diff.app.childProcesses, { field: "command" }).map((group) => [
       group.key,
@@ -105,7 +214,7 @@ const toolExecution = (context) => {
   const nodes = new Set();
   const modules = new Set();
   const reported = new Set();
-  for (const { key, call, exec } of pairs) {
+  for (const { key } of pairs) {
     if (!isIncreased(key) || reported.has(key)) continue;
     reported.add(key);
     // Every registration with this capability: Release Watch cannot tell which one is new.
@@ -119,126 +228,140 @@ const toolExecution = (context) => {
         ?.facts.forEach((fact) => nodes.add(fact.node_id));
     });
     // A guessed path names a candidate, not a handler REA's facts identify:
-    // the tool reaches the site only when settled connections increased.
-    const reaches =
-      (settled.after.get(key) ?? 0) > (settled.before.get(key) ?? 0)
-        ? "reaches"
-        : "may reach";
+    // the tool reaches the site only when settled connections increased,
+    // and that is new only when they did through files the old side's
+    // analysis covered.
+    const had = settled.before.get(key) ?? 0;
+    const reaches = (settled.after.get(key) ?? 0) > had;
+    const pair = named(keyed, groups, reaches);
+    const partial =
+      reaches && (comparable.get(key) ?? 0) <= had
+        ? [...new Set(keyed.filter((item) => !item.path.guess).flatMap(partly))]
+        : [];
     findings.push({
       rule: "RW-M01",
       severity: "critical",
-      title: `MCP tool can start processes: ${call.data.member}() in ${call.data.module}`,
-      summary: `${labels.right} registers an MCP tool whose handler ${reaches} ${exec.data.method}() in ${exec.data.module}.`,
-      why: "Any agent connected to this server, and any prompt injection that steers that agent, can ask it to run commands on the host.",
+      ...wording(context, pair, { reaches, partial }),
       recommendation:
         "Remove the tool or restrict it to an allow-list of fixed commands, and require human confirmation for each call.",
       evidence: [
-        SERVER,
+        ...serverEvidence(right.app),
         ...connectionEvidence(context, keyed, { groups, old }),
       ],
-      unknowns: [
-        "REA does not report the tool's name, description or input schema.",
-        "REA does not establish that the tool's input reaches the command.",
-        ...reachUnknowns(keyed.map((pair) => pair.path)),
-        ...(keyed.some(
-          ({ exec }) =>
-            groups.has(exec.key) &&
-            processAbsence(context, groups.get(exec.key)).held,
-        )
-          ? [perComponent("process execution sites")]
-          : []),
-      ],
+      unknowns: toolUnknowns(context, keyed, groups),
     });
   }
   return { findings, nodes: [...nodes], modules };
 };
 
-// Each registration, how it reaches its exec site, and each exec site once.
+const toolUnknowns = (context, keyed, groups) => {
+  // A site with a command REA did not resolve never pairs as moved; one of
+  // its method the release lost may be the same call.
+  const relocated = keyed.flatMap(({ exec }) => {
+    const group = groups.get(exec.key);
+    return group && group.status !== "changed" && exec.data.command === null
+      ? [relocatedUnresolved(context, exec.data.method)]
+      : [];
+  });
+  return [
+    "REA does not report the tool's name, description or input schema.",
+    "REA does not establish that the tool's input reaches the command.",
+    ...reachUnknowns(keyed.map((pair) => pair.path)),
+    ...(keyed.some(
+      ({ exec }) =>
+        groups.has(exec.key) &&
+        processAbsence(context, groups.get(exec.key)).held,
+    )
+      ? [perComponent("process execution sites")]
+      : []),
+    ...new Set(relocated.filter(Boolean)),
+  ];
+};
+
+// What the old side's registrations of the same capability reached, by
+// capability rather than by site: a content-hashed bundle's sites have
+// other keys in each release, and a site at a path the old side lacked may
+// be one of these, moved. Null when they reached none.
+const earlierReach = (context, old, key) => {
+  const same = old.filter((pair) => pair.key === key);
+  if (same.length === 0) return null;
+  const registrations = new Set(same.map((pair) => pair.call.node_id)).size;
+  const [{ exec }] = same;
+  const modules = [...new Set(same.map((pair) => pair.exec.data.module))];
+  return `Release Watch connected ${registrations} tool registration${registrations === 1 ? "" : "s"} to ${exec.data.method}() ${exec.data.command ? "with the same command" : "with a command REA did not resolve"} in ${modules.join(", ")}`;
+};
+
 // How the old release had an exec site: moved from another place in the
-// release, the component's own diff status, or unchanged, with how many old
-// registrations Release Watch connected to a site of that kind.
-const execAbsence = (context, { groups, old }, exec) => {
+// release; the component's own diff status, with what the old side's
+// registrations of that capability reached; or unchanged, with how many old
+// registrations reached it, else (a content-hashed bundle nothing paired)
+// what they reached of that capability.
+const execAbsence = (context, { groups, old }, { exec, key }) => {
   const moved = context.moves?.childProcesses.pairs.get(exec.node_id);
   const left = context.releaseLabels?.left ?? context.labels.left;
   if (moved)
     return `${left} ran the same command from ${moved.fact.data.module}${moved.component === context.id ? "" : ` in component ${componentName(context, "left", moved.component)}`}`;
   const group = groups.get(exec.key);
-  if (group) return processAbsence(context, group).phrase;
-  const registrations = new Set(
+  const earlier = earlierReach(context, old, key);
+  if (group)
+    return `${processAbsence(context, group).phrase}${earlier ? `; in ${context.labels.left}, ${earlier}` : ""}`;
+  const here = sameSite(context, old, exec);
+  return `also in ${context.labels.left}, where ${here > 0 || !earlier ? `Release Watch connected ${here === 0 ? "no" : here} tool registration${here === 1 ? "" : "s"} to it` : earlier}`;
+};
+
+// How many old registrations reached a site of the same method and command
+// in this module, at its old path when the release pairing renamed it.
+const sameSite = (context, old, exec) => {
+  const command = exec.data.command ?? null;
+  return new Set(
     old
       .filter(
-        (pair) =>
-          pair.exec.key === exec.key &&
-          (pair.exec.data.command ?? null) === (exec.data.command ?? null),
+        ({ exec: before }) =>
+          (context.aliases?.get(before.data.module)?.path ??
+            before.data.module) === exec.data.module &&
+          before.data.method === exec.data.method &&
+          (before.data.command ?? null) === command,
       )
       .map((pair) => pair.call.node_id),
   ).size;
-  return `also in ${context.labels.left}, where Release Watch connected ${registrations === 0 ? "no" : registrations} tool registration${registrations === 1 ? "" : "s"} to it`;
 };
 
+// Each registration once, each way it reaches a site once (a registration
+// that reaches two sites in one minified line through the same path is
+// claimed once), and each process site once.
 const connectionEvidence = (context, keyed, sides) => {
   const cited = new Set();
-  return keyed.flatMap(({ call, exec, path }) => {
-    const lines = [
-      cite(`${call.data.member}() call`, call, APP_SOURCE),
-      heuristic(
-        reachClaim(path, exec, "the registration call"),
-        path.read?.location ?? exec.location,
+  const once = (key, line) => {
+    if (cited.has(key)) return [];
+    cited.add(key);
+    return [line];
+  };
+  return keyed.flatMap((pair) => {
+    const { call, exec, path } = pair;
+    const claim = reachClaim(path, exec, "the registration call");
+    const where = path.read?.location ?? exec.location;
+    return [
+      ...once(
+        call.node_id,
+        cite(registrationClaim(context.right.app, call), call, APP_SOURCE),
+      ),
+      ...once(
+        `${call.node_id}\u0000${claim}\u0000${where?.file}:${where?.line}:${where?.column}`,
+        heuristic(claim, where),
+      ),
+      ...once(
+        exec.node_id,
+        cite(
+          `${exec.data.method}() creates a child process${exec.data.command ? "" : " with a command REA did not resolve"} (${execAbsence(context, sides, pair)})`,
+          exec,
+          APP_SOURCE,
+        ),
       ),
     ];
-    if (cited.has(exec.node_id)) return lines;
-    cited.add(exec.node_id);
-    lines.push(
-      cite(
-        `${exec.data.method}() creates a child process${exec.data.command ? "" : " with a command REA did not resolve"} (${execAbsence(context, sides, exec)})`,
-        exec,
-        APP_SOURCE,
-      ),
-    );
-    return lines;
   });
 };
 
-const DISPATCHER = "setRequestHandler";
-const CALL_TOOL = "CallToolRequestSchema";
-
-// A setRequestHandler call registers tools only when it handles CallTool
-// requests: it reads CallToolRequestSchema (also as `types.CallToolRequestSchema`).
-const registersTools = (app, call) =>
-  call.data.member !== DISPATCHER ||
-  [
-    ...app.bindingReads.map((read) => ({ name: read.data.name, ...read.data })),
-    ...(app.members ?? []).map((member) => ({
-      ...member,
-      name: member.path.at(-1),
-    })),
-  ].some(
-    (read) =>
-      read.module === call.data.module &&
-      read.name === CALL_TOOL &&
-      within(read.range, call.data.range),
-  );
-
-/** The calls that register MCP tools in one app. */
-export const toolRegistrations = (app) =>
-  app && isMcpServer(app)
-    ? app.memberCalls.filter((call) => registersTools(app, call))
-    : [];
-
-/** Tool registrations across a release's old and new apps: `{ before, after }`; the release context adds what the totals leave out. */
-export const registrationTotals = (leftApps, rightApps) => ({
-  before: leftApps.reduce((sum, app) => sum + toolRegistrations(app).length, 0),
-  after: rightApps.reduce((sum, app) => sum + toolRegistrations(app).length, 0),
-});
-
-const apisOf = (calls) =>
-  new Set(
-    calls.map((call) =>
-      call.data.member === DISPATCHER
-        ? "a CallTool request handler"
-        : "per-tool registration",
-    ),
-  );
+const apisOf = (calls) => new Set(calls.map(registrationApi));
 
 // The server moved between one dispatcher and per-tool registration calls,
 // so the two counts measure different things.
@@ -251,9 +374,9 @@ const apiChange = (context, before, after) => ({
   recommendation: "Compare the tool lists of both releases by hand.",
   evidence: [
     ...after.map((call) =>
-      cite(`${call.data.member}() call`, call, APP_SOURCE),
+      cite(registrationClaim(context.right.app, call), call, APP_SOURCE),
     ),
-    SERVER,
+    ...serverEvidence(context.right.app),
   ],
   unknowns: [
     "REA does not report tool names, so Release Watch cannot pair tools across registration APIs.",
@@ -275,13 +398,14 @@ const newRegistrations = (context, covered) => {
   const apis = [apisOf(old), apisOf(now)].map((set) => [...set].sort().join());
   if (old.length > 0 && apis[0] !== apis[1])
     return [apiChange(context, old, now)];
-  // Within each module and API, only the calls that register tools count
-  // (a setRequestHandler for ListTools does not), whatever REA's order.
-  const counted = new Set([...old, ...now].map((call) => call.node_id));
-  const gained = context.diff.app.memberCalls
-    .map((item) => ({
-      before: item.left.filter((call) => counted.has(call.node_id)),
-      after: item.right.filter((call) => counted.has(call.node_id)),
+  const gained = registrationItems(
+    context.diff.app.memberCalls,
+    context.left.app,
+    context.right.app,
+  )
+    .map(({ item, before, after }) => ({
+      before,
+      after,
       held: heldElsewhere(context, "memberCalls", item),
       status: item.status,
     }))
@@ -301,7 +425,7 @@ const newRegistrations = (context, covered) => {
         "Review each new tool's handler and whether it needs human confirmation.",
       evidence: [
         ...gained.flatMap((item) => gainedCalls(context, item)),
-        SERVER,
+        ...serverEvidence(context.right.app),
       ],
       unknowns: [
         "REA does not report tool names, so Release Watch counts registration calls across the component.",
@@ -346,18 +470,36 @@ const registrationSummary = (context, { old, now, gained }) => {
   return `Component ${componentName(context, "right")} is new in ${right} and makes ${calls(now.length)}, ${cited === now.length ? "" : `${cited} of them `}in ${modules}; across the release${scope.except} ${oldRelease(context)} made ${release.before} and ${right} makes ${release.after}${scope.before}.`;
 };
 
-// The calls a module gained, each with how the component lacked it when
-// another old component made one in a module at this path.
-const gainedCalls = (context, { before, after, held, status }) =>
-  after
+// The calls a module gained. REA does not identify a tool across releases,
+// so in a module that made calls before, the last calls by position stand
+// for the new ones and each claim says how many the module has; with how
+// the component lacked them when another old component made one in a
+// module at this path.
+const gainedCalls = (context, { before, after, held, status }) => {
+  const notes = [
+    held
+      ? componentAbsence(context, {
+          status,
+          held,
+          had: "made one in a module at this path",
+        })
+      : null,
+    before.length > 0
+      ? `one of ${after.length} in this module, ${before.length} in ${context.labels.left}; Release Watch cannot tell which is new`
+      : null,
+  ].filter(Boolean);
+  const note = notes.length > 0 ? ` (${notes.join("; ")})` : "";
+  return [...after]
+    .sort((a, b) => startsBefore(a.data.range, b.data.range))
     .slice(before.length)
     .map((call) =>
       cite(
-        `${call.data.member}() call${held ? ` (${componentAbsence(context, { status, held, had: "made one in a module at this path" })})` : ""}`,
+        `${registrationClaim(context.right.app, call)}${note}`,
         call,
         APP_SOURCE,
       ),
     );
+};
 
 /** MCP rules; claims the exec sites RW-M01 explains so RW-P01 skips them. */
 export const mcpPack = (context) => {
