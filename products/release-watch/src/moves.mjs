@@ -27,13 +27,26 @@ const pairable = (gained, lost, { field, unresolvedPairs }) => {
   return value === lost.fact.data[field];
 };
 
+/**
+ * A test for a file the two sides of a component ship with the same
+ * content, by REA's SHA-256 (`digests` `{ left, right }` maps of module to
+ * digest): `(oldPath, newPath = oldPath)`. What REA's facts say differs
+ * about what such a file's own text holds, a site or how many, is REA's
+ * coverage of one side, not the release.
+ */
+export const sameContent =
+  (digests) =>
+  (oldPath, newPath = oldPath) => {
+    const before = digests?.left?.get(oldPath) ?? null;
+    return before !== null && before === digests?.right?.get(newPath);
+  };
+
 // What became of one old site the new facts lack (see the top of this
 // file): "kept", "unknown" or "lost".
 const fateOf = (component, fact) => {
   const { digests, partial, comparable } = component;
   const module = fact.data.module;
-  const before = digests?.left.get(module) ?? null;
-  if (before !== null && before === digests?.right.get(module)) return "kept";
+  if (sameContent(digests)(module)) return "kept";
   if (!comparable || partial?.(module)) return "unknown";
   return "lost";
 };
@@ -49,12 +62,14 @@ const copiedContent = (components) => {
 };
 
 // The sites each component gained and lost, and the old sites that are
-// unknown now.
+// unknown now. A key the diff found "kept" (its sites sit in files the old
+// side shipped with the same content) gained and lost none.
 const changedSites = (components, field) => {
   const sites = { gained: [], lost: [], unknown: [] };
   const all = () => true;
   for (const component of components)
     for (const item of component.items) {
+      if (item.status === "kept") continue;
       const { name, digests, keep } = component;
       const right = item.right.filter(keep?.right ?? all);
       const left = item.left.filter(keep?.left ?? all);

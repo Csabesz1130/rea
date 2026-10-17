@@ -291,6 +291,12 @@ passed.
   release, and destination claims say the host was "not seen in" the old
   release's analyzed code or capture. A claim that a component's old side
   lacked a fact names any other old component whose code REA did not analyze.
+  A site (a process call, request, HTML sink, `eval` or registration call) in
+  a file the component's old side shipped with the same content, at its
+  path or the one it was renamed from, is not new even when REA's facts of
+  the old copy lack it: REA examined that copy only in part, and the
+  inventory lists the site as in an unchanged file. A command or destination
+  such a site reads from another module can still change.
 - A component whose new side REA could not analyze, holds nothing REA can
   analyze or is a capture only loses nothing: its old process sites, tool
   registrations and windows are unknown, not gone, so they explain no new

@@ -116,7 +116,7 @@ describe(
   "compare: what REA left unexamined in the old release",
   { skip },
   () => {
-    it("keeps an old file the global limit left without facts unknown, not absent", () => {
+    it("keeps an old file the global limit left without facts unknown, not absent, and its unchanged sites not new", () => {
       // index.js takes v1.0.0's 500 nodes, so REA gives the old util.js no
       // semantic facts; v1.1.0 ships util.js unchanged and a new report.js,
       // both running npm.
@@ -168,11 +168,20 @@ describe(
             finding.rule === "RW-P01" &&
             finding.evidence.some((item) => item.location?.file === file),
         );
+      // v1.1.0 ships util.js with v1.0.0's content, so its exec() was there
+      // before although REA's facts of v1.0.0 lack it: no finding is new.
+      assert.equal(execIn("util.js"), undefined);
+      const calls = component.inventory.find(
+        (section) => section.id === "calls",
+      );
       assert.ok(
-        execIn("util.js").unknowns.includes(
-          "REA gave no semantic facts to util.js in v1.0.0, so what is reported here may predate this release.",
+        calls.rows.some(
+          ([call, module, status]) =>
+            call === "exec() child process" &&
+            module === "util.js" &&
+            status === "unchanged file",
         ),
-        execIn("util.js").unknowns.join("\n"),
+        JSON.stringify(calls.rows),
       );
       assert.ok(
         execIn("report.js").unknowns.some((text) =>

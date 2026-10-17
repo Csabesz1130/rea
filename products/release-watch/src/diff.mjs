@@ -1,8 +1,10 @@
 // Keyed comparison of capability facts across two releases. Absence counts as
 // "added"/"removed" only when the other side's REA coverage is complete;
 // otherwise the item stays "not-previously-observed"/"no-longer-observed".
+// Sites in a file both sides ship with the same content are "kept".
 import { importsUnknown } from "./facts/coverage.mjs";
 import { isScriptPath, withoutHash } from "./facts/modules.mjs";
+import { fileDigests, sameContent } from "./moves.mjs";
 
 const groupByKey = (facts) => {
   const groups = new Map();
@@ -324,6 +326,36 @@ const comparedImports = (items, leftApp, rightApp, aliases) => {
   );
 };
 
+// Statuses that say a key has more sites than the old side's facts show.
+const GAINED = new Set(["added", "not-previously-observed", "increased"]);
+
+// A module-keyed fact is something a file's own text holds. A key whose
+// every new-side fact sits in a file the old side shipped, at its path or
+// the path it was renamed from, with the same content (REA's digests,
+// moves.mjs sameContent) had those sites before: when REA's facts show
+// fewer or none there, it examined the old copy only in part, so the key
+// is "kept", not new. A value a site reads from another module (a command,
+// an endpoint) can still change in such a file, so "changed" stays.
+const keptInPlace = (items, leftApp, rightApp, aliases) => {
+  const same = sameContent({
+    left: fileDigests(leftApp),
+    right: fileDigests(rightApp),
+  });
+  const oldPath = renamedFrom(aliases);
+  const unchanged = (fact) => {
+    const modulePath = fact.data?.module;
+    return (
+      typeof modulePath === "string" &&
+      same(oldPath(modulePath) ?? modulePath, modulePath)
+    );
+  };
+  return items.map((item) =>
+    GAINED.has(item.status) && item.right.every(unchanged)
+      ? { ...item, status: "kept" }
+      : item,
+  );
+};
+
 /** Compare the application facts of two releases, family by family. */
 export const diffApplications = (
   leftApp,
@@ -349,9 +381,8 @@ export const diffApplications = (
     leftApp && rightApp ? pooledNames(left, right, aliases) : new Set();
   const diffs = Object.fromEntries(
     FAMILIES.map(
-      ({ family, coverage, moduleKeyed, equal, unique, countable }) => [
-        family,
-        diffKeyed(
+      ({ family, coverage, moduleKeyed, equal, unique, countable }) => {
+        const items = diffKeyed(
           moduleKeyed
             ? pool(rekey(left[family], aliases), pools)
             : left[family],
@@ -363,8 +394,14 @@ export const diffApplications = (
             unique,
             countable,
           },
-        ),
-      ],
+        );
+        return [
+          family,
+          moduleKeyed && leftApp && rightApp
+            ? keptInPlace(items, leftApp, rightApp, aliases)
+            : items,
+        ];
+      },
     ),
   );
   return {

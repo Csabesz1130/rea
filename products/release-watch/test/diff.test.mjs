@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { ambiguousBundles, diffKeyed, moduleAliases } from "../src/diff.mjs";
+import {
+  ambiguousBundles,
+  diffApplications,
+  diffKeyed,
+  moduleAliases,
+} from "../src/diff.mjs";
 import { app, fact } from "./helpers.mjs";
 
 describe("diffKeyed", () => {
@@ -133,5 +138,73 @@ describe("ambiguousBundles", () => {
       "assets/index-Ee55Ff66.js",
     );
     assert.equal(ambiguousBundles(left, right, aliases).size, 0);
+  });
+});
+
+describe("diffApplications: sites in a file both sides ship unchanged", () => {
+  const exec = (module, command) =>
+    fact(
+      `${module}#exec`,
+      { module, method: "exec", command },
+      {
+        file: module,
+        line: 2,
+        column: 3,
+      },
+    );
+  const asset = (module, sha256) => fact(module, { sha256 });
+  const statusOf = (left, right) =>
+    diffApplications(left, right).childProcesses[0].status;
+
+  it("keeps a site REA did not see in an old copy with the same content", () => {
+    const left = app({ assets: [asset("util.js", "a1")] });
+    const right = app({
+      assets: [asset("util.js", "a1")],
+      childProcesses: [exec("util.js", "npm --version")],
+    });
+    assert.equal(statusOf(left, right), "kept");
+  });
+
+  it("keeps more sites of a key in such a file, and a renamed copy", () => {
+    const left = app({
+      assets: [asset("old/util.js", "a1")],
+      childProcesses: [exec("old/util.js", "ls")],
+    });
+    const right = app({
+      assets: [asset("new/util.js", "a1")],
+      childProcesses: [exec("new/util.js", "ls"), exec("new/util.js", "ls")],
+    });
+    const items = diffApplications(
+      left,
+      right,
+      new Map([["old/util.js", { path: "new/util.js", basis: "test" }]]),
+    ).childProcesses;
+    assert.equal(items[0].status, "kept");
+  });
+
+  it("still calls a site in a changed file new, and a changed command changed", () => {
+    assert.equal(
+      statusOf(
+        app({ assets: [asset("util.js", "a1")] }),
+        app({
+          assets: [asset("util.js", "b2")],
+          childProcesses: [exec("util.js", "ls")],
+        }),
+      ),
+      "not-previously-observed",
+    );
+    assert.equal(
+      statusOf(
+        app({
+          assets: [asset("util.js", "a1")],
+          childProcesses: [exec("util.js", "ls")],
+        }),
+        app({
+          assets: [asset("util.js", "a1")],
+          childProcesses: [exec("util.js", "curl")],
+        }),
+      ),
+      "changed",
+    );
   });
 });
