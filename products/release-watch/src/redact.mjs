@@ -8,8 +8,6 @@ import { credentialsIn } from "./catalog.mjs";
 import {
   CONTROL,
   displayUrlsIn,
-  hasRandomRun,
-  isTokenSegment,
   literalParts,
   maskTag,
   maskUrlsIn,
@@ -17,6 +15,7 @@ import {
   runSpans,
   urlMasks,
 } from "./urls.mjs";
+import { hasRandomRun, isTokenSegment } from "./path-tokens.mjs";
 
 const QUOTES = "\"'`";
 const MAX_VALUE = 512;

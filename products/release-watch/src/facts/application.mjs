@@ -6,7 +6,12 @@ import { isUrl, scriptKey } from "../urls.mjs";
 import { callGraph } from "./calls.mjs";
 import { coverageOf, unreachedModules } from "./coverage.mjs";
 import { comparableExpression } from "./expression.mjs";
-import { browserModules, importIndex } from "./modules.mjs";
+import {
+  assetObservation,
+  browserModules,
+  importIndex,
+  modulePathOf,
+} from "./modules.mjs";
 import { processUnknowns } from "./process.mjs";
 import { definedProperties } from "./properties.mjs";
 import { withLoads } from "./windows.mjs";
@@ -83,10 +88,11 @@ const windowOptions = (properties) => {
   };
 };
 
-const assetFact = (node, properties, facts) => {
-  if (properties.path)
+const assetFact = (node, _properties, facts) => {
+  const observation = assetObservation(node);
+  if (observation)
     facts.assets.push(
-      graphFact(node, properties.path, {
+      observationFact(node, observation, observation.properties.path, {
         sha256: node.identity?.sha256 ?? null,
       }),
     );
@@ -277,7 +283,8 @@ const SEMANTIC_PROJECTIONS = {
         function: node.function_node_id ?? null,
       }),
     ),
-  timer: (node, scope) => scope.facts.timers.push(scope.fact(node, {})),
+  timer: (node, scope) =>
+    scope.facts.timers.push(scope.fact(node, { range: rangeOf(node) })),
   "config-source": (node, scope) => {
     const key = node.properties?.key ?? null;
     if (key === null) return;
@@ -294,22 +301,24 @@ const SEMANTIC_PROJECTIONS = {
     const value = node.properties?.value;
     if (typeof value !== "string") return;
     const modulePath = node.identity?.module_path ?? null;
-    const binding = scope.definedBinding.get(node.node_id) ?? null;
+    const defined = scope.definedBinding.get(node.node_id) ?? null;
+    const binding = defined?.name ?? null;
     const property = scope.definedProperty.get(node.node_id) ?? null;
     const data = {
       module: modulePath,
       value,
       binding,
+      binding_range: defined?.range ?? null,
       property,
       range: rangeOf(node),
     };
+    // Keyed by the variable or property slot that holds it, so changed text
+    // is a changed key; a literal REA places in neither by its value.
+    const holder =
+      binding ??
+      (property ? [property.binding, ...property.path].join(".") : value);
     scope.facts.stringLiterals.push(
-      semanticFact(
-        node,
-        scope.contexts,
-        `${modulePath}#${binding ?? value}`,
-        data,
-      ),
+      semanticFact(node, scope.contexts, `${modulePath}#${holder}`, data),
     );
     if (isUrl(value))
       scope.facts.urlLiterals.push(
@@ -343,7 +352,10 @@ const bindingRelations = (semantic, facts, contexts) => {
     const source = byId.get(relation.source_node_id);
     const target = byId.get(relation.target_node_id);
     if (relation.relation === "defines" && target?.kind === "binding")
-      definedBinding.set(relation.source_node_id, target.label ?? null);
+      definedBinding.set(relation.source_node_id, {
+        name: target.label ?? null,
+        range: rangeOf(target),
+      });
     const readsBinding =
       relation.relation === "reads" && source?.kind === "binding";
     if (!readsBinding || !rangeOf(target ?? {})) continue;
@@ -481,8 +493,7 @@ const withBundles = (sources, graph) => {
     )
       mapOwner.set(
         edge.target_node_id,
-        firstObservation(byId.get(edge.source_node_id))?.properties?.path ??
-          null,
+        modulePathOf(byId.get(edge.source_node_id)),
       );
   const bundle = new Map();
   for (const edge of graph.edges)

@@ -24,6 +24,73 @@ export const BROWSER_CODE = heuristic(
 export const union = (...sets) =>
   new Set(sets.flatMap((set) => [...(set ?? [])]));
 
+// Node.js built-ins that do host I/O, which browser bundles do not polyfill;
+// any `node:` specifier names a built-in as well.
+const HOST_BUILTINS = new Set([
+  "child_process",
+  "cluster",
+  "dgram",
+  "dns",
+  "fs",
+  "fs/promises",
+  "http",
+  "http2",
+  "https",
+  "inspector",
+  "net",
+  "os",
+  "readline",
+  "repl",
+  "tls",
+  "v8",
+  "vm",
+  "worker_threads",
+]);
+const isHostBuiltin = (specifier) =>
+  specifier.startsWith("node:") || HOST_BUILTINS.has(specifier);
+
+// True when no HTML page or service worker of the app loads code.
+const hasNoPages = (app) =>
+  app.browserModules.size === 0 &&
+  app.pageScripts.length === 0 &&
+  app.serviceWorkers.length === 0 &&
+  (app.inlineScripts ?? 0) === 0;
+
+/**
+ * Modules of one app Release Watch takes as server code, each with the
+ * module and built-in that show it (`{ module, builtin }`): in an app whose
+ * code no HTML page or service worker loads, a module that imports a
+ * Node.js built-in for host I/O and every module it imports. Release
+ * Watch's correlation: REA does not report where code runs.
+ */
+export const serverModules = (app) => {
+  const server = new Map();
+  if (!app || !hasNoPages(app)) return server;
+  for (const [modulePath, entry] of app.modules) {
+    const builtin = [...entry.externalImports].find(isHostBuiltin);
+    if (builtin === undefined) continue;
+    const pending = [modulePath];
+    while (pending.length > 0) {
+      const next = pending.pop();
+      if (server.has(next)) continue;
+      server.set(next, { module: modulePath, builtin });
+      pending.push(...(app.modules.get(next)?.local ?? []));
+    }
+  }
+  return server;
+};
+
+/** Why Release Watch takes an old carrier of a key as server code, as an evidence claim. */
+export const serverLine = (release, { module, via }) =>
+  heuristic(
+    via.module === module
+      ? `Release Watch takes ${module} in ${release} as server code: it imports ${via.builtin}, and no HTML page or service worker of its component loads code`
+      : `Release Watch takes ${module} in ${release} as server code: ${via.module} imports ${via.builtin} and, directly or through other modules, ${module}; no HTML page or service worker of its component loads code`,
+  );
+
+export const SERVER_LIMIT =
+  "Release Watch takes code as server code from its imports; REA does not report where code runs, and another site could still load a script it ships.";
+
 const ROUTE =
   "Route model calls through the vendor's server, and confirm how the browser authenticates.";
 const DPA =

@@ -1,7 +1,17 @@
 // Evidence lines and unknowns for a destination host, one table entry per
-// kind of source that shows it, most direct first.
+// kind of source that shows it, most direct first, and what else the code
+// sending to it does.
+import { startsBefore, within } from "../ranges.mjs";
 import { displayUrl } from "../urls.mjs";
-import { assignedName } from "./destinations.mjs";
+import { assignedName, sourceModule } from "./destinations.mjs";
+import {
+  enclosingFunction,
+  indexOf,
+  inside,
+  memberOn,
+  scopeOf,
+} from "./reach-index.mjs";
+import { declaredFunction } from "./reach-region.mjs";
 import {
   APP_SOURCE,
   CAPTURE_SOURCE,
@@ -139,4 +149,126 @@ export const sourceUnknowns = (sources) => {
       "A build setting records the value; REA does not establish that the program contacts it.",
     );
   return unknowns;
+};
+
+const MAX_TIMERS = 3;
+
+// The request sites a host's sources rest on.
+const requestsOf = (sources) =>
+  sources.flatMap((source) =>
+    source.request
+      ? [source.request]
+      : source.kind === "request"
+        ? [source.fact]
+        : [],
+  );
+
+// The functions REA reports around a request, innermost first.
+const enclosingChain = (index, request) => {
+  const chain = [];
+  for (
+    let fn = enclosingFunction(index, request.data.module, request.data.range);
+    fn;
+    fn = index.byId.get(scopeOf(index, fn))
+  )
+    chain.push(fn);
+  return chain;
+};
+
+// The function a binding read inside a timer's call names, when REA's
+// binding facts declare one (declaredFunction), else null.
+// A read REA reports a member of (`Client.poll`) names that member, and a
+// class is no code a timer runs.
+const readFunction = (index, module, { read }) => {
+  if (read.data.parameter || !read.data.binding_range) return null;
+  if (memberOn(index, module, read.data.range)) return null;
+  const fn = declaredFunction(index, module, {
+    name: read.data.name,
+    range: read.data.binding_range,
+    owner: read.data.binding_owner ?? null,
+  });
+  return fn?.kind === "class" ? null : fn;
+};
+
+// How a timer REA reports relates to one request, by REA's facts: the
+// request is written inside the timer's call, the timer's call reads a
+// binding declared as a function around the request, or both sit in one
+// function. Null when none does.
+const timerTie = (index, timer, { request, chain }) => {
+  const { module, range } = timer.data;
+  if (!range || !request.data.range || module !== request.data.module)
+    return null;
+  if (within(request.data.range, range)) return { kind: "inline" };
+  const around = new Set(chain.map((fn) => fn.id));
+  const read = inside(index.reads.get(module), range).find((item) =>
+    around.has(readFunction(index, module, item)?.id),
+  );
+  if (read) return { kind: "named", name: read.read.data.name };
+  return chain[0] && enclosingFunction(index, module, range)?.id === chain[0].id
+    ? { kind: "shared" }
+    : null;
+};
+
+const timerClaim = (timer, tie) => {
+  const { module, method } = timer.data;
+  if (tie.kind === "inline")
+    return `${module} sends the request from inside a ${method}() call; REA reports the timer and the request, Release Watch relates them by position`;
+  if (tie.kind === "named")
+    return `${module} schedules ${tie.name}, a function around the request, with ${method}(); REA reports the timer's read of ${tie.name} and its declaration, Release Watch relates them`;
+  return `${module} calls ${method}() in the function that sends the request; Release Watch relates them because REA places both in that function`;
+};
+
+/**
+ * Timers Release Watch relates to a host's requests through REA's facts
+ * (timerTie), at most MAX_TIMERS lines and a count of the rest, each
+ * labelled as Release Watch's correlation.
+ */
+const timerEvidence = (sources, app) => {
+  if (!app) return [];
+  const index = indexOf(app);
+  const requests = requestsOf(sources)
+    .filter((request) => request.data.range)
+    .map((request) => ({ request, chain: enclosingChain(index, request) }));
+  if (requests.length === 0) return [];
+  const lines = app.timers
+    .flatMap((timer) => {
+      const tie = requests
+        .map((entry) => timerTie(index, timer, entry))
+        .find(Boolean);
+      return tie ? [{ timer, tie }] : [];
+    })
+    .sort(
+      (a, b) =>
+        a.timer.data.module.localeCompare(b.timer.data.module) ||
+        startsBefore(a.timer.data.range, b.timer.data.range),
+    )
+    .map(({ timer, tie }) => heuristic(timerClaim(timer, tie), timer.location));
+  const shown = lines.slice(0, MAX_TIMERS);
+  if (lines.length > shown.length)
+    shown.push(
+      heuristic(
+        `${lines.length - shown.length} more timers Release Watch relates to these requests the same way`,
+      ),
+    );
+  return shown;
+};
+
+/**
+ * What else the sending modules do: timers that repeat the request
+ * (timerEvidence), and host or user APIs they import.
+ */
+export const contextEvidence = (sources, app) => {
+  if (!app) return [];
+  const modules = new Set(sources.map(sourceModule).filter(Boolean));
+  const lines = timerEvidence(sources, app);
+  for (const modulePath of modules) {
+    const imports = app.modules.get(modulePath)?.externalImports ?? new Set();
+    if (imports.has("node:os") || imports.has("os"))
+      lines.push(
+        heuristic(
+          `${modulePath} imports node:os, which exposes host and user account details`,
+        ),
+      );
+  }
+  return lines;
 };

@@ -139,6 +139,15 @@ const returnsOf = (semantic) =>
     owner: node.function_node_id ?? null,
   }));
 
+// The names REA reports no binding resolving, such as `Error`, with where
+// each is read.
+const globalsOf = (references) =>
+  references.map(({ node, name }) => ({
+    module: moduleOf(node),
+    range: rangeOf(node),
+    name,
+  }));
+
 // The key of each class field (`run = async () => …`): a reference REA
 // reports the class itself making that no binding resolves.
 const fieldsOf = (references, byId) =>
@@ -426,6 +435,7 @@ const EMPTY = {
   arguments: [],
   returns: [],
   members: [],
+  globals: [],
   fields: [],
   propertyWrites: [],
   bindings: [],
@@ -434,8 +444,8 @@ const EMPTY = {
 };
 
 /**
- * `{ functions, calls, callSites, arguments, returns, members, fields,
- * propertyWrites, bindings, parameterReads, markers }` from one semantic
+ * `{ functions, calls, callSites, arguments, returns, members, globals,
+ * fields, propertyWrites, bindings, parameterReads, markers }` from one semantic
  * graph. Binding reads are projected with the other semantic facts, in
  * application.mjs.
  */
@@ -450,6 +460,7 @@ export const callGraph = (semantic) => {
     arguments: argumentsOf(semantic),
     returns: returnsOf(semantic),
     members: membersOf(semantic, references),
+    globals: globalsOf(references),
     fields: fieldsOf(references, byId),
     propertyWrites: propertyWritesOf(semantic),
     bindings: bindingsOf(semantic, byId),

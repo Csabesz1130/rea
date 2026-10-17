@@ -3,6 +3,14 @@
 
 export const firstObservation = (node) => node.observations?.[0] ?? null;
 
+/**
+ * The first of a node's observations `test` accepts, or null. REA merges
+ * several observations into one node in no fixed order, so a node's first
+ * observation need not be the one a fact is read from.
+ */
+export const observationWhere = (node, test) =>
+  node.observations?.find(test) ?? null;
+
 const locationOf = (evidence) => {
   const value = evidence?.location?.available ? evidence.location.value : null;
   if (value?.kind === "source-range")

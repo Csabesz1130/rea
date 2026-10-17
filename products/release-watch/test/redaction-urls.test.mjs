@@ -136,6 +136,42 @@ describe("hashed asset names", () => {
       ),
     );
   });
+
+  it("keeps bundler base64url and base32 hashes in claims, source lines and locations alike", () => {
+    const names = [
+      "dist/config-manager-DsRE1v6M.js",
+      "dist/dependency-manager-BJq6jWA5.js",
+      "dist/ai-services-unified-CsFt27lZ.js",
+      "assets/index-B_7x-Qk2.js",
+      "assets/chunk-AbC_EfGh.css",
+      "_app/immutable/entry/start.BqU1RQ7V.js",
+      // Vite names a chunk of a chunk with a second hash.
+      "dist/lucideIconData-CKJ1do82-DtEQhFA7.mjs",
+    ];
+    for (const name of names) {
+      assert.equal(scrubText(`spawn() in ${name}`), `spawn() in ${name}`);
+      assert.equal(scrubDeep({ location: { file: name } }).location.file, name);
+      const line = `import { x } from "./${name}";`;
+      assert.equal(scrubDeep(sourceText(line)), line);
+    }
+    // A run longer than a bundler's 8-character hash, a run with no name
+    // before it, a random-looking name before a hash, or a name that is no
+    // static asset is still a token.
+    for (const path of [
+      "/v1/x-FAKEaB3dE5gH7jK9mN1pQ3rS5tU7.js",
+      "/v1/FAKEaB3dE5gH7jK9mN1pQ3rS5tU7.js",
+      "/api/users/john_FAKEaB3dE5gH7jK9.json",
+      "/o/u_FAKEdEf2GhI4jKl6Mn.gif",
+      "/share/report-FAKEx2LmQ8pZ7vR4tY1w.js",
+      "/o/FAKE9dEf2GhI4_jKl6Mn8.gif",
+    ]) {
+      assert.ok(!scrubText(`GET ${path}`).includes("FAKE"), path);
+      assert.ok(
+        !scrubText(`GET https://t.mailer.example.net${path}`).includes("FAKE"),
+        path,
+      );
+    }
+  });
 });
 
 describe("tags", () => {

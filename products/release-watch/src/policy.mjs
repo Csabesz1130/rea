@@ -122,12 +122,15 @@ export const releaseBaseline = (leftSides) => ({
   ),
 });
 
-// Credential tokens the old release shipped anywhere, and in browser code.
+// Credential tokens the old release shipped anywhere, in browser code, in
+// code placed neither in a page nor on a server, and in server code.
 const shippedTokensOf = (leftSides) => {
   const shipped = leftSides.map((side) => shippedTokens(side.app));
   return {
     tokens: new Set(shipped.flatMap((entry) => [...entry.all])),
     browserTokens: new Set(shipped.flatMap((entry) => [...entry.browser])),
+    unplacedTokens: new Set(shipped.flatMap((entry) => [...entry.unplaced])),
+    serverTokens: new Map(shipped.flatMap((entry) => [...entry.server])),
   };
 };
 

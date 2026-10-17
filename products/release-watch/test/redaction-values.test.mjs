@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 
 import { scrubDeep, sourceText } from "../src/redact.mjs";
 import { continuation, sourceLine } from "../src/source-line.mjs";
-import { hasRandomRun } from "../src/urls.mjs";
+import { hasRandomRun } from "../src/path-tokens.mjs";
 
 // The snippet as report.json prints it.
 const shown = (line, needle = "fetch(", reading = {}) =>

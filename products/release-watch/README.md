@@ -157,9 +157,10 @@ node demo/video/record-video.mjs --releases "$dir" \
 | Source lines      | `extract-artifact`               | Display only; a line is marked verified when the file's SHA-256 matches REA's digest                          |
 
 Facts are keyed so that moving code does not invent changes: requests by
-module and method, destinations by host, prompts by the variable they are
-assigned to. A module with more sites of one kind than before is reported
-once, with both counts, because Release Watch cannot tell which site is new.
+module and method, destinations by host, prompts by the variable or object
+property they are assigned to. A module with more sites of one kind than
+before is reported once, with both counts, because Release Watch cannot tell
+which site is new.
 Across the release, each site a component gained is paired with at most one
 site a component lost, by method and resolved command, so a call that moved
 between modules or components is low and a second copy is not. A site whose
@@ -249,9 +250,9 @@ finding says so.
 | RW-M01 | critical            | An MCP tool registration (per-tool or a CallTool dispatcher) reaching more process execution of a kind than before, inline, imported or via a helper or value; "may" unless more reach it by unguessed paths; "perhaps as before" via old files REA partly analyzed           |
 | RW-M02 | medium / low        | More MCP tool registration calls across the release (medium); a switch between a CallTool dispatcher and per-tool registration (low)                                                                                                                                          |
 | RW-A01 | high / medium       | A new AI provider host (high; medium when only a URL near requests REA could not resolve suggests it), or one that browser code now calls, or holds a URL for, when no old browser code did, or a provider SDK browser code now imports when no old browser code did (medium) |
-| RW-A02 | critical / high     | A credential-format string not shipped before, or one moved into browser code; critical in browser code                                                                                                                                                                       |
+| RW-A02 | critical / high     | A credential-format string not shipped before, or one moved into browser code; critical in browser code, high when it moved there from code Release Watch classifies neither as browser nor as server code                                                                    |
 | RW-A03 | medium / low        | A new MCP server SDK or framework (medium; low when the component already served MCP through another), another MCP SDK package (client, HTTP transport, shared code) or AI SDK (low)                                                                                          |
-| RW-A04 | low                 | Changed prose assigned to a variable in AI code                                                                                                                                                                                                                               |
+| RW-A04 | low                 | Changed prose a variable or object property of AI code holds, whose new text no string of the old module had                                                                                                                                                                  |
 | RW-A05 | medium              | A new HTML sink in browser code that fetches, in a component with an AI surface                                                                                                                                                                                               |
 | RW-W01 | high / medium       | A new third-party `<script src>` host, or script code embedded in a `data:` or `javascript:` URL (high)                                                                                                                                                                       |
 | RW-W02 | medium              | A new service worker in a component, noting one another component of the old release registered                                                                                                                                                                               |
@@ -261,7 +262,7 @@ finding says so.
 | RW-H03 | critical / high     | The browser sends a credential to another party, critical for an AI provider                                                                                                                                                                                                  |
 | RW-H04 | medium              | A cookie's weakest `Set-Cookie` lost `HttpOnly`, `Secure` or `SameSite` strength                                                                                                                                                                                              |
 | RW-N01 | high / medium / low | A new destination host, third party (high; medium when only a URL near requests REA could not resolve suggests it) or vendor or deployment host (low)                                                                                                                         |
-| RW-N02 | medium              | More request sites without a known destination in a module than before (REA resolved none, and the request reads no URL literal Release Watch binds it to), beyond those a removed site of the release or a new destination accounts for                                      |
+| RW-N02 | medium              | More request sites without a known destination in a module than before (REA resolved none, and the request reads no URL literal Release Watch binds it to), beyond those a removed site or a new destination accounts for; "not observed" if REA examined the old one in part |
 | RW-N03 | medium              | A host now reached over `http://` or `ws://` that the old release reached only encrypted, from code that did not move unchanged                                                                                                                                               |
 | RW-P01 | high / low          | New process execution or a changed command (high); a site that took a removed site with the same command, anywhere in the release (low)                                                                                                                                       |
 | RW-G01 | high                | A Go helper's `-ldflags` sets a URL on a new third-party host, also for a new or newly identified helper                                                                                                                                                                      |
@@ -296,18 +297,27 @@ passed.
   side is a capture only has its new code reported as not observed before.
 - An old file REA examined only in part or not at all (at the per-file node
   ceiling, left without semantic facts after the global node limit, or
-  failed) is unknown, not absent: a finding in it, or beside it, says what it
-  reports may predate the release, and once the global limit is reached any
-  old file may be partial. An import of a file whose imports REA's graph does
-  not report on the other side (REA recorded a failure and no import
-  relationship for it) is "not compared" rather than new or gone, and RW-D01
-  does not call the package new.
+  failed) is unknown, not absent. A finding in it says what it reports may
+  predate the release; every other finding about the new release ends with
+  one sentence that counts the old files REA did not fully examine, names
+  two of them and says when REA reached its global node limit there, after
+  which any old file may be partial. Findings that report coverage itself
+  (RW-C01 to RW-C04) do not carry it. A count of old sites is what REA
+  observed: RW-N02 does not call sites new when REA examined the old module
+  only in part, gave it no semantic facts or could not analyze it, or
+  reached its global node limit on the old release. An import of a file
+  whose imports REA's graph does not report on the other side (REA recorded
+  a failure and no import relationship for it) is "not compared" rather
+  than new or gone, and RW-D01 does not call the package new.
 - Correlations are labelled heuristic: an IPC handler reaching an imported
   exec site, an MCP registration containing one, the calls counted as MCP
   tool registrations, a request attributed to a URL literal in the same
   module, a module counted as browser code because a page loads it, an
   omitted `webPreferences` option relying on Electron's default, the old
-  BrowserWindow a new one is paired with.
+  BrowserWindow a new one is paired with, and a timer cited next to a new
+  destination's requests because the request is written inside its call,
+  its call reads a binding REA declares as a function around the request, or
+  REA places both in one function (three such timers at most, then a count).
 - Windows pair first by what they load, then by the named functions that
   create them and the binding or member REA reports holding them, so a window
   that now loads what another window loaded is paired with that window. A
@@ -443,7 +453,13 @@ passed.
   starts nothing.
 - Browser code is classified from what HTML pages and service workers load.
   Dedicated workers and scripts loaded at runtime are not classified, so a
-  call that moved from a worker into page code is reported at medium.
+  call that moved from a worker into page code is reported at medium, and a
+  key that moved from such code into page code at high. Release Watch takes
+  as server code, labelled heuristic, a module that imports a Node.js
+  built-in for host I/O (any `node:` specifier, `fs`, `http`,
+  `child_process` and the like) and what it imports, in a component no HTML
+  page or service worker loads code from; a key that moved from there into
+  browser code is critical.
 - A component is an MCP server when one of its modules imports an MCP
   server SDK or framework: `@modelcontextprotocol/sdk/server` (the TypeScript
   SDK's v1), `@modelcontextprotocol/server` (v2), `mcp-handler`
@@ -526,6 +542,23 @@ passed.
   bindings and named, namespace and star re-exports, is attributed to that
   URL, and RW-N02 does not count it. A computed member (`ENDPOINTS[key]`)
   is not attributed and stays an unresolved request.
+- RW-A04 takes text as new only when the old module held no string
+  literal with that value under any name, because a minifier renames
+  variables freely; prompts swapped between variables are not reported.
+  Each value is tested on its own, since a minified name holds unrelated
+  strings in other scopes. Prose is not taken as a prompt when every read
+  REA reports of its variable is the message of an `Error` constructor or a
+  `console` method, or when it is a bundled package.json value: REA places
+  it under a manifest field (`scripts`, `description` and the like) of an
+  object REA also reports a `version` string for, and that object holds a
+  field only a package.json has (`scripts`, `dependencies`) or REA reports
+  no read of the field, so an agent card's description read into an AI
+  call is a prompt. The old text quoted is the name's own when the new
+  module no longer holds it; otherwise the finding says the old text is
+  still there under another name and quotes, as Release Watch's pairing,
+  the old module's prompt text the new one no longer holds when there is
+  exactly one. Markup documents (an SVG icon, an XML or HTML page) are not
+  prose.
 - REA reports strings assigned to variables and URLs it resolved. A key
   written inline in a call or a header is not seen by RW-A02, and a request
   that reads a URL variable is attributed to that URL even if it transforms
@@ -574,7 +607,12 @@ continue it (after `+`, `,`, `[`, `(`, inside a template or a continued
 string), every string is masked except the readable parts of URLs and short
 keyword-like strings such as HTTP methods and header names. A 40 or 64 hex
 path segment is kept only before a static asset file, and content-hashed
-file names keep their name, including a static asset named only by its hash.
+file names keep their name, including a static asset named only by its hash
+and one whose name ends in one or two of the 8-character base64url or
+base32 hashes Rollup, Vite and esbuild write by default
+(`config-manager-DsRE1v6M.js`, `start.BqU1RQ7V.js`) after a name that is
+not itself random-looking; a longer run in a URL path stays masked. Claims,
+evidence locations and source lines read file names by this one rule.
 A `<script src>` starting with two slashes or backslashes is read as
 protocol-relative, as browsers read it.
 
@@ -592,7 +630,8 @@ per side, with a bounded analyzer heap. Code a limit cuts short is reported as
 RW-C01, never passed, and RW-C01 names the depth or option that would raise
 the limit REA reached, with the limits that re-run would use: an option you
 gave keeps its value at any depth, so RW-C01 names it when it is the limit
-that binds. `--depth` picks the limits:
+that binds. RW-N02 gives the same advice when a limit left the old count of
+a module's requests unknown. `--depth` picks the limits:
 
 | Depth                | Semantic nodes | In one file | Analyzer heap | Sides at once |
 | -------------------- | -------------- | ----------- | ------------- | ------------- |

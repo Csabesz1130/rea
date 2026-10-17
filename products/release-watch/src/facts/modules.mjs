@@ -1,6 +1,16 @@
 // Module relationships from REA's application graph: what each module
 // imports and exports, and which modules run in a browser page.
-import { edgeFact, firstObservation } from "./provenance.mjs";
+import { edgeFact, firstObservation, observationWhere } from "./provenance.mjs";
+
+/**
+ * The observation of an asset node that names its file. REA can list other
+ * observations of the file first, such as a sender-validation candidate.
+ */
+export const assetObservation = (node) =>
+  observationWhere(
+    node,
+    (observation) => typeof observation.properties?.path === "string",
+  );
 
 /**
  * The file a module node stands for: an asset, a source-map original source,
@@ -9,7 +19,8 @@ import { edgeFact, firstObservation } from "./provenance.mjs";
  */
 export const modulePathOf = (node) => {
   const properties = firstObservation(node)?.properties ?? {};
-  if (node.kind === "javascript-asset") return properties.path ?? null;
+  if (node.kind === "javascript-asset")
+    return assetObservation(node)?.properties.path ?? null;
   const namespace = node.identity?.namespace ?? "";
   if (namespace === "source-module" || namespace.endsWith(":module"))
     return properties.path ?? null;
@@ -53,9 +64,10 @@ const externalSpecifierOf = (edge, target) => {
 // a module node carries. REA merges a binding's other observations
 // (`export-return-shapes`) into the same node, in no fixed order.
 const exportObservation = (node) =>
-  (node.observations ?? []).find(
+  observationWhere(
+    node,
     (observation) => observation.properties?.semantic_role === "export-binding",
-  ) ?? null;
+  );
 
 const emptyEntry = () => ({
   externalImports: new Set(),

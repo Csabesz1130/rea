@@ -3,8 +3,15 @@
 // release contacted (destinations.mjs owns that attribution).
 import { shippedBefore, unaccounted } from "../moves.mjs";
 import { unexaminedNote } from "./unknown-moves.mjs";
-import { sourceEvidence, sourceUnknowns } from "./network-evidence.mjs";
+import {
+  contextEvidence,
+  sourceEvidence,
+  sourceUnknowns,
+} from "./network-evidence.mjs";
+import { renamedFrom } from "../diff.mjs";
 import { captureUnread } from "../facts/capture.mjs";
+import { unexaminedIn } from "../facts/coverage.mjs";
+import { rerunWith } from "../limits.mjs";
 import { displayUrl, schemeOf } from "../urls.mjs";
 import {
   LOCAL,
@@ -17,7 +24,6 @@ import {
   knownHosts,
   mergeSchemes,
   namedHosts,
-  sourceModule,
   sourceModules,
   withoutDestination,
 } from "./destinations.mjs";
@@ -110,33 +116,6 @@ export const absenceUnknowns = (context, host) => [
     : []),
 ];
 
-// What else the sending modules do: timers that repeat the request, and host
-// or user APIs they import.
-const contextEvidence = (sources, app) => {
-  if (!app) return [];
-  const modules = new Set(sources.map(sourceModule).filter(Boolean));
-  const lines = [];
-  for (const timer of app.timers)
-    if (modules.has(timer.data.module))
-      lines.push(
-        cite(
-          `${timer.data.module} schedules work with ${timer.data.method}()`,
-          timer,
-          APP_SOURCE,
-        ),
-      );
-  for (const modulePath of modules) {
-    const imports = app.modules.get(modulePath)?.externalImports ?? new Set();
-    if (imports.has("node:os") || imports.has("os"))
-      lines.push(
-        heuristic(
-          `${modulePath} imports node:os, which exposes host and user account details`,
-        ),
-      );
-  }
-  return lines;
-};
-
 const isFirstParty = (host, context) =>
   isVendorHost(host, context.options.vendorDomains) ||
   context.network.own.has(host);
@@ -198,6 +177,65 @@ const UNEXAMINED = {
     `had a ${fact.data.method}() request without a known destination`,
 };
 
+// Why REA's facts do not establish how many sites an old module had, as a
+// clause about the old release (facts/coverage.mjs unexaminedIn says why),
+// and the node limits REA reached there (limits.mjs keys; none named for a
+// file REA could not analyze).
+const OLD_GAP = {
+  ceiling: (file, label) => ({
+    text: `REA examined ${file} of ${label} only in part (it reached the per-file node ceiling)`,
+    limits: ["maxSemanticNodesPerFile"],
+  }),
+  unreached: (file, label) => ({
+    text: `REA gave ${file} of ${label} no semantic facts (it reached its global node limit first)`,
+    limits: ["maxSemanticNodes"],
+  }),
+  failed: (file, label) => ({
+    text: `REA could not analyze ${file} of ${label}`,
+    limits: [],
+  }),
+  global: (_file, label) => ({
+    text: `REA reached its global node limit on ${label} and may have examined any of its files only in part`,
+    limits: ["maxSemanticNodes"],
+  }),
+};
+
+// Why the old count of a module's sites is not established (`{ text,
+// limits }`), or null: the module's old file (its old path when renamed)
+// is one REA did not fully examine, or REA's global node limit leaves every
+// old file partial.
+const oldGap = (context, unexamined, item, module) => {
+  const paths =
+    item.left.length > 0
+      ? item.left.map((fact) => fact.data.module)
+      : [renamedFrom(context.aliases)(module) ?? module];
+  const file = paths.find((path) => unexamined.files.has(path));
+  if (file)
+    return OLD_GAP[unexamined.files.get(file)](file, context.labels.left);
+  return unexamined.anyFile ? OLD_GAP.global(null, context.labels.left) : null;
+};
+
+// Title, summary and recommendation of RW-N02: a count REA established
+// for the old module is a claim of new sites; one it did not is "not
+// observed".
+const unresolvedWording = (context, { fact, old, sites, gap }) => {
+  const where = `${fact.data.method}() sites in ${fact.data.module} without a known destination`;
+  const release = oldRelease(context);
+  return gap === null
+    ? {
+        title: `New request with an unresolved destination in ${fact.data.module}`,
+        summary: `${context.labels.right} has ${where} that no removed site of ${release} accounts for (${old} → ${sites} in this module).`,
+        recommendation:
+          "Capture the release's traffic or ask the vendor for the destination.",
+      }
+    : {
+        title: `Request with an unresolved destination not observed in ${release}: ${fact.data.module}`,
+        summary: `${context.labels.right} has ${where} that no removed site REA observed in ${release} accounts for (${old} observed → ${sites} in this module), but ${gap.text}, so Release Watch cannot tell whether any is new.`,
+        // What a re-run would raise is limits.mjs's (rerunWith).
+        recommendation: `Re-run with ${rerunWith(context.options?.analysis, gap.limits).text} so the old code is examined, capture the release's traffic, or ask the vendor for the destination.`,
+      };
+};
+
 // Request sites without a known destination (withoutDestination: REA
 // resolved none and Release Watch binds no URL literal to them) that a
 // module gained, which no removed site of the release accounts for (code
@@ -206,10 +244,12 @@ const UNEXAMINED = {
 // Sites with a known destination, resolved or bound, added next to them are
 // graded by their host instead. Every open site of a module shares the
 // same explanations, so the count of gained ones does not depend on which
-// site the moves took as gained.
+// site the moves took as gained. A module whose old file REA did not fully
+// examine has no established old count, so its sites are "not observed".
 const unresolvedRequests = (context, explained) => {
   const before = withoutDestination(context.left.app);
   const after = withoutDestination(context.right.app);
+  const unexamined = unexaminedIn(context.left.app);
   return context.diff.app.requests.flatMap((item) => {
     const open = item.right.filter(
       (fact) =>
@@ -220,16 +260,18 @@ const unresolvedRequests = (context, explained) => {
     const added = unaccounted(context.moves.requests, open).length;
     if (added === 0) return [];
     const [fact] = open;
-    const old = item.left.filter(before).length;
+    const gap = oldGap(context, unexamined, item, fact.data.module);
     return [
       {
         rule: "RW-N02",
         severity: "medium",
-        title: `New request with an unresolved destination in ${fact.data.module}`,
-        summary: `${context.labels.right} has ${fact.data.method}() sites in ${fact.data.module} without a known destination that no removed site of ${oldRelease(context)} accounts for (${old} → ${open.length} in this module).`,
+        ...unresolvedWording(context, {
+          fact,
+          old: item.left.filter(before).length,
+          sites: open.length,
+          gap,
+        }),
         why: "Unexplained outbound traffic is the main exfiltration path for compromised updates.",
-        recommendation:
-          "Capture the release's traffic or ask the vendor for the destination.",
         evidence: [
           ...open.map((site) =>
             cite(

@@ -1,22 +1,21 @@
 // AI rules: where prompts go (ai-placement.mjs), credentials shipped in
-// code, new AI or MCP SDKs, changed prompts and model output rendered as HTML.
-import {
-  aiProviderOf,
-  credentialOf,
-  credentialsIn,
-  isAiEnvironmentKey,
-} from "../catalog.mjs";
+// code, new AI or MCP SDKs, changed prompts (prompts.mjs) and model output
+// rendered as HTML.
+import { credentialOf, credentialsIn } from "../catalog.mjs";
 import { movedFrom } from "../moves.mjs";
-import { textPreview } from "../source-line.mjs";
 import { mcpServers, sdkUses } from "../surfaces.mjs";
-import { hostOf, maskTag } from "../urls.mjs";
 import {
   BROWSER_CODE,
   BROWSER_LIMIT,
+  SERVER_LIMIT,
   providerFindings,
   sdkPlacementFindings,
+  serverLine,
+  serverModules,
   union,
 } from "./ai-placement.mjs";
+import { oldRelease } from "./network.mjs";
+import { promptFindings } from "./prompts.mjs";
 import {
   componentAbsence,
   heldElsewhere,
@@ -63,14 +62,95 @@ const tokensOf = (carriers, keep = () => true) =>
       ),
   );
 
-/** Credential tokens one app ships: `{ all, browser }`, each a Set of values. */
+/**
+ * Credential tokens one app ships: `all`, those in browser code, those in
+ * code Release Watch places neither in a page nor on a server (`unplaced`),
+ * each a Set of values, and `server`, a Map from each token in server code
+ * (serverModules) to the module holding it and why (`{ module, via }`).
+ */
 export const shippedTokens = (app) => {
   const carriers = keyCarriers(app);
+  const server = serverModules(app);
+  const inBrowser = (carrier) => app?.browserModules.has(carrier.module);
   return {
     all: tokensOf(carriers),
-    browser: tokensOf(carriers, (carrier) =>
-      app?.browserModules.has(carrier.module),
+    browser: tokensOf(carriers, inBrowser),
+    unplaced: tokensOf(
+      carriers,
+      (carrier) => !inBrowser(carrier) && !server.has(carrier.module),
     ),
+    server: new Map(
+      carriers
+        .filter((carrier) => server.has(carrier.module))
+        .flatMap((carrier) =>
+          credentialTokens(carrier.value).map((token) => [
+            token.value,
+            { module: carrier.module, via: server.get(carrier.module) },
+          ]),
+        ),
+    ),
+  };
+};
+
+// Where a key the old release shipped outside browser code was: the old
+// carrier when every one was server code, else null (it may have been
+// browser code Release Watch does not classify).
+const serverOrigin = (context, shipped) => {
+  const unplaced = union(shipped.unplaced, context.baseline.unplacedTokens);
+  const server = new Map([
+    ...(context.baseline.serverTokens ?? []),
+    ...shipped.server,
+  ]);
+  return (value) => (unplaced.has(value) ? null : (server.get(value) ?? null));
+};
+
+// One RW-A02 finding. A key the old release shipped is reported again
+// only in browser code: critical when every old carrier was server code
+// (`origin`), high when one may have been browser code Release Watch does
+// not classify.
+const credentialFinding = (context, { carrier, token, moved, origin }) => {
+  const { labels } = context;
+  const inBrowser = context.right.app.browserModules.has(carrier.module);
+  const binding = carrier.binding ? ` assigned to ${carrier.binding}` : "";
+  const unplaced = moved && origin === null;
+  const before = origin
+    ? `${labels.left} had the same key only in code Release Watch takes as server code (${origin.module})`
+    : `${labels.left} had the same key only in code it did not classify that way`;
+  return {
+    rule: "RW-A02",
+    severity: inBrowser && !unplaced ? "critical" : "high",
+    title: `${token.kind} ${moved ? "now in" : "shipped in"} ${inBrowser ? "browser code" : "code"}: ${carrier.module}`,
+    summary: moved
+      ? `${labels.right} ships a ${token.kind} in code Release Watch classifies as browser code; ${before}.`
+      : `${labels.right} contains a string with the format of a ${token.kind}${binding}.`,
+    why: inBrowser
+      ? "Anyone who opens the site can read this key and use the account it belongs to."
+      : "Keys in shipped code leak through packages, logs and support bundles; they belong in a secret store.",
+    recommendation:
+      "Revoke the key now, move the call behind a server, and review the key's usage logs.",
+    evidence: [
+      cite(
+        `${token.kind} ${token.masked}${binding} (${moved ? `also in a string REA reported for ${labels.left}` : `not in any string REA reported for ${labels.left}`})`,
+        carrier.fact,
+        APP_SOURCE,
+      ),
+      ...(inBrowser ? [BROWSER_CODE] : []),
+      ...(origin ? [serverLine(oldRelease(context), origin)] : []),
+      ...(unplaced
+        ? [
+            heuristic(
+              `Release Watch did not classify the ${labels.left} code that held this key as browser code`,
+            ),
+          ]
+        : []),
+    ],
+    unknowns: [
+      ...(unplaced ? [BROWSER_LIMIT] : []),
+      ...(origin ? [SERVER_LIMIT] : []),
+      "Release Watch matched a documented key format; it cannot tell whether the key is live.",
+      "REA reports strings assigned to variables and URLs it resolved; a key written inline in a call or header is not seen.",
+      "The raw value remains in the saved REA Evidence under evidence/; treat that directory as sensitive.",
+    ],
   };
 };
 
@@ -81,7 +161,7 @@ export const shippedTokens = (app) => {
  * it moved into browser code.
  */
 const credentialFindings = (context) => {
-  const { left, right, labels } = context;
+  const { left, right } = context;
   if (!right.app) return [];
   // What this component and every component of the old release shipped, so
   // a key that moved between components is not new.
@@ -91,6 +171,7 @@ const credentialFindings = (context) => {
     shipped.browser,
     context.baseline.browserTokens,
   );
+  const originOf = serverOrigin(context, shipped);
   const seen = new Set();
   return keyCarriers(right.app).flatMap((carrier) => {
     const inBrowser = right.app.browserModules.has(carrier.module);
@@ -108,43 +189,12 @@ const credentialFindings = (context) => {
       })
       .map((token) => {
         const moved = before.has(token.value);
-        const binding = carrier.binding
-          ? ` assigned to ${carrier.binding}`
-          : "";
-        return {
-          rule: "RW-A02",
-          severity: inBrowser && !moved ? "critical" : "high",
-          title: `${token.kind} ${moved ? "now in" : "shipped in"} ${inBrowser ? "browser code" : "code"}: ${carrier.module}`,
-          summary: moved
-            ? `${labels.right} ships a ${token.kind} in code Release Watch classifies as browser code; ${labels.left} had the same key only in code it did not classify that way.`
-            : `${labels.right} contains a string with the format of a ${token.kind}${binding}.`,
-          why: inBrowser
-            ? "Anyone who opens the site can read this key and use the account it belongs to."
-            : "Keys in shipped code leak through packages, logs and support bundles; they belong in a secret store.",
-          recommendation:
-            "Revoke the key now, move the call behind a server, and review the key's usage logs.",
-          evidence: [
-            cite(
-              `${token.kind} ${token.masked}${binding} (${moved ? `also in a string REA reported for ${labels.left}` : `not in any string REA reported for ${labels.left}`})`,
-              carrier.fact,
-              APP_SOURCE,
-            ),
-            ...(inBrowser ? [BROWSER_CODE] : []),
-            ...(moved
-              ? [
-                  heuristic(
-                    `Release Watch did not classify the ${labels.left} code that held this key as browser code`,
-                  ),
-                ]
-              : []),
-          ],
-          unknowns: [
-            ...(moved ? [BROWSER_LIMIT] : []),
-            "Release Watch matched a documented key format; it cannot tell whether the key is live.",
-            "REA reports strings assigned to variables and URLs it resolved; a key written inline in a call or header is not seen.",
-            "The raw value remains in the saved REA Evidence under evidence/; treat that directory as sensitive.",
-          ],
-        };
+        return credentialFinding(context, {
+          carrier,
+          token,
+          moved,
+          origin: moved ? originOf(token.value) : null,
+        });
       });
   });
 };
@@ -255,84 +305,6 @@ const sdkFindings = (context, placed) => {
           ),
         ),
         unknowns: [],
-      };
-    });
-};
-
-// Modules that talk to AI models: they import an AI SDK, read a provider
-// setting or hold a provider URL.
-const aiModules = (app) => {
-  const modules = new Set();
-  for (const { sdk, facts } of sdkUses(app).values())
-    if (sdk.kind === "ai")
-      for (const fact of facts)
-        if (fact.data.module) modules.add(fact.data.module);
-  for (const read of app.configReads)
-    if (isAiEnvironmentKey(read.data.key)) modules.add(read.data.module);
-  for (const literal of app.urlLiterals)
-    if (aiProviderOf(hostOf(literal.data.url)))
-      modules.add(literal.data.module);
-  // Prompts often live in a module the AI code imports (one step only).
-  const direct = Array.from(modules);
-  for (const module of direct)
-    for (const local of app.modules.get(module)?.local ?? [])
-      modules.add(local);
-  return modules;
-};
-
-// Prose: several words, not a URL, no key-shaped token, and not an
-// authorization value such as "Bearer <token>".
-const isProse = (value) =>
-  value.length >= 40 &&
-  value.trim().split(/\s+/).length >= 5 &&
-  !/^[a-z]+:\/\//i.test(value) &&
-  !/^\s*(Bearer|Basic|Token)\s/i.test(value) &&
-  credentialsIn(value).length === 0 &&
-  credentialOf(value) === null;
-
-// A prompt's start on one line, masked as a source line is: URLs keep their
-// host and path, and secrets in them or in the prose become tags.
-const preview = (value) =>
-  textPreview(value.slice(0, 16384).replace(/\s+/g, " ").trim(), 90);
-// The keyed tag tells the two texts apart within this report; an unkeyed
-// digest of a short prompt could be matched against guesses.
-const describe = (label, value) =>
-  `${label}: "${preview(value)}" (${value.length} characters, ${maskTag(value)})`;
-
-const promptFindings = (context) => {
-  const { right, labels } = context;
-  if (!right.app) return [];
-  const modules = aiModules(right.app);
-  return context.diff.app.stringLiterals
-    .filter((item) => item.status === "changed")
-    .filter((item) => item.right.every((fact) => modules.has(fact.data.module)))
-    .filter((item) =>
-      [...item.left, ...item.right].every((fact) => isProse(fact.data.value)),
-    )
-    .map((item) => {
-      const [after] = item.right;
-      const [before] = item.left;
-      const name = after.data.binding ?? "a string literal";
-      return {
-        rule: "RW-A04",
-        severity: "low",
-        title: `Prompt text changed: ${name} in ${after.data.module}`,
-        summary: `${name} in ${after.data.module} feeds an AI component and has new text in ${labels.right}.`,
-        why: "Prompt changes alter model behaviour, safety instructions and what data the model is told to use; they deserve the same review as code.",
-        recommendation:
-          "Review the prompt diff with the owner of the AI feature.",
-        evidence: [
-          cite(describe(labels.left, before.data.value), before, APP_SOURCE, {
-            side: "left",
-          }),
-          cite(describe(labels.right, after.data.value), after, APP_SOURCE),
-          heuristic(
-            `Release Watch treats ${after.data.module} as AI code because it imports an AI SDK, reads a provider setting or holds a provider URL`,
-          ),
-        ],
-        unknowns: [
-          "REA keeps a string only when a variable starts with it; prompts passed inline to an SDK call are not visible, so an unchanged report does not prove unchanged prompts.",
-        ],
       };
     });
 };
