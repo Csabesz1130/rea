@@ -1,157 +1,19 @@
-// Electron boundary rules: renderer-reachable process execution, new bridge
-// APIs, webPreferences regressions and fuse regressions.
-import {
-  componentAbsence,
-  heldElsewhere,
-  perComponent,
-  processAbsence,
-} from "./component-absence.mjs";
-import { reachOf } from "./reach.mjs";
-import { reachClaim, reachUnknowns } from "./reach-text.mjs";
+// Electron boundary rules: renderer-reachable process execution
+// (electron-reach.mjs), new bridge APIs, webPreferences regressions and fuse
+// regressions.
+import { perComponent } from "./component-absence.mjs";
+import { memberAbsence, rendererProcessExecution } from "./electron-reach.mjs";
 import { webPreferenceRegressions } from "./windows.mjs";
 import {
   APP_SOURCE,
   cite,
-  heuristic,
   maxSeverity,
   newFacts,
-  newGroups,
   packResult,
   reported,
 } from "./shared.mjs";
 
 const FUSE_SOURCE = "REA inspect_electron_fuses";
-
-// How the component's old side had a renderer API or an exec site, and
-// whether another old component had what this one did not (`held`).
-const memberAbsence = (context, { fact, status }) => {
-  const held = heldElsewhere(context, "bridgeMembers", {
-    key: fact.key,
-    status,
-  });
-  return {
-    held,
-    phrase: componentAbsence(context, {
-      status,
-      held,
-      had: "exposed an API of this name",
-    }),
-  };
-};
-
-const execAbsence = (context, group) =>
-  group.status === "existing"
-    ? { held: false, phrase: `also in ${context.labels.left}` }
-    : processAbsence(context, group);
-
-const execEvidence = (group, absence) =>
-  group.facts.map((exec) =>
-    cite(
-      `${exec.data.method}() creates a child process in ${exec.data.module}${exec.data.command ? "" : " with a command REA did not resolve"} (${absence.phrase})`,
-      exec,
-      APP_SOURCE,
-    ),
-  );
-
-const heldUnknowns = (member, exec) => [
-  ...(member.held ? [perComponent("renderer APIs")] : []),
-  ...(exec.held ? [perComponent("process execution sites")] : []),
-];
-
-/**
- * A new renderer-exposed bridge member whose IPC handler reaches a new,
- * added or changed process-execution site: one finding per channel and
- * exec key, citing every site of that key.
- */
-const rendererProcessExecution = (context) => {
-  const { right, diff, labels } = context;
-  const app = right.app;
-  const findings = [];
-  const coveredExec = new Set();
-  const coveredMembers = new Set();
-  if (!app) return { findings, coveredExec, coveredMembers };
-  const handlers = new Map(
-    app.ipcHandlers.map((handler) => [handler.data.channel, handler]),
-  );
-  // New and changed exec sites, then existing ones: a new renderer API that
-  // reaches an exec site the old release already had is still new reach.
-  const fresh = newGroups(diff.app.childProcesses, { field: "command" });
-  const freshKeys = new Set(fresh.map((group) => group.key));
-  const groups = [
-    ...fresh,
-    ...diff.app.childProcesses
-      .filter((item) => item.right.length > 0 && !freshKeys.has(item.key))
-      .map((item) => ({
-        key: item.key,
-        status: "existing",
-        counts: { before: item.left.length, after: item.right.length },
-        facts: item.right,
-        left: item.left,
-      })),
-  ];
-  for (const added of newFacts(diff.app.bridgeMembers)) {
-    const member = added.fact;
-    const memberHeld = memberAbsence(context, added);
-    const handler = handlers.get(member.data.channel);
-    const scope = {
-      module: handler?.location?.file ?? null,
-      range: handler?.data.handler_range ?? null,
-    };
-    if (scope.module === null) continue;
-    for (const group of groups) {
-      const reached = group.facts
-        .map((exec) => ({ exec, path: reachOf(app, scope, exec) }))
-        .filter(({ path }) => path);
-      if (reached.length === 0) continue;
-      const [{ exec, path }] = reached;
-      group.facts.forEach((fact) => coveredExec.add(fact.node_id));
-      group.left.forEach((fact) => coveredExec.add(fact.node_id));
-      coveredMembers.add(member.key);
-      const execHeld = execAbsence(context, group);
-      const evidence = [
-        cite(
-          `Renderer API ${member.data.member} invokes IPC channel "${member.data.channel}" (${memberHeld.phrase})`,
-          member,
-          APP_SOURCE,
-        ),
-        cite(
-          `Main-process handler for "${member.data.channel}"`,
-          handler,
-          APP_SOURCE,
-        ),
-        heuristic(
-          reachClaim(path, exec, "the handler"),
-          path.read?.location ?? exec.location,
-        ),
-        ...execEvidence(group, execHeld),
-      ];
-      if (app.summary?.sender_validation_observations === 0)
-        evidence.push(
-          reported(
-            "REA observed no IPC sender validation in this release",
-            "observed",
-            APP_SOURCE,
-          ),
-        );
-      findings.push({
-        rule: "RW-E01",
-        severity: "critical",
-        title: `Renderer can reach ${group.status === "existing" ? "" : "new "}process execution via "${member.data.channel}"`,
-        summary: `${labels.right} exposes ${member.data.member}() to web content; its handler ${path.guess ? "may reach" : "reaches"} ${exec.data.method}() in ${exec.data.module}.`,
-        why: "Any script running in the window, including injected content, could ask the main process to start programs with the user's privileges.",
-        recommendation:
-          "Ask the vendor why a renderer-exposed IPC channel can start processes, and require an allow-list of commands plus sender validation before deployment.",
-        evidence,
-        unknowns: [
-          "REA did not establish that the IPC argument reaches the exec command; the path is a correlation of REA facts by location.",
-          ...reachUnknowns([path]),
-          ...heldUnknowns(memberHeld, execHeld),
-        ],
-      });
-    }
-  }
-  return { findings, coveredExec, coveredMembers };
-};
 
 const MAX_LISTED = 25;
 

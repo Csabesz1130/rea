@@ -2,8 +2,8 @@
 // semantic facts: functions by module, name and enclosing scope, and the
 // calls, call sites, arguments, return sites, binding and parameter reads,
 // member reads, class field keys, property writes, assignments, bindings,
-// statement markers, export statements and process sites of each module
-// sorted by position.
+// the pattern elements REA reports destructuring them, statement markers,
+// export statements and process sites of each module sorted by position.
 import {
   comesBefore,
   firstStarting,
@@ -72,6 +72,19 @@ const listsBy = (items, keyOf) => {
 
 const positionKey = (module, range) =>
   `${module}\u0000${range.start.line}:${range.start.column}`;
+const rangeKey = (module, range) =>
+  `${positionKey(module, range)}-${range.end.line}:${range.end.column}`;
+
+// Each member read by the range of the expression REA's nodes place it on.
+const receiversOf = (members = []) => {
+  const found = new Map();
+  for (const member of members) {
+    const at = member.receiver?.range;
+    const key = at && rangeKey(member.module, at);
+    if (key && !found.has(key)) found.set(key, member);
+  }
+  return found;
+};
 
 // The source ranges REA reports for the named exports of each module: an
 // `export const TOOLS = [...]` statement's range ends where its initializer
@@ -128,6 +141,7 @@ const buildIndex = (app) => {
     reads,
     byBinding,
     members: groupByModule(app.members, (member) => member.module),
+    receivers: receiversOf(app.members),
     fields: groupByModule(app.fields, (field) => field.module),
     writes: groupByModule(app.propertyWrites, (write) => write.module),
     assignments: groupByModule(
@@ -140,6 +154,14 @@ const buildIndex = (app) => {
       (assignment) => assignment.module,
     ),
     bindings: groupByModule(app.bindings, (binding) => binding.module),
+    patterns: groupByModule(
+      (app.bindings ?? []).flatMap((binding) =>
+        binding.destructured
+          ? [{ module: binding.module, range: binding.destructured.range }]
+          : [],
+      ),
+      (element) => element.module,
+    ),
     bindingAt: new Map(
       (app.bindings ?? []).map((binding) => [
         positionKey(binding.module, binding.range),
@@ -197,27 +219,12 @@ export const enclosingFunction = (index, module, range) => {
 };
 
 /**
- * The member read that starts where `range` starts, the innermost when a
- * chain of calls starts there too (`handlers.list().forEach`), or null.
+ * The member read REA's nodes place on the expression at `range` (`.run` in
+ * `shell.run` or `(shell).run` for the read of `shell`), or null. A member
+ * of a call on it (`runGit(args).pid`) is the call's, not its own.
  */
-export const memberAt = (index, module, range) => {
-  const members = index.members.get(module) ?? [];
-  let found = null;
-  for (
-    let next = firstStarting(members, range);
-    next < members.length && sameStart(members[next].range, range);
-    next += 1
-  )
-    if (
-      !found ||
-      startsBefore(
-        { start: members[next].range.end },
-        { start: found.range.end },
-      ) < 0
-    )
-      found = members[next];
-  return found;
-};
+export const memberOn = (index, module, range) =>
+  index.receivers.get(rangeKey(module, range)) ?? null;
 
 /**
  * The innermost call site that starts where `range` starts and ends after

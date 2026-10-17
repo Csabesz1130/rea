@@ -16,9 +16,11 @@ import { callStartingAt, readsOfBinding, scopeOf } from "./reach-index.mjs";
 import { declaredFunction } from "./reach-region.mjs";
 import {
   CALL_MEMBERS,
+  ENTRY_METHODS,
   ITERATION_METHODS,
   KEY_METHODS,
   OBJECT_KEY_FUNCTIONS,
+  ONE_ELEMENT_METHODS,
   PREDICATE_METHODS,
   RUN_MEMBERS,
   WHOLE_VALUE_MEMBERS,
@@ -240,7 +242,8 @@ export const constructedRead = (index, module, call) => {
  * `api.make()`: the value is what the function returns), `value` (`f.bind()`:
  * the function itself), `elements` (`TOOLS.find(…)`, `slice`, `concat`,
  * `get`: the receiver's elements), `keys` (`handlers.keys()`: no function),
- * or null when no call there has it as callee.
+ * `entries` (`TOOLS.entries()`: `[key, value]` pairs), or null when no call
+ * there has it as callee.
  */
 export const callRole = (index, module, read) => {
   const call = callStartingAt(index, module, read.range, read.range.end);
@@ -252,6 +255,8 @@ export const callRole = (index, module, read) => {
   if (method === "bind") return { kind: "value", call };
   if (path.length === 1 && KEY_METHODS.has(method))
     return { kind: "keys", call };
+  if (path.length === 1 && ENTRY_METHODS.has(method))
+    return { kind: "entries", call };
   if (WHOLE_VALUE_MEMBERS.has(method)) return { kind: "elements", call };
   return { kind: "call", call };
 };
@@ -260,11 +265,37 @@ export const callRole = (index, module, read) => {
  * True when `call` is one of `Object`'s functions whose result holds only
  * the keys of its argument (`Object.keys(handlers)`).
  */
-export const givesKeys = (index, module, call) => {
+export const givesKeys = (index, module, call) =>
+  objectCall(index, module, call, OBJECT_KEY_FUNCTIONS);
+
+/**
+ * True when `call` is `Object.entries(…)`, whose result holds `[key,
+ * value]` pairs of its argument.
+ */
+export const givesEntries = (index, module, call) =>
+  objectCall(index, module, call, ENTRY_METHODS);
+
+/**
+ * True when a method whose result is one element of its receiver is called
+ * on `call`'s result (`Object.entries(H).find(…)`).
+ */
+export const givesOneElement = (index, module, call) => {
+  const outer = callStartingAt(index, module, call.range, call.range.end);
+  const callee = outer && calleeMember(index, module, outer);
+  return (
+    Boolean(callee?.receiver?.range) &&
+    sameRange(callee.receiver.range, call.range) &&
+    callee.path.length === 1 &&
+    ONE_ELEMENT_METHODS.has(callee.path[0])
+  );
+};
+
+// True when `call` calls one of `names` on the global `Object`.
+const objectCall = (index, module, call, names) => {
   const callee = calleeMember(index, module, call);
   return (
-    callee?.global === "Object" &&
+    callee?.receiver?.global === "Object" &&
     callee.path.length === 1 &&
-    OBJECT_KEY_FUNCTIONS.has(callee.path[0])
+    names.has(callee.path[0])
   );
 };

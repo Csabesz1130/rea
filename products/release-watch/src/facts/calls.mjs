@@ -1,8 +1,8 @@
 // The parts of REA's semantic graph that say which code can run which code:
 // functions with their own ranges, the calls REA resolved within a module,
 // every call site and argument (with its position), return sites, member
-// reads (`shell.run`, with the global REA names as their receiver, such as
-// `Object`) and property writes (`handlers.git = …`), declared bindings with
+// reads (`shell.run`, with the expression REA's nodes place them on, or none
+// for `this.run`) and property writes (`handlers.git = …`), declared bindings with
 // the calls REA says initialize them and the assignments REA reports to
 // them, parameter reads, class field keys, and the statement-level effects
 // REA reports (event listener registrations, timers, promises whose result
@@ -10,10 +10,10 @@
 // them, bindings whether they are a function or class expression's own name.
 // Ranges and node ids only; no source is read.
 import { comesBefore, sameStart } from "../ranges.mjs";
+import { membersOf } from "./members.mjs";
 
 const rangeOf = (node) => node?.identity?.source_range ?? null;
 const moduleOf = (node) => node?.identity?.module_path ?? null;
-const MEMBER_READ = /^read:\/(.+)$/;
 // REA labels the expression that wraps one call argument `argument N`.
 const ARGUMENT = /^(?:spread )?argument (\d+)$/;
 
@@ -28,8 +28,6 @@ export const argumentPosition = (node) => {
 };
 // REA's identity of a name an expression refers to: `reference:<n>:read:<name>`.
 const REFERENCE = /^reference:\d+:read:(.+)$/;
-const startKey = (module, range) =>
-  `${module}\u0000${range.start.line}:${range.start.column}`;
 const locationOf = (node) => {
   const range = rangeOf(node);
   return {
@@ -141,68 +139,6 @@ const returnsOf = (semantic) =>
     owner: node.function_node_id ?? null,
   }));
 
-// Where each expression that can be a receiver starts, with where it ends
-// and, for a global, its name: a binding, a call, a global. `this.run` and
-// `super.run` have none.
-const receiverEnds = (semantic, globals) => {
-  const ends = new Map();
-  for (const node of positioned(
-    semantic,
-    (candidate) =>
-      (candidate.kind === "expression" || candidate.kind === "call-site") &&
-      !MEMBER_READ.test(candidate.label ?? "") &&
-      argumentPosition(candidate) === null,
-  )) {
-    const key = startKey(moduleOf(node), rangeOf(node));
-    if (!ends.has(key)) ends.set(key, []);
-    ends
-      .get(key)
-      .push({ end: rangeOf(node).end, global: globals.get(node) ?? null });
-  }
-  return ends;
-};
-
-// The receiver of a member read: the longest expression starting where it
-// starts that ends before it does.
-const receiverOf = (receivers, range) =>
-  receivers
-    .filter((receiver) => comesBefore(receiver.end, range.end))
-    .reduce(
-      (longest, receiver) =>
-        !longest || comesBefore(longest.end, receiver.end) ? receiver : longest,
-      null,
-    );
-
-// Property reads (`shell.run`), with REA's read path below the object.
-// `bare` marks a read whose receiver REA reports nothing for: `this.run`;
-// `global` names a receiver no binding resolves (`Object.keys`).
-const membersOf = (semantic, references) => {
-  const globals = new Map(references.map(({ node, name }) => [node, name]));
-  const ends = receiverEnds(semantic, globals);
-  return semantic.nodes.flatMap((node) => {
-    const path =
-      node.kind === "expression"
-        ? MEMBER_READ.exec(node.label ?? "")?.[1].split("/")
-        : null;
-    const range = rangeOf(node);
-    if (!path || !range) return [];
-    const receiver = receiverOf(
-      ends.get(startKey(moduleOf(node), range)) ?? [],
-      range,
-    );
-    return [
-      {
-        module: moduleOf(node),
-        range,
-        path,
-        bare: receiver === null,
-        global: receiver?.global ?? null,
-        location: locationOf(node),
-      },
-    ];
-  });
-};
-
 // The key of each class field (`run = async () => …`): a reference REA
 // reports the class itself making that no binding resolves.
 const fieldsOf = (references, byId) =>
@@ -310,13 +246,104 @@ const partialContainers = (semantic) =>
       .map((unknown) => unknown.node_id),
   );
 
+const at = (module, range) =>
+  `${module}\u0000${range.start.line}:${range.start.column}`;
+
+// REA's reason for a binding whose value it could not project from what
+// its pattern destructures because a key of the pattern is computed
+// (`const { [key]: run } = TOOL`), for which it reports no destructure
+// operation (projectValue in REA's javascriptSemanticValues.ts).
+const DYNAMIC_PROJECTION = /^Cannot project a dynamic property\./;
+
+// The bindings REA reports that unknown for.
+const dynamicProjections = (semantic, byId) =>
+  new Set(
+    (semantic.unknowns ?? [])
+      .filter(
+        (unknown) =>
+          unknown.family === "data-flow" &&
+          unknown.reason === "unknown-value" &&
+          byId.get(unknown.node_id)?.kind === "binding" &&
+          DYNAMIC_PROJECTION.test(unknown.detail ?? ""),
+      )
+      .map((unknown) => unknown.node_id),
+  );
+
+// REA's destructuring of each binding (`const { handler } = TOOL`, `for
+// (const [name, fn] of …)`), by where the binding starts: the property path
+// of the destructure operation REA reports there (null when what it
+// destructures reads a computed member, `= TOOLS[name]`), the range of that
+// pattern element, the part of it after the binding (its default value,
+// `handler = noop`, which the binding holds when the property is
+// undefined; null without one), and the binding or parameter REA reports
+// it destructured from, through one of that binding's property slots (null
+// when REA names none: a `for…of` element, a call's result). REA's path is
+// below the expression the destructured member chain starts at: that
+// binding when REA names one (`= TOOL.inner` gives `inner/handler`), a
+// call's result (`= Object.entries(H)[0]` gives `0/1`), or each element a
+// `for…of` loop iterates. For a computed key REA reports no destructure
+// operation but that it could not project the binding's value
+// (`dynamicProjections`): the binding's path is null, `computedKey` set,
+// and its element is the binding. REA reports neither for a rest element,
+// a nested pattern with its own default, or a computed key in a `for…of`
+// pattern.
+const destructuringsOf = (semantic, byId) => {
+  const named = new Map(
+    semantic.nodes
+      .filter((node) => node.kind === "binding" || node.kind === "parameter")
+      .map((node) => [node.identity?.role_key, node]),
+  );
+  const sources = new Map();
+  for (const relation of semantic.relations) {
+    if (relation.relation !== "destructures") continue;
+    const id = byId.get(relation.source_node_id)?.properties?.object_binding_id;
+    const source = id ? named.get(`binding:${id}`) : undefined;
+    if (rangeOf(source)) sources.set(relation.target_node_id, rangeOf(source));
+  }
+  const operations = new Map();
+  for (const node of positioned(
+    semantic,
+    (candidate) =>
+      candidate.kind === "expression" &&
+      candidate.properties?.operation_kind === "destructure",
+  ))
+    operations.set(at(moduleOf(node), rangeOf(node)), {
+      path: node.properties.property_path ?? null,
+      range: rangeOf(node),
+    });
+  const projected = dynamicProjections(semantic, byId);
+  return (node) => {
+    const operation = operations.get(at(moduleOf(node), rangeOf(node)));
+    const { end } = rangeOf(node);
+    if (!operation)
+      return projected.has(node.node_id)
+        ? {
+            path: null,
+            range: rangeOf(node),
+            defaultValue: null,
+            source: null,
+            computedKey: true,
+          }
+        : null;
+    return {
+      ...operation,
+      defaultValue: comesBefore(end, operation.range.end)
+        ? { start: end, end: operation.range.end }
+        : null,
+      source: sources.get(node.node_id) ?? null,
+      computedKey: false,
+    };
+  };
+};
+
 // Declared bindings (not parameters), with their owning function, whether
 // the binding is a function or class expression's own name, whether REA
 // reports its declaration as an assignment (`iterated`: a `for…of` or
 // `for…in` binding, which each iteration assigns), the calls REA says
-// initialize them, the assignments REA reports after the declaration, and
-// the property slots REA projects from their initializer. `container` is
-// null when REA projected none, and "partial" when REA saw only some of its
+// initialize them, the assignments REA reports after the declaration, the
+// property slots REA projects from their initializer, and how REA reports
+// them destructured (`destructuringsOf`, else null). `container` is null
+// when REA projected none, and "partial" when REA saw only some of its
 // writes or the binding is assigned again, so the slots may not be all it
 // holds.
 const bindingsOf = (semantic, byId) => {
@@ -324,6 +351,7 @@ const bindingsOf = (semantic, byId) => {
   const assignments = relatedTo(semantic, byId, assigns);
   const slots = slotsOf(semantic, byId);
   const partial = partialContainers(semantic);
+  const destructured = destructuringsOf(semantic, byId);
   return positioned(
     semantic,
     (node) => node.kind === "binding" && node.label,
@@ -348,6 +376,7 @@ const bindingsOf = (semantic, byId) => {
       assignments: assigned,
       slots: slots.get(id) ?? [],
       container,
+      destructured: destructured(node),
     };
   });
 };

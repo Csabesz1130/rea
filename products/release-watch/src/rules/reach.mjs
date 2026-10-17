@@ -9,10 +9,13 @@ import { within } from "../ranges.mjs";
 import {
   callRole,
   constructedRead,
+  givesEntries,
   givesKeys,
+  givesOneElement,
   isOwnReceiver,
   runningCall,
 } from "./reach-calls.mjs";
+import { entryPath } from "./reach-builtins.mjs";
 import { WHOLE_MODULE, indexOf, inside } from "./reach-index.mjs";
 import { followRead, producedBy } from "./reach-resolve.mjs";
 import { isGuess } from "./reach-text.mjs";
@@ -28,16 +31,17 @@ const callStep = (fn) => ({ kind: "call", name: fn.name, location: null });
 const keyOf = (target) => {
   if (target.fn) return target.fn.id;
   if (target.region) {
-    const { module, parts, path } = target.region;
-    return `value:${module}:${JSON.stringify(parts[0].start)}:${parts.length}:${path?.join(".") ?? ""}`;
+    const { module, parts, path, element = false } = target.region;
+    return `value:${module}:${JSON.stringify(parts[0].start)}:${parts.length}:${element}:${path?.join(".") ?? ""}`;
   }
   return `module:${target.whole}`;
 };
 
 // Code that runs when the place runs: its process sites, the calls REA
 // resolved, the bindings it reads (except a receiver a method is bound back
-// to, which the method reaches only through `this`) and the methods `this`
-// names.
+// to, which the method reaches only through `this`) and the methods a
+// member read names on `this`, or on what REA's nodes do not show is not
+// `this` (reach-this.mjs).
 const exploreCode = ({ state, record, visit }, entry) => {
   const { index } = state;
   const { module: current, range: where, steps } = entry;
@@ -51,7 +55,7 @@ const exploreCode = ({ state, record, visit }, entry) => {
       for (const target of followRead(state, item))
         visit(target, [...steps, target.step]);
   for (const member of inside(index.members.get(current), where))
-    if (member.bare)
+    if (member.receiver === null || member.receiver.range === null)
       for (const target of followBareMember(state, member))
         visit(target, [...steps, ...target.steps]);
 };
@@ -61,28 +65,49 @@ const exploreCode = ({ state, record, visit }, entry) => {
 const marked = (steps, open) =>
   open ? [{ ...steps[0], open: true }, ...steps.slice(1)] : steps;
 
+// The call giving `[key, value]` pairs a read is part of: the read's own
+// `entries()` call, or an `Object.entries(…)` call around it; null for none.
+const pairsCall = (role, level, item) =>
+  role?.kind === "entries"
+    ? role.call
+    : (level.entries.find((call) => within(item.range, call.range)) ?? null);
+
 // One read at an initializer's own level: a value it holds (forwarding the
 // member read that reached the value), a call it makes when the module
 // loads (only what the call produces), the elements of a value a built-in
-// method gives (`TOOLS.find(…)`), or no function (`handlers.keys()`, or a
-// receiver a method is bound back to).
-const levelRead = ({ state, visit }, entry, item, constructs) => {
+// method gives (`TOOLS.find(…)`, and through the `[key, value]` pairs of
+// `TOOLS.entries()` or `Object.entries(TOOLS)`: the path starts at one pair
+// when it is below each element of the value or a method such as `find()`
+// takes one, else at the array of them), or no function (`handlers.keys()`,
+// a key of such a pair, or a receiver a method is bound back to).
+const levelRead = ({ state, visit }, entry, item, level) => {
   const { index } = state;
-  const { module, steps, path, uncertain = [] } = entry;
+  const { module, steps, path, uncertain = [], element = false } = entry;
   if (isOwnReceiver(index, module, item)) return;
   const open = uncertain.some((range) => within(item.range, range));
   const go = (target, more) => visit(target, [...steps, ...marked(more, open)]);
-  const role = constructs.has(item)
-    ? { kind: "call", call: constructs.get(item) }
+  const role = level.constructs.has(item)
+    ? { kind: "call", call: level.constructs.get(item) }
     : callRole(index, module, item);
   if (role?.kind === "keys") return;
   if (role?.kind !== "call") {
-    for (const target of followRead(state, item, path))
+    const pairs = pairsCall(role, level, item);
+    const taken = pairs
+      ? entryPath(path, element || givesOneElement(index, module, pairs))
+      : path;
+    if (taken === undefined) return;
+    // Below each element of the value, or, from pairs, of what they pair.
+    const from = {
+      path: taken,
+      base: entry.base,
+      element: element || Boolean(pairs),
+    };
+    for (const target of followRead(state, item, from))
       go(target, [target.step]);
     return;
   }
   for (const target of followRead(state, item))
-    for (const made of producedBy(index, target, role.call, path))
+    for (const made of producedBy(index, target, role.call, { path, element }))
       go(made, [target.step, made.step]);
 };
 
@@ -93,11 +118,12 @@ const levelRead = ({ state, visit }, entry, item, constructs) => {
 // only what it returns.
 const exploreValue = (context, entry) => {
   const { index } = context.state;
-  const { module, parts, steps, path, uncertain = [] } = entry;
+  const { module, parts, steps, path, uncertain = [], element } = entry;
   const defined = outermostIn(index, module, parts);
   const level = outsideOf(defined);
   const constructs = new Map();
   const keys = [];
+  const entries = [];
   for (const part of parts)
     for (const call of inside(index.callSites.get(module), part)) {
       if (!level(call.range)) continue;
@@ -105,12 +131,13 @@ const exploreValue = (context, entry) => {
         const read = constructedRead(index, module, call);
         if (read) constructs.set(read, call);
       } else if (givesKeys(index, module, call)) keys.push(call.range);
+      else if (givesEntries(index, module, call)) entries.push(call);
     }
   for (const fn of defined) {
     const call = runningCall(index, fn);
     const open = uncertain.some((range) => within(fn.range, range));
     if (call)
-      for (const made of producedBy(index, { fn }, call, path))
+      for (const made of producedBy(index, { fn }, call, { path, element }))
         context.visit(made, [
           ...steps,
           ...marked([{ ...made.step, kind: "runs" }], open),
@@ -119,7 +146,7 @@ const exploreValue = (context, entry) => {
   for (const part of parts)
     for (const item of inside(index.reads.get(module), part))
       if (level(item.range) && !keys.some((range) => within(item.range, range)))
-        levelRead(context, entry, item, constructs);
+        levelRead(context, entry, item, { constructs, entries });
 };
 
 const placeOf = (target, steps) => {

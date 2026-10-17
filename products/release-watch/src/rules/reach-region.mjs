@@ -11,7 +11,10 @@
 // registration, a timer or a promise a statement discards, within the
 // site's own function. Functions nested in the value, and their bindings
 // (a named function or class expression's own name too), are part of it,
-// not statements after it.
+// not statements after it. A binding REA reports destructured gets its
+// value from what its pattern destructures (`= TOOL`, `of TOOLS`), after
+// the other elements of the pattern and their default values; its own
+// default value is a value of its own (reach-resolve.mjs reads it).
 import {
   comesBefore,
   firstStarting,
@@ -24,7 +27,7 @@ import {
   bindingAt,
   callStartingAt,
   enclosingFunction,
-  memberAt,
+  memberOn,
   namedFunctions,
   readsOfBinding,
   scopeOf,
@@ -49,11 +52,14 @@ const declaration = (index, binding) => {
  * The function a binding's declaration or initializer is: a declaration,
  * or a function assigned to it, which starts just after the binding in the
  * binding's scope. A binding REA reports later assignments or property
- * writes to is a value, since each can give it another function.
+ * writes to is a value, since each can give it another function, and so is
+ * one REA reports destructured, whose default value (`{ handler = function
+ * handler() {} }`) it holds only when what it destructures lacks one.
  */
 export const declaredFunction = (index, module, binding) => {
   const declared = declaration(index, binding);
   if (declared) return declared;
+  if (bindingAt(index, module, binding.range)?.destructured) return null;
   if (sitesOf(index, module, binding).length > 1) return null;
   const bindings = index.bindings.get(module) ?? [];
   const following =
@@ -102,6 +108,40 @@ const callAround = (index, module, { range, scope, after }) => {
   return null;
 };
 
+// True when `range` lies in a pattern element REA reports destructuring a
+// binding (`handler = noop`).
+const inPattern = (elements, range) => {
+  const at = firstStarting(elements, range, { after: true }) - 1;
+  return at >= 0 && within(range, elements[at].range);
+};
+
+// Where a destructured binding's declaration ends and its value starts: at
+// the first read, call, function or member read after its pattern element
+// that is not part of another element (a default value), else after it.
+const destructuredSite = (index, module, binding, element) => {
+  const elements = index.patterns.get(module) ?? [];
+  const after = { start: element.end };
+  let start = element.end;
+  let found = false;
+  for (const lists of [
+    index.reads,
+    index.callSites,
+    index.functions,
+    index.members,
+  ]) {
+    const list = lists.get(module) ?? [];
+    for (let next = firstStarting(list, after); next < list.length; next += 1) {
+      const { range } = list[next];
+      if (found && !comesBefore(range.start, start)) break;
+      if (inPattern(elements, range)) continue;
+      start = range.start;
+      found = true;
+      break;
+    }
+  }
+  return { start: binding.range.start, end: start };
+};
+
 // The places REA reports giving a binding a value, in source order, each
 // with the scope its statement belongs to and, for a property write, the
 // member it writes: the declaration, each assignment, and each property
@@ -122,9 +162,12 @@ const sitesOf = (index, module, binding) => {
       return write ? [later(write.range, write.path[0] ?? null)] : [];
     },
   );
+  const element = record?.destructured?.range ?? null;
   const sites = [
     {
-      range: binding.range,
+      range: element
+        ? destructuredSite(index, module, binding, element)
+        : binding.range,
       member: null,
       later: false,
       scope: statementOf(index, binding).scope,
@@ -145,7 +188,7 @@ const firstUse = ({ index, module, binding }, site, scope) => {
   for (const { range } of readsOfBinding(index, module, binding.range)) {
     if (!comesBefore(range.start, scope.end)) return null;
     if (
-      !comesBefore(site.range.start, range.start) ||
+      comesBefore(range.start, site.range.end) ||
       (enclosingFunction(index, module, range)?.id ?? null) !== scope.id
     )
       continue;
@@ -156,7 +199,8 @@ const firstUse = ({ index, module, binding }, site, scope) => {
 };
 
 // The next declaration in the site's own scope: bindings of functions
-// nested in the value belong to those functions and do not end it.
+// nested in the value belong to those functions and do not end it, nor do
+// the other bindings of a destructured binding's pattern.
 const nextDeclaration = ({ index, module }, site, scope) => {
   const bindings = index.bindings.get(module) ?? [];
   for (
@@ -168,7 +212,7 @@ const nextDeclaration = ({ index, module }, site, scope) => {
     const statement = statementOf(index, bindings[next]);
     if (
       statement.scope === scope.id &&
-      comesBefore(site.range.start, statement.start)
+      !comesBefore(statement.start, site.range.end)
     )
       return statement.start;
   }
@@ -256,7 +300,7 @@ const siteEnd = (context, site) => {
 // binding (`TOOLS.push(…)`).
 const addedBy = ({ index, module, binding }) =>
   readsOfBinding(index, module, binding.range).flatMap(({ range }) => {
-    const member = memberAt(index, module, range);
+    const member = memberOn(index, module, range);
     if (member?.path.length !== 1 || !ADDERS.has(member.path[0])) return [];
     const call = callStartingAt(index, module, range, member.range.end);
     return call ? [{ start: member.range.end, end: call.range.end }] : [];

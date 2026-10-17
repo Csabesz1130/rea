@@ -5,7 +5,7 @@
 import { isHttpClient, isNamespaceHost, packageNameOf } from "../catalog.mjs";
 import { within } from "../ranges.mjs";
 import { hostOf, schemeOf, scriptHostOf, urlsIn } from "../urls.mjs";
-import { indexOf, memberAt } from "./reach-index.mjs";
+import { indexOf, memberOn } from "./reach-index.mjs";
 import { exportTarget } from "./reach-resolve.mjs";
 
 export const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1)$/;
@@ -50,10 +50,10 @@ const literalsRead = (
     );
   });
 
-// The member path REA reads right after a binding read (`["telemetry"]`
-// for `ENDPOINTS.telemetry`), `[]` when none.
+// The member path REA reads on a binding read (`["telemetry"]` for
+// `ENDPOINTS.telemetry`), `[]` when none.
 const memberPath = (app, read) =>
-  memberAt(indexOf(app), read.data.module, read.data.range)?.path ?? [];
+  memberOn(indexOf(app), read.data.module, read.data.range)?.path ?? [];
 
 // What a request site reads, as Release Watch names it in evidence.
 const readName = (app, read) =>

@@ -184,12 +184,30 @@ runs, inline or through the binding that names it (`TOOLS.forEach((tool) =>
 call on a receiver REA does not resolve (`this.run()`) to the method or
 class field of that name the enclosing class or object defines, else to that
 member of a binding the class reads outside its methods, such as the class
-it extends. A read of a value (a handler map, a tool list, an instance, a
+it extends. A member read REA's nodes place on an expression, parenthesized
+or not and in any layout, is that expression's: `(await connect()).run()`
+and `( await connect() ).run()` are not `this.run()`, and
+`runGit(args).pid` reads the call's result, not a member of `runGit`. One
+they place on no single expression (`(a || b).run()`) is matched to `this`
+only as a guess. A read of a value (a handler map, a tool list, an instance, a
 default-exported object) leads to what REA reports giving it a value: its
 initializer, later assignments, property writes (`handlers.git = …`, and
 `handlers[name] = …` for any member) and, by Release Watch's reading of the
 built-in methods, the arguments of `push`, `unshift`, `set` and `add` calls
-on it. A binding REA says holds a call's result gets that call's value; a
+on it. A binding REA reports destructured (`const { handler } = TOOL`, `for
+(const { handler } of TOOLS)`) reads the property REA names of what its
+pattern destructures, wherever it sits in the pattern, and its default
+value (`{ handler = noop }`). For a computed key (`const { [key]: run } =
+TOOL`) REA reports no destructuring but that it could not project the
+binding's value, and Release Watch follows all of what the pattern
+destructures as a guess. REA reports neither for a rest element, a nested
+pattern with its own default or a computed key in a `for…of` pattern;
+Release Watch reads such a binding's value from what follows it in the
+pattern (`= TOOL`). Of the `[key, value]` pairs `entries()` and
+`Object.entries()` give, one pair (a `for…of` element, what `find()` or
+`at()` gives) holds a key (no function) and the element, and an index into
+them (`Object.entries(H)[0]`) selects a pair. A binding REA says holds a
+call's result gets that call's value; a
 call made when the module loads gives the value only what it returns (the
 class's methods for `new`, what a function written in place returns for
 `(() => …)()`), not the code it runs. By the same reading, a built-in method
@@ -211,7 +229,9 @@ value holds no more values than those slots; nowhere when they show it holds
 a literal. A method REA names after another member is never taken for this
 one. When REA's facts do not say which function a member read selects, which
 part of an element a callback parameter read without a member holds (a whole
-element, a destructured property or a key), or whether a call Release Watch
+element, a destructured property or a key), which property a destructuring
+with a computed key or of a computed member takes (`const { handler } =
+TOOLS[name]`), or whether a call Release Watch
 read as part of a literal is a statement after it, Release Watch follows
 every candidate, the step says so, and the finding says the handler may
 reach the process site. An import Release Watch cannot resolve to one of its
@@ -222,7 +242,7 @@ finding says so.
 
 | Rule   | Severity            | Trigger                                                                                                                                                                                                                                                                       |
 | ------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RW-E01 | critical            | A new renderer API whose IPC handler reaches process execution, inline, through an imported function that holds it, or through a same-module helper or value; "may reach" when the path follows a candidate Release Watch could not settle                                    |
+| RW-E01 | critical            | A new renderer API whose IPC handler reaches process execution, or a kept one that reaches a site running no command its old handler ran, inline, imported or via a same-module helper or value; "may reach" when every path follows a candidate it could not settle          |
 | RW-E02 | high / medium       | A window set a `webPreferences` safeguard to its unsafe (high) or a dynamic or unresolved (medium) value, or a new window has one; windows pair release-wide, one old to one new, by what they load, the functions creating them, what holds them, then their options         |
 | RW-E03 | high / medium       | A hardening fuse REA read as unsafe in any executable; medium when its old state was not established                                                                                                                                                                          |
 | RW-E04 | low                 | New renderer APIs, one finding per component                                                                                                                                                                                                                                  |
@@ -337,6 +357,20 @@ passed.
   does not follow them. A function stored by a function the value is passed
   to is not followed; one stored through a computed property
   (`handlers[name] = fn`) may be any member's.
+- RW-E01 compares a renderer API the component already exposed with what
+  Release Watch connected its old handler to, settled or guessed, by process
+  method and the command REA resolved: a handler that now reaches another
+  site running a command it reached before is not reported. A site whose
+  command REA did not resolve matches only the old site at its place among
+  a module's sites of that method the release kept unchanged, so one whose
+  unresolved command changed in place is not reported. Any other such site,
+  or a resolved command where the old handler reached a site of that method
+  whose command REA did not resolve, is reported without "now" and with an
+  unknown that it may run a program the handler already ran. When REA
+  resolved no old handler for the API's channel, the API is compared with
+  each old handler whose channel REA did not resolve, any of which may have
+  served it: a site counts as one it ran only when each of them ran it, and
+  is reported without "now" when they differ.
 - A process site whose command REA did not resolve is never taken as moved:
   a refactor that relocates one is reported high, with a note that it may be
   the same call. When an MCP tool reaches it, RW-M01 carries the same note and

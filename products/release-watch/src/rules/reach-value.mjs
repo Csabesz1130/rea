@@ -202,11 +202,13 @@ const afterCallee = (index, module, call) => {
   return { start, end: call.range.end };
 };
 
-// The call a `for…of` binding iterates (`of Object.entries(ALL)`): the
-// first call at the value's level, when no read there starts before it.
-const iteratedCall = (index, value, calls, level) => {
+// The call a `for…of` binding iterates or a destructuring destructures
+// (`of Object.entries(ALL)`, `= Object.entries(H)[0]`), whose value starts
+// where its pattern or name ends: the first call at the value's level, when
+// no read there starts before it.
+const leadingCall = (index, value, calls, level) => {
   const [first] = calls;
-  if (!value.iterated || !first) return null;
+  if (!(value.iterated || value.destructured) || !first) return null;
   const reads = value.open.flatMap((part) =>
     inside(index.reads.get(value.module), part).filter((item) =>
       level(item.range),
@@ -220,9 +222,9 @@ const iteratedCall = (index, value, calls, level) => {
 // The calls at the level of the parts whose end Release Watch placed
 // (reach-region.mjs), as far as they can be statements after the value
 // (`watch(…, () => …)` after a handler map) rather than part of it: all of
-// them, except the expression a `for…of` binding iterates and the calls in
-// it, and none when REA's slots show the value holds no more values than
-// they do.
+// them, except the expression a `for…of` binding iterates or a
+// destructuring destructures and the calls in it, and none when REA's slots
+// show the value holds no more values than they do.
 const statementCalls = (index, value, defined) => {
   const { module, parts, open } = value;
   const held = levelValues(index, {
@@ -238,9 +240,9 @@ const statementCalls = (index, value, defined) => {
       level(call.range),
     ),
   );
-  const iterated = iteratedCall(index, value, calls, level);
-  return iterated
-    ? calls.filter((call) => !within(call.range, iterated.range))
+  const leading = leadingCall(index, value, calls, level);
+  return leading
+    ? calls.filter((call) => !within(call.range, leading.range))
     : calls;
 };
 

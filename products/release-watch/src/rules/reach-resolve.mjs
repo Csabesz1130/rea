@@ -10,10 +10,14 @@
 // Release Watch can find in its module is "unknown": the whole module is
 // then followed, so a gap in the call graph is never read as no reach.
 import { resolveExport } from "../facts/exports.mjs";
-import { startsBefore } from "../ranges.mjs";
-import { CALL_MEMBERS, WHOLE_VALUE_MEMBERS } from "./reach-builtins.mjs";
+import { sameStart, startsBefore } from "../ranges.mjs";
+import {
+  CALL_MEMBERS,
+  ONE_ELEMENT_METHODS,
+  WHOLE_VALUE_MEMBERS,
+} from "./reach-builtins.mjs";
 import { iterationsOf } from "./reach-calls.mjs";
-import { bindingAt, childFunctions, memberAt } from "./reach-index.mjs";
+import { bindingAt, childFunctions, memberOn } from "./reach-index.mjs";
 import { declaredFunction, valueRegion } from "./reach-region.mjs";
 import { valueOf } from "./reach-value.mjs";
 
@@ -44,15 +48,18 @@ const functionMembers = (index, fn, path, forwarded = false) => {
   return { fns: [fn], how: forwarded ? "candidate" : "whole", selects: member };
 };
 
-// What a value binding, or an anonymous default export, gives a read with
+// What a value binding, or a value by its range (an anonymous default
+// export, a function's returns, a destructuring default), gives a read with
 // `path`: reach-value.mjs's answer, with the path the bindings it reads
 // take when it only forwards them (`for (const tool of TOOLS)`, a spread).
-// Built once per value and path: a binding can be read thousands of times.
-const valueTargets = (index, value, path) => {
+// `element` says the path is below each element of the value (a `for…of`
+// element) rather than the value itself. Built once per value and path: a
+// binding can be read thousands of times.
+const valueTargets = (index, value, path, element = false) => {
   const first = value.binding?.range ?? value.parts[0] ?? null;
-  const key = `${value.module}\u0000${JSON.stringify(first?.start ?? null)}\u0000${value.binding ? "binding" : value.parts.length}\u0000${path?.join("\u0000") ?? ""}`;
+  const key = `${value.module}\u0000${JSON.stringify(first?.start ?? null)}\u0000${value.binding ? "binding" : value.parts.length}\u0000${element}\u0000${path?.join("\u0000") ?? ""}`;
   if (!index.values.has(key))
-    index.values.set(key, resolveValue(index, value, path));
+    index.values.set(key, resolveValue(index, value, { path, element }));
   return index.values.get(key);
 };
 
@@ -63,40 +70,83 @@ const pathAfter = (how, path) => {
   return how === "written" && path.length > 1 ? path.slice(1) : null;
 };
 
-const resolveValue = (index, value, path) => {
-  const member = path?.[0] ?? null;
-  const record = value.binding
-    ? bindingAt(index, value.module, value.binding.range)
-    : null;
-  const region = value.binding
-    ? valueRegion(index, value.module, value.binding)
-    : { parts: value.parts, members: null, open: [], extended: false };
-  const found = valueOf(
-    index,
-    {
+// The path a read of a destructured binding takes in what its pattern
+// destructures: REA's property path, then the read's own; null when REA did
+// not resolve the property (a computed key, or what it destructures reads a
+// computed member).
+const destructuredPath = ({ path: own }, path) =>
+  own === null ? null : [...own, ...(path ?? [])];
+
+// What reach-value.mjs reads a value from: REA's binding record and where
+// reach-region.mjs places its value, or an anonymous default export's own
+// range.
+const valueFacts = (index, value) => {
+  if (!value.binding)
+    return {
+      record: null,
+      extended: false,
+      input: {
+        module: value.module,
+        parts: value.parts,
+        unwritten: value.parts,
+        members: null,
+        open: [],
+        iterated: false,
+        destructured: false,
+        slots: [],
+        container: null,
+      },
+    };
+  const record = bindingAt(index, value.module, value.binding.range);
+  const region = valueRegion(index, value.module, value.binding);
+  return {
+    record,
+    extended: region.extended,
+    input: {
       module: value.module,
       parts: region.parts,
-      unwritten: region.unwritten ?? region.parts,
+      unwritten: region.unwritten,
       members: region.members,
       open: region.open,
       iterated: record?.iterated ?? false,
+      destructured: Boolean(record?.destructured),
       slots: record?.slots ?? [],
       // Slots describe the initializer; a later site can change any member.
       container: region.extended ? "partial" : (record?.container ?? null),
     },
-    member,
-  );
+  };
+};
+
+// The value's region, with the path its reads take below it: below each
+// element when a `for…of` binding iterates it, or when the value forwards a
+// path that already was (a destructured binding's path starts at its own
+// expression, so it never is).
+const resolveValue = (index, value, { path, element }) => {
+  const { record, extended, input } = valueFacts(index, value);
+  const destructured = record?.destructured ?? null;
+  const read = destructured ? destructuredPath(destructured, path) : path;
+  const member = read?.[0] ?? null;
+  const found = valueOf(index, input, member);
   return {
     fns: found.fns,
     region: found.region && {
       ...found.region,
-      path: pathAfter(found.how, path),
+      path: pathAfter(found.how, read),
+      base: destructured?.source ?? null,
+      element:
+        input.iterated ||
+        (element && found.how === "forward" && destructured === null),
     },
-    how: found.how,
+    how: destructured && read === null ? "whole" : found.how,
     selects: member,
     methods: found.methods ?? false,
-    assigned: region.extended,
+    assigned: extended,
     unsure: found.unsure ?? null,
+    destructured: destructured && {
+      path: destructured.path,
+      iterated: record.iterated,
+      computedKey: destructured.computedKey,
+    },
   };
 };
 
@@ -141,18 +191,21 @@ export const exportTarget = ({ app, index }, module, name) => {
     : { unknown: found.module };
 };
 
-// Targets of one resolved export, with the member read that follows it.
-const targetsOf = (state, target, path, forwarded) => {
+// Targets of one resolved export, with the member read that follows it;
+// `via` says whether a value forwarded the path and whether it is below
+// each element (`valueTargets`).
+const targetsOf = (state, target, path, via) => {
   if (target.fn)
-    return functionMembers(state.index, target.fn, path, forwarded);
-  if (target.value) return valueTargets(state.index, target.value, path);
+    return functionMembers(state.index, target.fn, path, via.forwarded);
+  if (target.value)
+    return valueTargets(state.index, target.value, path, via.element);
   if (target.namespace) {
     if (!path) return { unknown: target.namespace };
     return targetsOf(
       state,
       exportTarget(state, target.namespace, path[0]),
       path.slice(1).length > 0 ? path.slice(1) : null,
-      forwarded,
+      { forwarded: via.forwarded, element: false },
     );
   }
   if (target.external) return { fns: [], how: "external", selects: null };
@@ -190,12 +243,12 @@ const definingModule = (state, imported, { target, path }) => {
   return through.length > 1 ? through.at(-1) : null;
 };
 
-const importedReads = (state, item, imported, { path, forwarded }) => {
+const importedReads = (state, item, imported, { path, forwarded, element }) => {
   const namespaced = imported.name === "*";
   const target = namespaced
     ? { namespace: imported.module }
     : exportTarget(state, imported.module, imported.name);
-  const resolved = targetsOf(state, target, path, forwarded);
+  const resolved = targetsOf(state, target, path, { forwarded, element });
   const details = {
     module: imported.module,
     defined: definingModule(state, imported, { target, path }),
@@ -235,7 +288,12 @@ const elementTargets = (state, item, path) => {
   const owner = index.byId.get(item.read.data.binding_owner);
   if (!owner) return [];
   return iterationsOf(index, owner).map((iteration) => ({
-    region: { module: owner.module, parts: [iteration.range], path },
+    region: {
+      module: owner.module,
+      parts: [iteration.range],
+      path,
+      element: true,
+    },
     step: step(item, "element", {
       method: iteration.method,
       selects: path?.[0] ?? null,
@@ -244,28 +302,53 @@ const elementTargets = (state, item, path) => {
   }));
 };
 
-// The member path a read takes: its own member read, and when a value
-// forwards a member read to the bindings it reads, that member after the
-// read's own (a member that iterates or looks up the read value is not a
-// property of it).
-const pathOf = (index, item, forwarded) => {
-  const own = memberAt(index, item.read.data.module, item.range)?.path ?? null;
-  if (!forwarded) return own;
-  return [
-    ...(own && !WHOLE_VALUE_MEMBERS.has(own[0]) ? own : []),
-    ...forwarded,
-  ];
+// The member path a read takes, and whether it is below each element of
+// the read value: its own member read, and when a value forwards a member
+// read to the bindings it reads, that member after the read's own (a
+// member that iterates or looks up the read value is not a property of
+// it, and one that gives one element, `pairs.find(…)`, puts the path below
+// it). A destructuring's path below the binding REA names as its source
+// (`base`) already holds the member chain read on it.
+const pathOf = (index, item, { path: forwarded, base, element }) => {
+  const own = memberOn(index, item.read.data.module, item.range)?.path ?? null;
+  if (!forwarded) return { path: own, element: false };
+  const bound = item.read.data.binding_range;
+  if (base && bound && sameStart(base, bound))
+    return { path: forwarded, element };
+  if (own && WHOLE_VALUE_MEMBERS.has(own[0]))
+    return {
+      path: forwarded,
+      element: element || ONE_ELEMENT_METHODS.has(own[0]),
+    };
+  return { path: [...(own ?? []), ...forwarded], element: element && !own };
+};
+
+// A destructured binding's default value (`handler = noop`), which it holds
+// when what its pattern destructures has no such property: a value of its
+// own, read with the read's path rather than REA's property path.
+const defaultTargets = (index, binding, { module, path, stepOf }) => {
+  const range = bindingAt(index, module, binding.range)?.destructured
+    ?.defaultValue;
+  if (!range) return [];
+  const found = valueTargets(index, { module, parts: [range] }, path);
+  return targetsWith(found, (target) => ({
+    ...stepOf(found, target),
+    fallback: true,
+    destructured: null,
+  }));
 };
 
 /**
  * The next places a binding read leads to, each with the step that
- * explains it. `forwarded` is a member path a value forwards to the
- * bindings its initializer reads.
+ * explains it. `from.path` is a member path a value forwards to the
+ * bindings its initializer reads, `from.element` says that path is below
+ * each element of the read value, and `from.base` is the binding a
+ * destructuring value's path is below (`resolveValue`).
  */
-export const followRead = (state, item, forwarded = null) => {
+export const followRead = (state, item, from = {}) => {
   const { index } = state;
   const { data } = item.read;
-  const path = pathOf(index, item, forwarded);
+  const { path, element } = pathOf(index, item, from);
   if (data.parameter) return elementTargets(state, item, path);
   const binding = {
     name: data.name,
@@ -276,38 +359,51 @@ export const followRead = (state, item, forwarded = null) => {
     binding.owner === null
       ? state.app.modules.get(data.module)?.imported?.get(data.name)
       : null;
-  const forwarding = forwarded !== null;
+  const forwarding = (from.path ?? null) !== null;
   if (imported)
     return importedReads(state, item, imported, {
       path,
       forwarded: forwarding,
+      element,
     });
   if (!binding.range) return [];
   const fn = declaredFunction(index, data.module, binding);
   const found = fn
     ? functionMembers(index, fn, path, forwarding)
-    : valueTargets(index, { module: data.module, binding }, path);
-  return targetsWith(found, (target) =>
+    : valueTargets(index, { module: data.module, binding }, path, element);
+  const stepOf = (resolved, target) =>
     step(item, fn ? "local" : target ? "value" : "initializer", {
-      how: found.how,
-      selects: found.selects,
-      methods: found.methods ?? false,
+      how: resolved.how,
+      selects: resolved.selects,
+      methods: resolved.methods ?? false,
       target: target?.name ?? null,
       forwarded: forwarding,
-      assigned: found.assigned ?? false,
-    }),
-  );
+      assigned: resolved.assigned ?? false,
+      destructured: resolved.destructured ?? null,
+    });
+  return [
+    ...targetsWith(found, (target) => stepOf(found, target)),
+    ...(fn
+      ? []
+      : defaultTargets(index, binding, {
+          module: data.module,
+          path,
+          stepOf,
+        })),
+  ];
 };
 
 const producedStep = (kind, extra) => ({ kind, location: null, ...extra });
 
 /**
- * What a call an initializer makes when the module loads gives the value:
+ * What a call an initializer makes when the module loads gives the value
+ * read with `read.path` (below each element of it with `read.element`):
  * for `new`, the instance's methods (the one a member read names, else
  * each, as a guess when one is named); otherwise what the called function
  * returns. Code the call runs is not reached by reading the value.
  */
-export const producedBy = (index, target, call, path) => {
+export const producedBy = (index, target, call, read = {}) => {
+  const { path = null, element = false } = read;
   const member = path?.[0] ?? null;
   if (target.fn && call.construct) {
     const methods = childFunctions(
@@ -330,6 +426,7 @@ export const producedBy = (index, target, call, path) => {
       index,
       { module: target.fn.module, parts },
       path,
+      element,
     );
     return targetsWith(found, (fn) =>
       producedStep("returns", {
@@ -342,7 +439,10 @@ export const producedBy = (index, target, call, path) => {
   if (target.region)
     return [
       {
-        region: { ...target.region, path: path ?? target.region.path },
+        region: {
+          ...target.region,
+          ...(path ? { path, element } : {}),
+        },
         step: producedStep("returns", { selects: member, how: "forward" }),
       },
     ];

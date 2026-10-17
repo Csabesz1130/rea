@@ -1,6 +1,7 @@
 // The sentences a reach path is reported in. Each step says which REA fact
 // it follows and, where REA's facts did not settle which function a member
-// read selects, which part of an element a callback parameter holds, or
+// read selects, which part of an element a callback parameter holds, which
+// property a destructuring takes, what a member call is made on, or
 // whether a call belongs to a value, that Release Watch followed every
 // candidate.
 
@@ -8,10 +9,12 @@ const GUESSES = new Set(["guess", "whole", "candidate"]);
 
 /**
  * True for a step that followed every candidate: of a member read, of
- * what a callback parameter holds, or of a call that may not be part of
- * the value it was read in (`open`).
+ * what a callback parameter holds, of a call that may not be part of the
+ * value it was read in (`open`), or of a member read REA's nodes do not
+ * place on one expression, taken for one on `this`.
  */
-export const isGuess = (step) => GUESSES.has(step.how) || step.open === true;
+export const isGuess = (step) =>
+  GUESSES.has(step.how) || step.open === true || step.receiver === "unsettled";
 
 // The read a step names: with its member, unless the member was carried
 // over from another value's read (`for (const tool of TOOLS)`, a spread).
@@ -70,13 +73,39 @@ const localText = (step) => {
 };
 
 // Where a value step's binding gets what it holds: its initializer, and
-// the assignments, property writes and added elements after it.
-const holder = (step) =>
-  step.assigned
+// the assignments, property writes and added elements after it, or the
+// default value its destructuring pattern gives it.
+const holder = (step) => {
+  if (step.fallback)
+    return {
+      what: "default value in its destructuring pattern",
+      they: "it",
+      s: "s",
+    };
+  return step.assigned
     ? { what: "initializer or later assignments", they: "they", s: "" }
     : { what: "initializer", they: "it", s: "s" };
+};
+
+// A read of a binding REA reports destructured: from which property of
+// what its pattern destructures, and what that holds when the destructured
+// value defines functions itself.
+const destructuredText = (step) => {
+  const { path, iterated, computedKey } = step.destructured;
+  const of = iterated
+    ? "each element its for…of loop iterates"
+    : "the value its declaration destructures";
+  if (computedKey)
+    return `reads ${step.name}, whose value REA could not project from ${of} through a computed key, so Release Watch followed all of that value`;
+  const read = `reads ${step.name}, which REA reports destructured from ${path ? `${path.join(".")} of ${of}` : `a property REA does not resolve of ${of}, which reads a computed member`}`;
+  if (!path) return `${read}, so Release Watch followed all of that value`;
+  if (step.how === "guess")
+    return `${read}; REA names no function ${step.selects} there, so Release Watch followed each function and binding it holds that could be ${step.selects}`;
+  return step.target ? `${read}, which defines ${step.target}` : read;
+};
 
 const valueText = (step) => {
+  if (step.destructured) return destructuredText(step);
   const { what, they, s } = holder(step);
   if (step.how === "guess")
     return `reads ${read(step)}; REA names no function ${step.selects} in the ${what} of ${step.name}, so Release Watch followed each function ${they} define${s} that could be ${step.selects}`;
@@ -90,6 +119,7 @@ const valueText = (step) => {
 };
 
 const initializerText = (step) => {
+  if (step.destructured) return destructuredText(step);
   const { what, they, s } = holder(step);
   if (step.how === "guess")
     return `reads ${read(step)}; REA names no function ${step.selects} in the ${what} of ${step.name}, so Release Watch followed the bindings ${they} read${s}`;
@@ -124,7 +154,10 @@ const elementText = (step) => {
 };
 
 const thisText = (step) => {
-  const read = `reads .${step.name} on a receiver REA does not resolve (such as this)`;
+  const read =
+    step.receiver === "unsettled"
+      ? `reads .${step.name} on an expression REA reports no single receiver for, which may be this`
+      : `reads .${step.name} on a receiver REA does not resolve (such as this)`;
   if (step.via)
     return `${read}, which ${step.owner} does not define; Release Watch looked ${step.target} up in ${step.via}, a binding ${step.owner} reads outside its methods (such as the class it extends)`;
   if (step.field)
@@ -156,7 +189,10 @@ const OPEN =
   " (a call Release Watch read as part of that value gives it this; REA does not report where the value ends, and the call may be a statement after it)";
 
 // A step that followed every candidate of a member read.
-const memberGuess = (step) => GUESSES.has(step.how) && step.kind !== "element";
+const memberGuess = (step) =>
+  GUESSES.has(step.how) &&
+  step.kind !== "element" &&
+  step.destructured?.path !== null;
 
 /** The unknowns a finding carries for the reach paths it cites. */
 export const reachUnknowns = (paths) => {
@@ -170,6 +206,10 @@ export const reachUnknowns = (paths) => {
     unknowns.push(
       "REA's facts do not say which function a member read selects, so Release Watch followed every function and binding the value holds that could be that member; the handler may not reach this process site.",
     );
+  if (steps.some((step) => step.destructured?.path === null))
+    unknowns.push(
+      "REA does not resolve which property a destructuring takes through a computed key (`{ [key]: run }`) or from a computed member (`= TOOLS[name]`), so Release Watch followed all of the destructured value; the handler may not reach this process site.",
+    );
   if (steps.some((step) => step.kind === "element" && step.how === "whole"))
     unknowns.push(
       "REA does not say which part of each element a callback parameter holds (a whole element, a destructured property or a key), so Release Watch followed all of each element; the handler may not reach this process site.",
@@ -181,6 +221,10 @@ export const reachUnknowns = (paths) => {
   if (steps.some((step) => step.kind === "this-member"))
     unknowns.push(
       "REA does not resolve the receiver of a member call such as this.run(); Release Watch matched it by name to a function the enclosing class or object defines.",
+    );
+  if (steps.some((step) => step.receiver === "unsettled"))
+    unknowns.push(
+      "REA's nodes do not show which expression a member call such as (a || b).run() is made on; Release Watch took it for one on this, and the handler may not reach this process site.",
     );
   return unknowns;
 };

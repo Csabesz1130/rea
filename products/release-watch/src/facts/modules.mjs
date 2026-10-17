@@ -49,13 +49,13 @@ const externalSpecifierOf = (edge, target) => {
   );
 };
 
-// The module an export-binding node (`export { run }`) belongs to.
-const exportModuleOf = (node) => {
-  const properties = firstObservation(node)?.properties ?? {};
-  return properties.semantic_role === "export-binding"
-    ? (properties.module_path ?? null)
-    : null;
-};
+// The observation of an export binding (`export { run }`, `exports.run =`)
+// a module node carries. REA merges a binding's other observations
+// (`export-return-shapes`) into the same node, in no fixed order.
+const exportObservation = (node) =>
+  (node.observations ?? []).find(
+    (observation) => observation.properties?.semantic_role === "export-binding",
+  ) ?? null;
 
 const emptyEntry = () => ({
   externalImports: new Set(),
@@ -74,10 +74,12 @@ const emptyEntry = () => ({
 // for an anonymous default export, with the export's source range.
 const recordExports = (graph, entry) => {
   for (const node of graph.nodes) {
-    const modulePath = exportModuleOf(node);
-    const observation = firstObservation(node);
-    const { exported_name: exported, local_name: local } =
-      observation?.properties ?? {};
+    const observation = exportObservation(node);
+    const {
+      exported_name: exported,
+      local_name: local,
+      module_path: modulePath = null,
+    } = observation?.properties ?? {};
     const location = observation?.evidence?.location?.value;
     if (modulePath !== null && exported)
       entry(modulePath).exports.set(exported, {
@@ -219,7 +221,7 @@ export const importIndex = (graph) => {
     const source = byId.get(edge.source_node_id);
     const target = byId.get(edge.target_node_id);
     if (source === undefined || target === undefined) continue;
-    const exporter = exportModuleOf(source);
+    const exporter = exportObservation(source)?.properties?.module_path ?? null;
     if (exporter !== null) {
       recordReexport(edge, exporter, target, entry);
       continue;

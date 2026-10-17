@@ -3,7 +3,9 @@
 // object defines, as a method or as a class field (`run = async () => …`),
 // else to that member of the bindings the class reads outside its methods,
 // such as the class it extends (`class OpsServer extends Base`). Release
-// Watch matches by name; reach-text.mjs says so.
+// Watch matches by name; reach-text.mjs says so. A member read on nodes REA
+// reports that do not form one expression (`(a || b).run`) may be on
+// `this` or not: it is followed the same way, as a guess.
 import { startsBefore, within } from "../ranges.mjs";
 import {
   childFunctions,
@@ -64,7 +66,7 @@ const inherited = (state, member, owner) => {
         enclosingFunction(index, member.module, item.range)?.id === owner.id,
     )
     .flatMap((item) =>
-      followRead(state, item, member.path)
+      followRead(state, item, { path: member.path })
         .filter((target) => target.fn && SELECTING.has(target.step.how))
         .map((target) => ({
           ...target,
@@ -79,6 +81,7 @@ const thisStep = (member, owner, extra) => ({
   name: member.path.join("."),
   owner: owner?.name ?? null,
   location: member.location,
+  receiver: member.receiver === null ? "none" : "unsettled",
   ...extra,
 });
 
@@ -86,7 +89,9 @@ const thisStep = (member, owner, extra) => ({
  * The places a member read on a receiver REA does not resolve leads to,
  * each with the steps that explain it: a method or class field of that
  * name the enclosing class or object defines, else that member of a
- * binding the class reads outside its methods.
+ * binding the class reads outside its methods. The first step's `receiver`
+ * is "none" when REA reports nothing before the member (`this.run`), and
+ * "unsettled" when REA's nodes there do not show what it is read on.
  */
 export const followBareMember = (state, member) => {
   const { index } = state;
