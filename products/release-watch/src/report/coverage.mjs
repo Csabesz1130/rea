@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { captureUnread } from "../facts/capture.mjs";
 import { failedFiles, unexaminedIn } from "../facts/coverage.mjs";
+import { applicationState } from "../sides.mjs";
 
 // What Release Watch itself never examines; true of every run.
 export const RELEASE_WATCH_LIMITS = [
@@ -73,15 +74,20 @@ const appGaps = (app) => {
   ];
 };
 
+// What a side REA has no application facts for gives instead (sides.mjs
+// applicationState); a capture-only side's capture is covered below.
+const UNANALYZED = {
+  failed: "REA could not analyze this side's code; nothing in it was compared.",
+  none: "This side holds nothing REA can analyze; nothing in it was compared.",
+};
+
 // Specific gaps in what REA examined on one side, then REA's standing
 // limitations for the operations that ran.
 const sideCoverage = (side) => {
   const gaps = [];
   const limitations = [];
-  if (side.target && side.target.app && !side.app)
-    gaps.push(
-      "REA could not analyze this side's code; nothing in it was compared.",
-    );
+  const unread = UNANALYZED[applicationState(side)];
+  if (unread) gaps.push(unread);
   if (side.app) {
     gaps.push(...appGaps(side.app));
     limitations.push(...side.app.limitations);

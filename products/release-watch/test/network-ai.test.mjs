@@ -55,6 +55,53 @@ describe("unexamined files", () => {
   });
 });
 
+describe("a finding in a renamed module whose old file REA left unexamined", () => {
+  it("says what it reports may predate the release, and counts no other file", () => {
+    const [before, after] = [
+      "dist/chunk-K7QX2M4Z.js",
+      "dist/chunk-P3WD8N6A.js",
+    ];
+    const fetchIn = (module, line) =>
+      fact(
+        `${module}#fetch`,
+        {
+          module,
+          method: "fetch",
+          endpoint: null,
+          range: range(line, 0, line, 9),
+        },
+        at(module, line),
+      );
+    const old = app({
+      requests: [],
+      assets: [fact(before, { sha256: "a" }, at(before, 1))],
+    });
+    old.coverage = { ...old.coverage, semantic_ceiling_modules: [before] };
+    const [finding] = evaluate(
+      side("v1", old),
+      side(
+        "v2",
+        app({
+          requests: [fetchIn(after, 2), fetchIn(after, 9)],
+          assets: [fact(after, { sha256: "b" }, at(after, 1))],
+        }),
+      ),
+      { aliases: new Map([[before, { path: after, basis: "test" }]]) },
+    );
+    assert.equal(finding.rule, "RW-N02");
+    assert.ok(
+      finding.unknowns.includes(
+        `REA reached its per-file node ceiling on ${before} in v1, the old version of ${after}, so what is reported here may predate this release.`,
+      ),
+      finding.unknowns.join("\n"),
+    );
+    assert.ok(
+      !finding.unknowns.some((text) => /other file/.test(text)),
+      finding.unknowns.join("\n"),
+    );
+  });
+});
+
 describe("RW-N02 for an old file REA could not analyze", () => {
   it("names no limit to raise, since none stopped REA there", () => {
     const fetchAt = (line) =>

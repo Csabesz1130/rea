@@ -16,6 +16,7 @@ import { RELEASE_WATCH_LIMITS, coverageOf } from "./coverage.mjs";
 import { displaySetting } from "../rules/go.mjs";
 import { registrationItems } from "../rules/mcp-registrations.mjs";
 import { headerChanges } from "../rules/runtime.mjs";
+import { unanalyzed } from "../sides.mjs";
 import { sdkUses } from "../surfaces.mjs";
 import { displayScript } from "../urls.mjs";
 
@@ -190,7 +191,8 @@ const aiSections = (component) => {
   ];
 };
 
-// After a failed old analysis nothing was compared, so no host is "new".
+// After an old side REA could not analyze nothing was compared, so no host
+// is "new"; an old side that is a capture only had its hosts compared.
 const destinationRows = ({ network, left }) =>
   network
     ? [...network.current].map(([host, sources]) => [
@@ -203,7 +205,7 @@ const destinationRows = ({ network, left }) =>
             ),
           ),
         ].join(" + "),
-        left.target && !left.app
+        unanalyzed(left)
           ? "not compared"
           : network.fresh.has(host)
             ? "new"

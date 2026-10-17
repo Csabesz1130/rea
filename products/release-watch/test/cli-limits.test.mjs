@@ -112,45 +112,55 @@ describe("compare: REA analysis limits", { skip }, () => {
   });
 });
 
+// index.js takes v1.0.0's 500 nodes, so REA gives the old util.js no
+// semantic facts; v1.1.0 ships util.js (with `utilTail` appended) and a
+// new report.js, both running npm.
+const steps = (count) =>
+  Array.from(
+    { length: count },
+    (_, index) =>
+      `export function step${index}(value) {\n  const next = value + ${index};\n  return { next, text: "hello " + next };\n}\n`,
+  ).join("");
+const npm = (name) =>
+  `import { exec } from "node:child_process";\nexport function ${name}() {\n  return new Promise((resolve) => exec("npm --version", (error, stdout) => resolve(String(stdout))));\n}\n`;
+const unreachedUtil = (utilTail = "") => {
+  const result = run(
+    written.write(
+      "1.0.0",
+      {
+        "index.js": `import { npmVersion } from "./util.js";\n${steps(60)}`,
+        "util.js": npm("npmVersion"),
+      },
+      PKG,
+    ),
+    written.write(
+      "1.1.0",
+      {
+        "index.js": `import { npmVersion } from "./util.js";\nimport { report } from "./report.js";\n${steps(30)}`,
+        "util.js": `${npm("npmVersion")}${utilTail}`,
+        "report.js": npm("report"),
+      },
+      PKG,
+    ),
+    "--max-semantic-nodes",
+    "500",
+  );
+  written.keep(result.out);
+  return result;
+};
+const execIn = (report, file) =>
+  report.findings.find(
+    (finding) =>
+      finding.rule === "RW-P01" &&
+      finding.evidence.some((item) => item.location?.file === file),
+  );
+
 describe(
   "compare: what REA left unexamined in the old release",
   { skip },
   () => {
     it("keeps an old file the global limit left without facts unknown, not absent, and its unchanged sites not new", () => {
-      // index.js takes v1.0.0's 500 nodes, so REA gives the old util.js no
-      // semantic facts; v1.1.0 ships util.js unchanged and a new report.js,
-      // both running npm.
-      const steps = (count) =>
-        Array.from(
-          { length: count },
-          (_, index) =>
-            `export function step${index}(value) {\n  const next = value + ${index};\n  return { next, text: "hello " + next };\n}\n`,
-        ).join("");
-      const npm = (name) =>
-        `import { exec } from "node:child_process";\nexport function ${name}() {\n  return new Promise((resolve) => exec("npm --version", (error, stdout) => resolve(String(stdout))));\n}\n`;
-      const result = run(
-        written.write(
-          "1.0.0",
-          {
-            "index.js": `import { npmVersion } from "./util.js";\n${steps(60)}`,
-            "util.js": npm("npmVersion"),
-          },
-          PKG,
-        ),
-        written.write(
-          "1.1.0",
-          {
-            "index.js": `import { npmVersion } from "./util.js";\nimport { report } from "./report.js";\n${steps(30)}`,
-            "util.js": npm("npmVersion"),
-            "report.js": npm("report"),
-          },
-          PKG,
-        ),
-        "--max-semantic-nodes",
-        "500",
-      );
-      written.keep(result.out);
-      const { report } = result;
+      const { report } = unreachedUtil();
       const [component] = report.components;
       assert.deepEqual(
         component.left.application.coverage.semantic_unreached_modules,
@@ -162,15 +172,9 @@ describe(
         ),
         component.coverage.left.gaps.join("\n"),
       );
-      const execIn = (file) =>
-        report.findings.find(
-          (finding) =>
-            finding.rule === "RW-P01" &&
-            finding.evidence.some((item) => item.location?.file === file),
-        );
       // v1.1.0 ships util.js with v1.0.0's content, so its exec() was there
       // before although REA's facts of v1.0.0 lack it: no finding is new.
-      assert.equal(execIn("util.js"), undefined);
+      assert.equal(execIn(report, "util.js"), undefined);
       const calls = component.inventory.find(
         (section) => section.id === "calls",
       );
@@ -183,13 +187,26 @@ describe(
         ),
         JSON.stringify(calls.rows),
       );
+      const other = execIn(report, "report.js");
       assert.ok(
-        execIn("report.js").unknowns.some((text) =>
+        other.unknowns.some((text) =>
           text.startsWith(
             "REA gave no semantic facts to 1 other file of v1.0.0 (util.js) and reached its global node limit there",
           ),
         ),
-        execIn("report.js").unknowns.join("\n"),
+        other.unknowns.join("\n"),
+      );
+    });
+
+    it("says a site in a changed old file REA gave no facts may predate the release", () => {
+      const { report } = unreachedUtil("// 1.1.0\n");
+      const found = execIn(report, "util.js");
+      assert.equal(found.severity, "high");
+      assert.ok(
+        found.unknowns.includes(
+          "REA gave no semantic facts to util.js in v1.0.0, so what is reported here may predate this release.",
+        ),
+        found.unknowns.join("\n"),
       );
     });
   },

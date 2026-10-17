@@ -254,6 +254,14 @@ describe(
         ofRule(report, "RW-C02")[0].summary,
         /^v1\.0\.0 gives only a capture for component desk, so v1\.1\.0's application code in it was compared with nothing; what it has is reported as not observed before\.$/,
       );
+      // The old capture's hosts were compared (sides.mjs unanalyzed).
+      const destinations = report.components[0].inventory.find(
+        (entry) => entry.id === "destinations",
+      );
+      assert.deepEqual(
+        destinations.rows.map(([host, , , status]) => [host, status]),
+        [["app.thirdparty.example", "known"]],
+      );
     });
   },
 );

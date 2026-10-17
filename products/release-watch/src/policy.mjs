@@ -1,4 +1,5 @@
 // Turns a component diff into graded findings, and findings into a verdict.
+import { renamedFrom } from "./diff.mjs";
 import { deploymentHosts } from "./facts/capture.mjs";
 import { partlyExamined, unexaminedIn } from "./facts/coverage.mjs";
 import { aiPack, shippedTokens } from "./rules/ai.mjs";
@@ -161,20 +162,27 @@ const elsewhereUnknowns = (left, { elsewhere, anyFile }) => {
 // part or not at all (unexaminedIn), so the "new" fact may have been there
 // before; and, for findings about the new release, the old files elsewhere
 // REA did not fully examine and its global node limit on the old release.
+// A file's old file is the one at its path or the one the release pairing
+// renamed to it.
 const locatedUnknowns = (finding, component) => {
   const files = [
     ...new Set(
       finding.evidence.map((item) => item.location?.file).filter(Boolean),
     ),
   ];
+  const renamed = renamedFrom(component.aliases);
+  const own = new Set(files.flatMap((file) => [file, renamed(file) ?? file]));
   const ambiguous = component.ambiguous ?? new Set();
   const unexamined = unexaminedIn(component.left?.app);
-  const elsewhere = [...unexamined.files].filter(
-    ([file]) => !files.includes(file),
-  );
+  const elsewhere = [...unexamined.files].filter(([file]) => !own.has(file));
   return [
     ...files.flatMap((file) =>
-      located(component, { file, ambiguous, unexamined }),
+      located(component, {
+        file,
+        old: renamed(file) ?? file,
+        ambiguous,
+        unexamined,
+      }),
     ),
     ...(COVERAGE_NOTES.has(finding.rule)
       ? []
@@ -185,15 +193,15 @@ const locatedUnknowns = (finding, component) => {
   ];
 };
 
-const located = (component, { file, ambiguous, unexamined }) => [
+const located = (component, { file, old, ambiguous, unexamined }) => [
   ...(ambiguous.has(file)
     ? [
         `Several bundles share ${file}'s name without its content hash, so Release Watch could not pair it with its old version; what it reports here may predate this release.`,
       ]
     : []),
-  ...(unexamined.files.has(file)
+  ...(unexamined.files.has(old)
     ? [
-        `REA ${unexaminedVerb([unexamined.files.get(file)])} ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
+        `REA ${unexaminedVerb([unexamined.files.get(old)])} ${old} in ${component.labels.left}${old === file ? "" : `, the old version of ${file}`}, so what is reported here may predate this release.`,
       ]
     : []),
 ];
