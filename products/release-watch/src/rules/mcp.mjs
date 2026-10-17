@@ -409,9 +409,13 @@ const newRegistrations = (context, covered) => {
       held: heldElsewhere(context, "memberCalls", item),
       status: item.status,
     }))
+    // A key the diff found "kept" sits in a file the old side shipped with
+    // the same content: REA's old facts there are partial, not fewer calls.
     .filter(
-      ({ before, after }) =>
-        after.length > before.length && !covered.has(after[0].data.module),
+      ({ before, after, status }) =>
+        status !== "kept" &&
+        after.length > before.length &&
+        !covered.has(after[0].data.module),
     );
   if (gained.length === 0) return [];
   return [

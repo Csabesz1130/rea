@@ -310,6 +310,21 @@ describe("MCP registration API changes", () => {
       [["RW-M02", "low", "MCP tool registration API changed"]],
     );
   });
+
+  it("counts no registration call new in a file the old side shipped with the same content", () => {
+    // REA examined the old copy only in part and saw one of its two calls.
+    const shipped = (members, sha256) => ({
+      ...mcp(members),
+      assets: [fact(server, { sha256 })],
+    });
+    const graded = (digest) =>
+      evaluate(
+        side("v1", shipped(["registerTool"], "aa")),
+        side("v2", shipped(["registerTool", "registerTool"], digest)),
+      ).map((finding) => [finding.rule, finding.severity]);
+    assert.deepEqual(graded("aa"), []);
+    assert.deepEqual(graded("bb"), [["RW-M02", "medium"]]);
+  });
 });
 
 describe("pages and renderer APIs", () => {

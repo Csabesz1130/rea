@@ -291,7 +291,7 @@ passed.
   release, and destination claims say the host was "not seen in" the old
   release's analyzed code or capture. A claim that a component's old side
   lacked a fact names any other old component whose code REA did not analyze.
-  A site (a process call, request, HTML sink, `eval` or registration call) in
+  A site (a process call, request, HTML sink, `eval` or tool registration) in
   a file the component's old side shipped with the same content, at its
   path or the one it was renamed from, is not new even when REA's facts of
   the old copy lack it: REA examined that copy only in part, and the
