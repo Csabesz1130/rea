@@ -329,28 +329,39 @@ const comparedImports = (items, leftApp, rightApp, aliases) => {
 // Statuses that say a key has more sites than the old side's facts show.
 const GAINED = new Set(["added", "not-previously-observed", "increased"]);
 
-// A module-keyed fact is something a file's own text holds. A key whose
-// every new-side fact sits in a file the old side shipped, at its path or
-// the path it was renamed from, with the same content (REA's digests,
-// moves.mjs sameContent) had those sites before: when REA's facts show
-// fewer or none there, it examined the old copy only in part, so the key
-// is "kept", not new. A value a site reads from another module (a command,
-// an endpoint) can still change in such a file, so "changed" stays.
-const keptInPlace = (items, leftApp, rightApp, aliases) => {
+/**
+ * Tests for the files a component ships on both sides with the same
+ * content (REA's digests, moves.mjs sameContent), at one path or across the
+ * rename the release pairing gave it: `{ left(oldPath), right(newPath) }`.
+ * What such a file's own text holds, the old side had as well.
+ */
+export const unchangedFiles = (leftApp, rightApp, aliases = new Map()) => {
   const same = sameContent({
     left: fileDigests(leftApp),
     right: fileDigests(rightApp),
   });
   const oldPath = renamedFrom(aliases);
-  const unchanged = (fact) => {
-    const modulePath = fact.data?.module;
-    return (
-      typeof modulePath === "string" &&
-      same(oldPath(modulePath) ?? modulePath, modulePath)
-    );
+  const known = (modulePath) => typeof modulePath === "string";
+  return {
+    left: (modulePath) =>
+      known(modulePath) &&
+      same(modulePath, aliases.get(modulePath)?.path ?? modulePath),
+    right: (modulePath) =>
+      known(modulePath) && same(oldPath(modulePath) ?? modulePath, modulePath),
   };
+};
+
+// A module-keyed fact is something a file's own text holds. A key whose
+// every new-side fact sits in an unchanged file (unchangedFiles) had those
+// sites before: when REA's facts show fewer or none there, it examined the
+// old copy only in part, so the key is "kept", not new. A value a site
+// reads from another module (a command, an endpoint) can still change in
+// such a file, so "changed" stays.
+const keptInPlace = (items, leftApp, rightApp, aliases) => {
+  const unchanged = unchangedFiles(leftApp, rightApp, aliases).right;
   return items.map((item) =>
-    GAINED.has(item.status) && item.right.every(unchanged)
+    GAINED.has(item.status) &&
+    item.right.every((fact) => unchanged(fact.data?.module))
       ? { ...item, status: "kept" }
       : item,
   );

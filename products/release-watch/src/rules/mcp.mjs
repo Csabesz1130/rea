@@ -4,7 +4,7 @@
 // tools is mcp-registrations.mjs's reading; registration calls anywhere in
 // a server component count, since servers often register tools in modules
 // that only receive the server object.
-import { renamedFrom } from "../diff.mjs";
+import { renamedFrom, unchangedFiles } from "../diff.mjs";
 import { examinedInPart } from "../facts/coverage.mjs";
 import { withoutHash } from "../facts/modules.mjs";
 import { startsBefore } from "../ranges.mjs";
@@ -16,7 +16,6 @@ import {
   heldElsewhere,
   perComponent,
   processAbsence,
-  relocatedUnresolved,
 } from "./component-absence.mjs";
 import {
   isDispatcher,
@@ -26,6 +25,7 @@ import {
   serverEvidence,
   toolRegistrations,
 } from "./mcp-registrations.mjs";
+import { siteUnknowns } from "./process.mjs";
 import { reachOf, reachedFrom } from "./reach.mjs";
 import { reachClaim, reachUnknowns } from "./reach-text.mjs";
 import {
@@ -109,19 +109,52 @@ const partlyAnalyzedBefore = (context) => {
   ];
 };
 
-/** Connections per capability across a release's old and new apps: `Map(key → { before, after })`. */
-export const connectionTotals = (leftApps, rightApps) => {
-  const totals = new Map();
-  const add = (apps, side) => {
-    for (const app of apps)
-      for (const [key, count] of countBy(connections(app))) {
-        const entry = totals.get(key) ?? { before: 0, after: 0 };
-        entry[side] += count;
-        totals.set(key, entry);
-      }
+/**
+ * A component's tool-to-process connections on each side: `{ all, old,
+ * now }`, every connection of each side (`all.old`, `all.now`) and those
+ * that count. A connection whose every file (filesOf) the component ships
+ * unchanged (diff.mjs unchangedFiles), to a site whose command did not
+ * change, is one both sides have whatever REA's facts of either side show,
+ * so it counts on neither, as a "kept" key does not for RW-P01 and RW-M02.
+ */
+const countedConnections = ({ left, right, aliases, diff }) => {
+  const all = { old: connections(left?.app), now: connections(right?.app) };
+  if (!left?.app || !right?.app) return { all, ...all };
+  const unchanged = unchangedFiles(left.app, right.app, aliases);
+  const changed = new Set(
+    diff.app.childProcesses
+      .filter((item) => item.status === "changed")
+      .flatMap((item) => [...item.left, ...item.right])
+      .map((fact) => fact.node_id),
+  );
+  const counts = (inFile) => (pair) =>
+    changed.has(pair.exec.node_id) ||
+    !filesOf(pair).every((file) => typeof file !== "string" || inFile(file));
+  return {
+    all,
+    old: all.old.filter(counts(unchanged.left)),
+    now: all.now.filter(counts(unchanged.right)),
   };
-  add(leftApps, "before");
-  add(rightApps, "after");
+};
+
+/**
+ * Connections that count (countedConnections) per capability across a
+ * release's components: `Map(key → { before, after })`.
+ */
+export const connectionTotals = (components) => {
+  const totals = new Map();
+  const add = (pairs, side) => {
+    for (const [key, count] of countBy(pairs)) {
+      const entry = totals.get(key) ?? { before: 0, after: 0 };
+      entry[side] += count;
+      totals.set(key, entry);
+    }
+  };
+  for (const component of components) {
+    const { old, now } = countedConnections(component);
+    add(old, "before");
+    add(now, "after");
+  }
   return totals;
 };
 
@@ -139,10 +172,10 @@ const increased = (context, before, after) => (key) => {
 // The connection a finding's title and summary name: one REA's facts
 // settle when the finding says the tool reaches the site, preferring a new
 // process site over one the old release had.
-const named = (keyed, groups, reaches) => {
+const named = (keyed, groupOf, reaches) => {
   const fits = (pair) => !reaches || !pair.path.guess;
   return (
-    keyed.find((pair) => fits(pair) && groups.has(pair.exec.key)) ??
+    keyed.find((pair) => fits(pair) && groupOf(pair.exec)) ??
     keyed.find(fits) ??
     keyed[0]
   );
@@ -191,11 +224,21 @@ const wording = (context, pair, { reaches, partial }) => {
   };
 };
 
+// The new or changed process sites of a component (newGroups) by the node
+// of each site: a site's own key is not its diff key when the diff pooled
+// or renamed its bundle.
+const siteGroups = (diff) => {
+  const groups = new Map();
+  for (const group of newGroups(diff.app.childProcesses, { field: "command" }))
+    for (const fact of group.facts) groups.set(fact.node_id, group);
+  return (exec) => groups.get(exec.node_id) ?? null;
+};
+
 const toolExecution = (context) => {
-  const { left, right, diff } = context;
-  const old = connections(left.app);
+  const { right, diff } = context;
+  const counted = countedConnections(context);
+  const { old, now: pairs } = counted;
   const before = countBy(old);
-  const pairs = connections(right.app);
   const after = countBy(pairs);
   const isIncreased = increased(context, before, after);
   const settled = { before: settledBy(old), after: settledBy(pairs) };
@@ -204,12 +247,7 @@ const toolExecution = (context) => {
   const comparable = settledBy(
     pairs.filter((pair) => partly(pair).length === 0),
   );
-  const groups = new Map(
-    newGroups(diff.app.childProcesses, { field: "command" }).map((group) => [
-      group.key,
-      group,
-    ]),
-  );
+  const groupOf = siteGroups(diff);
   const findings = [];
   const nodes = new Set();
   const modules = new Set();
@@ -223,9 +261,7 @@ const toolExecution = (context) => {
       nodes.add(pair.exec.node_id);
       modules.add(pair.call.data.module);
       // Every site of an increased key is explained here, the unchanged one too.
-      groups
-        .get(pair.exec.key)
-        ?.facts.forEach((fact) => nodes.add(fact.node_id));
+      groupOf(pair.exec)?.facts.forEach((fact) => nodes.add(fact.node_id));
     });
     // A guessed path names a candidate, not a handler REA's facts identify:
     // the tool reaches the site only when settled connections increased,
@@ -233,7 +269,7 @@ const toolExecution = (context) => {
     // analysis covered.
     const had = settled.before.get(key) ?? 0;
     const reaches = (settled.after.get(key) ?? 0) > had;
-    const pair = named(keyed, groups, reaches);
+    const pair = named(keyed, groupOf, reaches);
     const partial =
       reaches && (comparable.get(key) ?? 0) <= had
         ? [...new Set(keyed.filter((item) => !item.path.guess).flatMap(partly))]
@@ -246,35 +282,40 @@ const toolExecution = (context) => {
         "Remove the tool or restrict it to an allow-list of fixed commands, and require human confirmation for each call.",
       evidence: [
         ...serverEvidence(right.app),
-        ...connectionEvidence(context, keyed, { groups, old }),
+        ...connectionEvidence(context, keyed, {
+          groupOf,
+          old: counted.all.old,
+        }),
       ],
-      unknowns: toolUnknowns(context, keyed, groups),
+      unknowns: toolUnknowns(context, keyed, groupOf),
     });
   }
   return { findings, nodes: [...nodes], modules };
 };
 
-const toolUnknowns = (context, keyed, groups) => {
-  // A site with a command REA did not resolve never pairs as moved; one of
-  // its method the release lost may be the same call.
-  const relocated = keyed.flatMap(({ exec }) => {
-    const group = groups.get(exec.key);
-    return group && group.status !== "changed" && exec.data.command === null
-      ? [relocatedUnresolved(context, exec.data.method)]
-      : [];
-  });
+// What the old release may have had of the new or changed sites the tools
+// reach: what RW-P01 says of them (process.mjs siteUnknowns), for each
+// group, of the sites the tools reach.
+const toolUnknowns = (context, keyed, groupOf) => {
+  const reached = new Map();
+  for (const { exec } of keyed) {
+    const group = groupOf(exec);
+    if (!group) continue;
+    if (!reached.has(group)) reached.set(group, new Set());
+    reached.get(group).add(exec.node_id);
+  }
   return [
     "REA does not report the tool's name, description or input schema.",
     "REA does not establish that the tool's input reaches the command.",
     ...reachUnknowns(keyed.map((pair) => pair.path)),
-    ...(keyed.some(
-      ({ exec }) =>
-        groups.has(exec.key) &&
-        processAbsence(context, groups.get(exec.key)).held,
-    )
-      ? [perComponent("process execution sites")]
-      : []),
-    ...new Set(relocated.filter(Boolean)),
+    ...new Set(
+      [...reached].flatMap(([group, facts]) =>
+        siteUnknowns(context, {
+          ...group,
+          facts: group.facts.filter((fact) => facts.has(fact.node_id)),
+        }),
+      ),
+    ),
   ];
 };
 
@@ -296,12 +337,12 @@ const earlierReach = (context, old, key) => {
 // registrations of that capability reached; or unchanged, with how many old
 // registrations reached it, else (a content-hashed bundle nothing paired)
 // what they reached of that capability.
-const execAbsence = (context, { groups, old }, { exec, key }) => {
+const execAbsence = (context, { groupOf, old }, { exec, key }) => {
   const moved = context.moves?.childProcesses.pairs.get(exec.node_id);
   const left = context.releaseLabels?.left ?? context.labels.left;
   if (moved)
     return `${left} ran the same command from ${moved.fact.data.module}${moved.component === context.id ? "" : ` in component ${componentName(context, "left", moved.component)}`}`;
-  const group = groups.get(exec.key);
+  const group = groupOf(exec);
   const earlier = earlierReach(context, old, key);
   if (group)
     return `${processAbsence(context, group).phrase}${earlier ? `; in ${context.labels.left}, ${earlier}` : ""}`;

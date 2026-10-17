@@ -66,7 +66,7 @@ export const releaseContext = (prepared) => {
         right: component.right,
       })),
     ),
-    connections: connectionTotals(apps("left"), apps("right")),
+    connections: connectionTotals(counted),
     registrations: {
       ...registrationTotals(apps("left"), apps("right")),
       leftOut: unknown.right,

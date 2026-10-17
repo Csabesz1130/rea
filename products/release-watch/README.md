@@ -296,8 +296,11 @@ passed.
   a file the component's old side shipped with the same content, at its
   path or the one it was renamed from, is not new even when REA's facts of
   the old copy lack it: REA examined that copy only in part, and the
-  inventory lists the site as in an unchanged file. A command or destination
-  such a site reads from another module can still change.
+  inventory lists the site as in an unchanged file. Nor is a tool's
+  connection to a process site (RW-M01) whose every file, from the
+  registration through each module its path reads to the site, is such a
+  file. A command or destination such a site reads from another module can
+  still change, and a connection to a site whose command changed counts.
 - A component whose new side REA could not analyze, holds nothing REA can
   analyze or is a capture only loses nothing: its old process sites, tool
   registrations and windows are unknown, not gone, so they explain no new
@@ -393,10 +396,10 @@ passed.
   is reported without "now" when they differ.
 - A process site whose command REA did not resolve is never taken as moved:
   a refactor that relocates one is reported high, with a note that it may be
-  the same call. When an MCP tool reaches it, RW-M01 carries the same note and
-  says how many old tool registrations reached a site of that method with an
-  unresolved command; when a renderer API reaches a new site, RW-E01 carries
-  the notes RW-P01 would.
+  the same call. When an MCP tool or a renderer API reaches a new site,
+  RW-M01 or RW-E01 carries the notes RW-P01 would, and RW-M01 also says how
+  many old tool registrations reached a site of that method with an
+  unresolved command.
 - RW-P01 compares a process site's method and the command REA resolved (its
   first argument). REA reports the length of a literal argv array (none for
   `exec` or a computed array), not the argument values or options such as

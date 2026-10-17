@@ -5,17 +5,18 @@ import { after } from "node:test";
 import { releases, run } from "./cli-run.mjs";
 
 /**
- * `compare(before, later, pkg)` for one test file: runs the CLI on releases
- * 1.0.0 and 1.1.0 written from `{ path: text }` maps, removing every
- * directory after that file's tests.
+ * `compare(before, later, pkg, args)` for one test file: runs the CLI with
+ * `args` on releases 1.0.0 and 1.1.0 written from `{ path: text }` maps,
+ * removing every directory after that file's tests.
  */
 export const writtenCompare = () => {
   const written = releases();
   after(() => written.cleanup());
-  return (before, later, pkg) => {
+  return (before, later, pkg, args = []) => {
     const result = run(
       written.write("1.0.0", before, pkg),
       written.write("1.1.0", later, pkg),
+      ...args,
     );
     written.keep(result.out);
     return result;

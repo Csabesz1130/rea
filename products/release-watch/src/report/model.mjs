@@ -182,7 +182,8 @@ const aiSections = (component) => {
         ).map(({ item, before, after }) => [
           factOf(item).data.module,
           `${factOf(item).data.member}()`,
-          `${before.length} → ${after.length}`,
+          // A file shipped unchanged had its calls before (diff.mjs "kept").
+          `${before.length} → ${after.length}${item.status === "kept" ? ` (${statusOf(item.status)})` : ""}`,
         ]),
       ),
     ),
