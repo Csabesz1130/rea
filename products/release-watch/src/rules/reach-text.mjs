@@ -5,6 +5,8 @@
 // whether a call belongs to a value, that Release Watch followed every
 // candidate.
 
+import { MAX_PATH } from "./reach-resolve.mjs";
+
 const GUESSES = new Set(["guess", "whole", "candidate"]);
 
 /**
@@ -14,7 +16,10 @@ const GUESSES = new Set(["guess", "whole", "candidate"]);
  * place on one expression, taken for one on `this`.
  */
 export const isGuess = (step) =>
-  GUESSES.has(step.how) || step.open === true || step.receiver === "unsettled";
+  GUESSES.has(step.how) ||
+  step.open === true ||
+  step.cut === true ||
+  step.receiver === "unsettled";
 
 // The read a step names: with its member, unless the member was carried
 // over from another value's read (`for (const tool of TOOLS)`, a spread).
@@ -194,6 +199,9 @@ const memberGuess = (step) =>
   step.kind !== "element" &&
   step.destructured?.path !== null;
 
+// A step whose member chain Release Watch cut at MAX_PATH members.
+const CUT = ` (a chain of more than ${MAX_PATH} members, which Release Watch cut there, following all of what its first ${MAX_PATH} select)`;
+
 /** The unknowns a finding carries for the reach paths it cites. */
 export const reachUnknowns = (paths) => {
   const steps = paths.flatMap((path) => path?.steps ?? []);
@@ -218,6 +226,10 @@ export const reachUnknowns = (paths) => {
     unknowns.push(
       "REA does not report where an object or array literal ends; Release Watch read a call after one as part of it, and the handler may not reach this process site through what that call is given.",
     );
+  if (steps.some((step) => step.cut))
+    unknowns.push(
+      `A value read its own property writes back, so the member chain Release Watch followed grew past ${MAX_PATH} members; it followed all of what the first ${MAX_PATH} select, and the handler may not reach this process site.`,
+    );
   if (steps.some((step) => step.kind === "this-member"))
     unknowns.push(
       "REA does not resolve the receiver of a member call such as this.run(); Release Watch matched it by name to a function the enclosing class or object defines.",
@@ -235,7 +247,10 @@ export const reachClaim = (path, exec, owner) => {
   if (path.kind === "inline")
     return `${subject} contains ${exec.data.method}() in its source range`;
   const chain = path.steps
-    .map((step) => `${STEP_TEXT[step.kind](step)}${step.open ? OPEN : ""}`)
+    .map(
+      (step) =>
+        `${STEP_TEXT[step.kind](step)}${step.open ? OPEN : ""}${step.cut ? CUT : ""}`,
+    )
     .join(", which ");
   return `${subject} ${chain}; ${exec.data.method}() runs there. REA reports each read, import and function; Release Watch connects them`;
 };

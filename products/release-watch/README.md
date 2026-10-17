@@ -235,9 +235,12 @@ with a computed key or of a computed member takes (`const { handler } =
 TOOLS[name]`), or whether a call Release Watch
 read as part of a literal is a statement after it, Release Watch follows
 every candidate, the step says so, and the finding says the handler may
-reach the process site. An import Release Watch cannot resolve to one of its
-module's functions reaches every process site of that module, and the
-finding says so.
+reach the process site. So it does past 8 members of a member chain: a
+value that reads its own property writes back
+(`l.models.fallback = { ...l.models.main }`) lengthens the chain each
+time, so Release Watch takes all of what the first 8 members select. An
+import Release Watch cannot resolve to one of its module's functions
+reaches every process site of that module, and the finding says so.
 
 ## Findings
 

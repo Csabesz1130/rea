@@ -309,7 +309,7 @@ const elementTargets = (state, item, path) => {
 // it, and one that gives one element, `pairs.find(…)`, puts the path below
 // it). A destructuring's path below the binding REA names as its source
 // (`base`) already holds the member chain read on it.
-const pathOf = (index, item, { path: forwarded, base, element }) => {
+const fullPathOf = (index, item, { path: forwarded, base, element }) => {
   const own = memberOn(index, item.read.data.module, item.range)?.path ?? null;
   if (!forwarded) return { path: own, element: false };
   const bound = item.read.data.binding_range;
@@ -321,6 +321,24 @@ const pathOf = (index, item, { path: forwarded, base, element }) => {
       element: element || ONE_ELEMENT_METHODS.has(own[0]),
     };
   return { path: [...(own ?? []), ...forwarded], element: element && !own };
+};
+
+/**
+ * The most members of a chain Release Watch follows a value through. A
+ * chain only grows when a value reads its own property writes back
+ * (`l.models.fallback = { ...l.models.main }`), and each such cycle adds
+ * members, so without a bound the chains, and the places reach visits,
+ * grow exponentially. Real chains are a few members long.
+ */
+export const MAX_PATH = 8;
+
+// `fullPathOf`, keeping at most MAX_PATH members: past them Release Watch
+// takes all of what the first MAX_PATH select, as a guess (`cut`).
+const pathOf = (index, item, from) => {
+  const taken = fullPathOf(index, item, from);
+  return taken.path && taken.path.length > MAX_PATH
+    ? { ...taken, path: taken.path.slice(0, MAX_PATH), cut: true }
+    : taken;
 };
 
 // A destructured binding's default value (`handler = noop`), which it holds
@@ -346,9 +364,20 @@ const defaultTargets = (index, binding, { module, path, stepOf }) => {
  * destructuring value's path is below (`resolveValue`).
  */
 export const followRead = (state, item, from = {}) => {
+  const taken = pathOf(state.index, item, from);
+  const found = readTargets(state, item, from, taken);
+  return taken.cut
+    ? found.map((target) => ({
+        ...target,
+        step: { ...target.step, cut: true },
+      }))
+    : found;
+};
+
+// followRead's places for a read taking `path` (`pathOf`).
+const readTargets = (state, item, from, { path, element }) => {
   const { index } = state;
   const { data } = item.read;
-  const { path, element } = pathOf(index, item, from);
   if (data.parameter) return elementTargets(state, item, path);
   const binding = {
     name: data.name,
