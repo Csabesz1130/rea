@@ -258,32 +258,29 @@ describe(
   },
 );
 
+// A desk component beside a legacy component whose ASAR REA cannot read.
+const desk = (sync) => ({
+  "desk/package.json": JSON.stringify({ name: "desk", main: "main.js" }),
+  "desk/index.html": "<!doctype html><title>Notes</title>\n",
+  "desk/main.js":
+    'const { app, BrowserWindow, ipcMain } = require("electron");\nconst path = require("node:path");\nipcMain.handle("notes:list", () => []);\napp.whenReady().then(() => {\n  const win = new BrowserWindow({ webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true } });\n  win.loadFile("index.html");\n});\n',
+  "desk/preload.js": `const { contextBridge, ipcRenderer } = require("electron");\ncontextBridge.exposeInMainWorld("notes", {\n  list: () => ipcRenderer.invoke("notes:list"),\n${sync ? '  sync: () => ipcRenderer.invoke("notes:sync"),\n' : ""}});\n`,
+});
+const legacy = { name: "legacy", path: "legacy.asar" };
+const corrupt = { "legacy.asar": "not an asar\u0000garbage" };
+// v1.0.0's desk(false) beside legacy, against `files` beside legacy.
+const withLegacy = (files) =>
+  compare(
+    [[{ name: "desk", path: "desk" }, legacy], { ...desk(false), ...corrupt }],
+    [[{ name: "desk", path: "desk" }, legacy], { ...files, ...corrupt }],
+  );
+
 describe(
   "compare: claims about an old release with a component REA could not analyze",
   { skip },
   () => {
-    const desk = (sync) => ({
-      "desk/package.json": JSON.stringify({ name: "desk", main: "main.js" }),
-      "desk/index.html": "<!doctype html><title>Notes</title>\n",
-      "desk/main.js":
-        'const { app, BrowserWindow, ipcMain } = require("electron");\nconst path = require("node:path");\nipcMain.handle("notes:list", () => []);\napp.whenReady().then(() => {\n  const win = new BrowserWindow({ webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true } });\n  win.loadFile("index.html");\n});\n',
-      "desk/preload.js": `const { contextBridge, ipcRenderer } = require("electron");\ncontextBridge.exposeInMainWorld("notes", {\n  list: () => ipcRenderer.invoke("notes:list"),\n${sync ? '  sync: () => ipcRenderer.invoke("notes:sync"),\n' : ""}});\n`,
-    });
-    const legacy = { name: "legacy", path: "legacy.asar" };
-    const corrupt = { "legacy.asar": "not an asar\u0000garbage" };
-
     it("names the unanalyzed component instead of saying the old release lacked a renderer API", () => {
-      const { report } = compare(
-        [
-          [{ name: "desk", path: "desk" }, legacy],
-          { ...desk(false), ...corrupt },
-        ],
-        [
-          [{ name: "desk", path: "desk" }, legacy],
-          { ...desk(true), ...corrupt },
-        ],
-      );
-      const [api] = ofRule(report, "RW-E04");
+      const [api] = ofRule(withLegacy(desk(true)).report, "RW-E04");
       assert.deepEqual(claims(api), [
         'notes.sync invokes "notes:sync" (absent from component desk of v1.0.0; REA did not analyze the code of component legacy of v1.0.0, which may have had it)',
       ]);
@@ -291,32 +288,22 @@ describe(
 
     it("names it where the old release is said to lack an SDK, a package or original sources", () => {
       const now = desk(false);
-      const { report } = compare(
-        [
-          [{ name: "desk", path: "desk" }, legacy],
-          { ...desk(false), ...corrupt },
-        ],
-        [
-          [{ name: "desk", path: "desk" }, legacy],
-          {
-            ...now,
-            "desk/main.js": `${now["desk/main.js"]}const OpenAI = require("openai");\nconst pad = require("left-pad");\n`,
-            "desk/index.html":
-              '<!doctype html><title>Notes</title><script src="renderer.js"></script>\n',
-            "desk/renderer.js":
-              'console.log("render");\n//# sourceMappingURL=renderer.js.map\n',
-            "desk/renderer.js.map": JSON.stringify({
-              version: 3,
-              file: "renderer.js",
-              sources: ["../src/renderer.ts"],
-              sourcesContent: ['console.log("render");\n'],
-              names: [],
-              mappings: "AAAA",
-            }),
-            ...corrupt,
-          },
-        ],
-      );
+      const { report } = withLegacy({
+        ...now,
+        "desk/main.js": `${now["desk/main.js"]}const OpenAI = require("openai");\nconst pad = require("left-pad");\n`,
+        "desk/index.html":
+          '<!doctype html><title>Notes</title><script src="renderer.js"></script>\n',
+        "desk/renderer.js":
+          'console.log("render");\n//# sourceMappingURL=renderer.js.map\n',
+        "desk/renderer.js.map": JSON.stringify({
+          version: 3,
+          file: "renderer.js",
+          sources: ["../src/renderer.ts"],
+          sourcesContent: ['console.log("render");\n'],
+          names: [],
+          mappings: "AAAA",
+        }),
+      });
       const unknown =
         "REA did not analyze the code of component legacy of v1.0.0, which may have";
       assert.deepEqual(
@@ -335,20 +322,10 @@ describe(
 
     it("names it where a new host was not seen in the old release", () => {
       const now = desk(false);
-      const { report } = compare(
-        [
-          [{ name: "desk", path: "desk" }, legacy],
-          { ...desk(false), ...corrupt },
-        ],
-        [
-          [{ name: "desk", path: "desk" }, legacy],
-          {
-            ...now,
-            "desk/main.js": `${now["desk/main.js"]}fetch("https://telemetry.thirdparty.example/v1/events", { method: "POST" });\n`,
-            ...corrupt,
-          },
-        ],
-      );
+      const { report } = withLegacy({
+        ...now,
+        "desk/main.js": `${now["desk/main.js"]}fetch("https://telemetry.thirdparty.example/v1/events", { method: "POST" });\n`,
+      });
       const [host] = ofRule(report, "RW-N01");
       assert.ok(
         host.unknowns.includes(
