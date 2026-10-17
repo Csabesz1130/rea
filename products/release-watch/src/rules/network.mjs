@@ -32,11 +32,13 @@ import {
   sourceModules,
   withoutDestination,
 } from "./destinations.mjs";
+import { unknownElsewhere } from "./component-absence.mjs";
 import {
   APP_SOURCE,
   cite,
   heuristic,
   isVendorHost,
+  oldRelease,
   packResult,
 } from "./shared.mjs";
 
@@ -79,10 +81,6 @@ export const networkView = (
   };
 };
 
-/** The old release, named as a whole: hosts are compared across all its components. */
-export const oldRelease = (context) =>
-  context.releaseLabels?.left ?? context.labels.left;
-
 /**
  * How the old release's absence of a host is known, as a clause about the
  * host: always bounded by REA's coverage, and a host the old release held
@@ -101,6 +99,11 @@ export const absenceUnknowns = (context, host) => [
     : [
         `REA's coverage of ${oldRelease(context)} is incomplete, so it does not establish that it never contacted this host.`,
       ]),
+  // Hosts are compared with the whole old release, so an old component REA
+  // has no facts for may have contacted this one.
+  ...[unknownElsewhere(context)]
+    .filter(Boolean)
+    .map((unknown) => `${unknown}, so it may have contacted this host.`),
   ...(context.left.capture === null && context.right.capture !== null
     ? [
         captureUnread(context.left)

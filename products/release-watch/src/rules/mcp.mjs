@@ -26,7 +26,6 @@ import {
   serverEvidence,
   toolRegistrations,
 } from "./mcp-registrations.mjs";
-import { oldRelease } from "./network.mjs";
 import { reachOf, reachedFrom } from "./reach.mjs";
 import { reachClaim, reachUnknowns } from "./reach-text.mjs";
 import {
@@ -34,6 +33,7 @@ import {
   cite,
   heuristic,
   newGroups,
+  oldRelease,
   packResult,
 } from "./shared.mjs";
 

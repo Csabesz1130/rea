@@ -10,8 +10,8 @@ import {
   isGuess,
 } from "./destinations.mjs";
 import { sourceEvidence, sourceUnknowns } from "./network-evidence.mjs";
-import { absenceUnknowns, hostAbsence, oldRelease } from "./network.mjs";
-import { APP_SOURCE, cite, heuristic } from "./shared.mjs";
+import { absenceUnknowns, hostAbsence } from "./network.mjs";
+import { APP_SOURCE, cite, heuristic, oldRelease } from "./shared.mjs";
 
 export const BROWSER_LIMIT =
   "Release Watch classifies browser code by what HTML pages and service workers load; dedicated workers and scripts loaded at runtime are not classified, so the old placement may also have been in the browser.";

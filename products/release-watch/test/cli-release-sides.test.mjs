@@ -333,6 +333,31 @@ describe(
       );
     });
 
+    it("names it where a new host was not seen in the old release", () => {
+      const now = desk(false);
+      const { report } = compare(
+        [
+          [{ name: "desk", path: "desk" }, legacy],
+          { ...desk(false), ...corrupt },
+        ],
+        [
+          [{ name: "desk", path: "desk" }, legacy],
+          {
+            ...now,
+            "desk/main.js": `${now["desk/main.js"]}fetch("https://telemetry.thirdparty.example/v1/events", { method: "POST" });\n`,
+            ...corrupt,
+          },
+        ],
+      );
+      const [host] = ofRule(report, "RW-N01");
+      assert.ok(
+        host.unknowns.includes(
+          "REA did not analyze the code of component legacy of v1.0.0, so it may have contacted this host.",
+        ),
+        JSON.stringify(host.unknowns),
+      );
+    });
+
     it("says which component the release's registration totals leave out", () => {
       const server = (tools) =>
         `import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\nconst server = new McpServer({ name: "s", version: "1.0.0" });\n${tools.map((tool) => `server.registerTool("${tool}", {}, async () => ({ content: [] }));\n`).join("")}`;

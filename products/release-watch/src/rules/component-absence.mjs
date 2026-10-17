@@ -9,8 +9,7 @@
 // component by that side's manifest name.
 import { renamedFrom } from "../diff.mjs";
 import { fileDigests, lostUnresolved, shippedBefore } from "../moves.mjs";
-import { oldRelease } from "./network.mjs";
-import { absencePhrase } from "./shared.mjs";
+import { absencePhrase, oldRelease } from "./shared.mjs";
 
 // Statuses under which the component's own old side had no fact of a key:
 // an old fact with that key then belongs to another component.

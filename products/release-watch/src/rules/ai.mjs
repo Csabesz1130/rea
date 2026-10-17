@@ -14,7 +14,6 @@ import {
   serverModules,
   union,
 } from "./ai-placement.mjs";
-import { oldRelease } from "./network.mjs";
 import { promptFindings } from "./prompts.mjs";
 import {
   componentAbsence,
@@ -26,6 +25,7 @@ import {
   cite,
   heuristic,
   newGroups,
+  oldRelease,
   packResult,
 } from "./shared.mjs";
 

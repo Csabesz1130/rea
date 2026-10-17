@@ -117,6 +117,10 @@ export const isVendorHost = (host, vendorDomains) =>
     (domain) => host === domain || host.endsWith(`.${domain}`),
   );
 
+/** The old release, named as a whole: hosts are compared across all its components. */
+export const oldRelease = (context) =>
+  context.releaseLabels?.left ?? context.labels.left;
+
 /** "v1.4.0 capture". */
 export const captureLabel = (side) => `${side.label} capture`;
 

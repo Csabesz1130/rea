@@ -290,7 +290,8 @@ passed.
   the old release is complete. Otherwise it is "not observed in" the old
   release, and destination claims say the host was "not seen in" the old
   release's analyzed code or capture. A claim that a component's old side
-  lacked a fact names any other old component whose code REA did not analyze.
+  lacked a fact, or that the old release did not contact a host, names any
+  other old component whose code REA did not analyze.
   A site (a process call, request, HTML sink, `eval` or tool registration) in
   a file the component's old side shipped with the same content, at its
   path or the one it was renamed from, is not new even when REA's facts of

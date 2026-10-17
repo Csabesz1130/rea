@@ -6,7 +6,6 @@ import {
   heldElsewhere,
   perComponent,
 } from "./component-absence.mjs";
-import { oldRelease } from "./network.mjs";
 import { displayScript, isEmbeddedScript, scriptHostOf } from "../urls.mjs";
 import {
   APP_SOURCE,
@@ -15,6 +14,7 @@ import {
   isVendorHost,
   newFacts,
   newGroups,
+  oldRelease,
   packResult,
 } from "./shared.mjs";
 
