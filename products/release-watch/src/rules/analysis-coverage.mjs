@@ -212,37 +212,59 @@ const reachedLimits = (coverage) => [
 // files it examined only in part or not at all (examinedInPart), files it
 // examined but left child_process uses in unclassified, and pages whose
 // inline scripts it does not analyze.
+// Each kind's title says what of the changed code is missing when it is
+// the only kind.
 const MISSING = [
   {
     files: (app) => examinedInPart(app),
     words: (files) => `could not fully examine ${listed(files)}`,
+    title: (label) => `Changed code in ${label} was not examined`,
   },
   {
     files: (_app, processGaps) =>
       processGaps.map((unknown) => unknown.data.module),
     words: (files) =>
       `classified no process call for uses of child_process in ${listed(files)}`,
+    title: (label) =>
+      `Process calls in changed code of ${label} were not classified`,
   },
   {
     files: (app) => app.inlineScriptFiles ?? [],
     words: (files) => `did not analyze the inline scripts of ${listed(files)}`,
+    title: (label) =>
+      `Inline scripts in changed code of ${label} were not analyzed`,
   },
 ];
+
+// The title for the kinds missing from changed code: one kind's own, the
+// first kind's when REA examined some changed file only in part, else
+// that the changed code was not fully analyzed.
+const missingTitle = ([first, ...rest], label) =>
+  rest.length === 0 || first === MISSING[0]
+    ? first.title(label)
+    : `Changed code in ${label} was not fully analyzed`;
 
 // The changed files of each kind REA left unexamined (MISSING), and the
 // summary that says what is missing in each.
 const changedUnexamined = (context, app, processGaps) => {
   const changed = changedFiles(context);
   const kinds = MISSING.map((kind) => ({
-    ...kind,
+    kind,
     changed: [...new Set(kind.files(app, processGaps).filter(changed))],
-  })).filter((kind) => kind.changed.length > 0);
+  })).filter((entry) => entry.changed.length > 0);
   const clauses = kinds.map(
-    (kind, index) =>
-      `${index === 0 ? "REA" : "it"} ${kind.words(kind.changed)}`,
+    ({ kind, changed: files }, index) =>
+      `${index === 0 ? "REA" : "it"} ${kind.words(files)}`,
   );
   return {
-    files: [...new Set(kinds.flatMap((kind) => kind.changed))],
+    files: [...new Set(kinds.flatMap((entry) => entry.changed))],
+    title:
+      kinds.length > 0
+        ? missingTitle(
+            kinds.map((entry) => entry.kind),
+            context.labels.right,
+          )
+        : null,
     summary: `In code that changed since ${context.labels.left}, ${clauses.join("; ")}; findings in the unexamined part are missing.`,
   };
 };
@@ -264,7 +286,7 @@ export const unexaminedAnalysis = (context) => {
   if (evidence.length === 0) return [];
   const missing = app
     ? changedUnexamined(context, app, processGaps)
-    : { files: [], summary: null };
+    : { files: [], title: null, summary: null };
   const changed = missing.files;
   const { changes, substantive } = unexaminedChanges(context, changed);
   const limited =
@@ -282,7 +304,7 @@ export const unexaminedAnalysis = (context) => {
           : "medium",
       title:
         changed.length > 0
-          ? `Changed code in ${context.labels.right} was not examined`
+          ? missing.title
           : `Analysis of ${context.labels.right} is incomplete`,
       summary:
         changed.length > 0

@@ -219,6 +219,16 @@ describe("coverage", () => {
       inline[0].summary,
       "In code that changed since v1, REA could not fully examine vendor/bundle.js; it did not analyze the inline scripts of index.html; findings in the unexamined part are missing.",
     );
+    assert.equal(inline[0].title, "Changed code in v2 was not examined");
+    // A title names what is missing when REA examined the changed files.
+    const scripts = evaluate(
+      side("v1", app({ assets: [fact("index.html", { sha256: "p1" })] })),
+      side("v2", app({ assets: [page], inlineScriptFiles: ["index.html"] })),
+    );
+    assert.equal(
+      scripts[0].title,
+      "Inline scripts in changed code of v2 were not analyzed",
+    );
     // REA reported no digest for a renamed bundle on either side: not
     // known to be unchanged.
     const unknown = evaluate(

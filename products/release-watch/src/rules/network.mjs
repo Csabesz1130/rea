@@ -226,8 +226,12 @@ const unresolvedWording = (context, { fact, old, sites, gap }) => {
     : {
         title: `Request with an unresolved destination not observed in ${release}: ${fact.data.module}`,
         summary: `${context.labels.right} has ${where} that no removed site REA observed in ${release} accounts for (${old} observed → ${sites} in this module), but ${gap.text}, so Release Watch cannot tell whether any is new.`,
-        // What a re-run would raise is limits.mjs's (rerunWith).
-        recommendation: `Re-run with ${rerunWith(context.options?.analysis, gap.limits).text} so the old code is examined, capture the release's traffic, or ask the vendor for the destination.`,
+        // What a re-run would raise is limits.mjs's (rerunWith); no limit
+        // stopped REA on a file it could not analyze, so none is named.
+        recommendation:
+          gap.limits.length > 0
+            ? `Re-run with ${rerunWith(context.options?.analysis, gap.limits).text} so the old code is examined, capture the release's traffic, or ask the vendor for the destination.`
+            : "Capture the release's traffic or ask the vendor for the destination; REA could not analyze the old code, which higher limits do not change.",
       };
 };
 

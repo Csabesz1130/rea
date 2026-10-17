@@ -35,7 +35,8 @@ release-watch.json manifest listing several components.
                           rename or the Evidence exceeds 64 MB)
   --depth <depth>         standard | deep: REA's semantic node limits (default:
                           standard). deep examines more of large bundles for
-                          more memory and time
+                          more time and CPU; one side at a time, its measured
+                          peak memory was close to or below standard's
   --max-semantic-nodes <n>, --max-semantic-nodes-per-file <n>, --max-heap-mb <n>
                           Replace that one limit of the depth
   --jobs <1|2>            Analyze the two sides one at a time (1) for lower peak
