@@ -51,6 +51,32 @@ describe("compare: each exposure of a renderer API", { skip }, () => {
     );
   });
 
+  it("reports an exposure a new window's preload adds beside the old one as new", () => {
+    const old = twoWindows(HANDLERS("run(a)"));
+    delete old["settings-preload.js"];
+    old["main.js"] = old["main.js"].replace(
+      `  ${window("settings-preload.js")}`,
+      "",
+    );
+    const result = compare(
+      old,
+      twoWindows(
+        'ipcMain.handle("main:run", (_e, a) => run(a));\nipcMain.handle("settings:run", (_e, a) => run(a));\n',
+      ),
+      ELECTRON,
+    );
+    assert.equal(result.result.status, 2, result.result.stderr);
+    const found = finding(result, "RW-E01");
+    assert.equal(
+      found.title,
+      'Renderer can reach process execution via "settings:run"',
+    );
+    assert.match(
+      found.evidence[0].claim,
+      /invokes IPC channel "settings:run" \(v1\.0\.0 exposed this API on other channels only\)/,
+    );
+  });
+
   it("reports an API new in both preloads whose one handler runs a process", () => {
     const old = twoWindows("");
     delete old["settings-preload.js"];

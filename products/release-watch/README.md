@@ -413,7 +413,9 @@ passed.
   is reported without "now" when they differ. Each exposure of an API (one
   preload's bridge member, so `app.run` exposed by two preloads on two
   channels is two) is checked against the handler of its own channel and
-  compared with the old exposure on that channel, else with every old one.
+  compared with the old exposure on that channel, else with each old one
+  on a channel no new exposure has (a renamed channel); one added beside
+  every old exposure (a new window's preload) is new.
   An exposure no handler REA resolved serves may be served by a handler
   whose channel REA did not resolve (`ipcMain.handle(CHANNELS.SYNC, …)`),
   or, when REA did not resolve the exposure's own channel, by one whose

@@ -6,7 +6,6 @@
 // channel, and one finding per group of process sites (a module and
 // method) names every exposure that reaches it. reach.mjs finds the paths;
 // this module grades and words them.
-import { isNew } from "../diff.mjs";
 import {
   componentAbsence,
   heldElsewhere,
@@ -64,46 +63,59 @@ const execEvidence = (group, absence) =>
     ),
   );
 
-// The old exposures a new exposure of a kept API is compared with: those
-// on its channel, else every one (any may be the one it replaced).
-const oldExposures = (left, member) => {
-  const same = left.filter(
-    (old) =>
-      old.data.channel !== null && old.data.channel === member.data.channel,
+// The old exposures one new exposure of an API the component kept is
+// compared with: the old one on its channel; else, for one whose channel no
+// new exposure has (a renamed channel) or one whose channel REA did not
+// resolve, each such old one (any may be it); else none: an exposure on a
+// channel added beside every old one (a new window's preload) is new.
+const oldExposures = (item, member) => {
+  const { channel } = member.data;
+  const same =
+    channel === null
+      ? []
+      : item.left.filter((old) => old.data.channel === channel);
+  if (same.length > 0) return same;
+  const now = new Set(item.right.map((fact) => fact.data.channel));
+  const left = item.left.filter(
+    (old) => old.data.channel === null || !now.has(old.data.channel),
   );
-  return same.length > 0 ? same : left;
+  if (left.length > 0) return left;
+  return channel === null ? item.left : null;
 };
 
 /**
  * The renderer API exposures RW-E01 checks, each `{ member, absence, old
- * }`: every exposure of an API new in the component, whose every reach is
- * new, and of an API it already exposed, whose handler counts only for a
- * site that runs no command its old handlers ran (`compared`: a changed
- * handler, or a helper that now starts a process). `old` is null for a
- * new exposure, else the old handlers that may have served it (`keptOld`).
- * An API with more exposures than before is kept on the channels the old
- * side exposed it on and new on the others.
+ * }`: every exposure of an API new in the component, and every new one of
+ * an API it already exposed (`oldExposures` none), whose every reach is
+ * new; and each other exposure of an API it already exposed, whose handler
+ * counts only for a site that runs no command its old handlers ran
+ * (`compared`: a changed handler, or a helper that now starts a process).
+ * `old` is null for a new exposure, else the old handlers that may have
+ * served it (`keptOld`).
  */
 const rendererApis = (context) => {
-  const { left, diff } = context;
+  const { left, diff, labels } = context;
   const handlers = handlersOf(left.app);
-  const kept = { held: false, phrase: `also in ${context.labels.left}` };
+  const kept = { held: false, phrase: `also in ${labels.left}` };
+  const beside = {
+    held: false,
+    phrase: `${labels.left} exposed this API on other channels only`,
+  };
   return diff.app.bridgeMembers.flatMap((item) => {
     if (item.status === "not-compared") return [];
-    const fresh = isNew(item)
-      ? memberAbsence(context, { fact: item.right[0], status: item.status })
-      : null;
-    const channels = new Set(item.left.map((old) => old.data.channel));
-    return item.right.map((member) =>
-      item.left.length === 0 ||
-      (item.status === "increased" && !channels.has(member.data.channel))
-        ? { member, absence: fresh, old: null }
-        : {
-            member,
-            absence: kept,
-            old: keptOld(left.app, handlers, oldExposures(item.left, member)),
-          },
-    );
+    if (item.left.length === 0) {
+      const absence = memberAbsence(context, {
+        fact: item.right[0],
+        status: item.status,
+      });
+      return item.right.map((member) => ({ member, absence, old: null }));
+    }
+    return item.right.map((member) => {
+      const old = oldExposures(item, member);
+      return old
+        ? { member, absence: kept, old: keptOld(left.app, handlers, old) }
+        : { member, absence: beside, old: null };
+    });
   });
 };
 
