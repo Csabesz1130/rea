@@ -26,6 +26,7 @@ const componentOf = (left, right, extra = {}) => {
     options.vendorDomains,
   );
   return {
+    id: "web",
     name: "web",
     left,
     right,

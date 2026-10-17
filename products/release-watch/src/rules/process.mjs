@@ -6,6 +6,7 @@
 // and what a changed key's commands are called is process-commands.mjs's.
 import { movedFrom } from "../moves.mjs";
 import {
+  componentName,
   contentOrigin,
   copiedSite,
   perComponent,
@@ -53,6 +54,8 @@ const WHY =
 const RECOMMENDATION =
   "Confirm the command source and that it cannot be influenced by web content, model output or network data.";
 
+// `component` is the identity of the old site's component; its location
+// names that component as the old release did.
 const movedLine = (context, method, { component, fact: old }) => {
   const line = cite(
     `${oldLabel(context, component)}: ${method}() with the same command in ${old.data.module}`,
@@ -60,9 +63,15 @@ const movedLine = (context, method, { component, fact: old }) => {
     APP_SOURCE,
     { side: "left" },
   );
-  return component === context.name
+  return component === context.id
     ? line
-    : { ...line, location: line.location && { ...line.location, component } };
+    : {
+        ...line,
+        location: line.location && {
+          ...line.location,
+          component: componentName(context, "left", component),
+        },
+      };
 };
 
 const movedFinding = (context, group, moved, unknowns) => {

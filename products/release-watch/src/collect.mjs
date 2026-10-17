@@ -174,8 +174,11 @@ const inspectCapture = async (scope) => {
 };
 
 /**
- * Collect one side of one component. `side` is "left" or "right"; `label`
- * names it in progress lines. Errors are appended to `errors`.
+ * Collect one side of one component. `component` is the side's manifest
+ * name, `side` is "left" or "right"; `label` names it in progress lines.
+ * Evidence files start with `${component}-${side}`, unique because a
+ * manifest's names differ even without case. Errors are appended to
+ * `errors`.
  */
 export const collectSide = async ({
   rea,

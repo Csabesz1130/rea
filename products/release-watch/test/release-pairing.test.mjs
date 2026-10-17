@@ -1,11 +1,13 @@
 // Release-wide semantics that one-component fixtures cannot show: sites
 // moved between components, unread sides, registration API changes,
-// embedded scripts, grouped renderer APIs and source-map coverage.
+// embedded scripts, grouped renderer APIs and source-map coverage; and the
+// identity of a renamed component.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { diffApplications } from "../src/diff.mjs";
 import { unknownCounterparts } from "../src/moves.mjs";
+import { pairComponents } from "../src/pairing.mjs";
 import { releaseBaseline, releaseMovesOf } from "../src/policy.mjs";
 import { app, at, evaluate, fact, range, side } from "./helpers.mjs";
 
@@ -398,6 +400,28 @@ describe("unexamined bundles with source maps", () => {
         [original("../src/cli.ts", "s2")],
       ),
       ["high"],
+    );
+  });
+});
+
+describe("a renamed component's identity", () => {
+  // A target with no files: the only one of its kind on each side.
+  const release = (...names) => ({
+    components: names.map((name) => ({
+      name,
+      target: { kind: "js-app", app: null, capture: null },
+    })),
+  });
+
+  it("is its new manifest name, apart from its old → new label", () => {
+    assert.deepEqual(
+      pairComponents(release("desk", "api"), release("api", "desktop")).map(
+        ({ id, name, names }) => [id, name, names],
+      ),
+      [
+        ["api", "api", { left: "api", right: "api" }],
+        ["desktop", "desk → desktop", { left: "desk", right: "desktop" }],
+      ],
     );
   });
 });

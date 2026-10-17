@@ -45,8 +45,9 @@ const PACKS = [
 
 /**
  * Sites the release gained and lost, paired one to one across components.
- * `components` is `[{ name, diff, comparable, left, right }]`; a component
- * is not comparable when REA could not analyze its new side.
+ * `components` is `[{ name, diff, comparable, left, right }]`, `name` the
+ * component's identity; a component is not comparable when REA could not
+ * analyze its new side.
  */
 export const releaseMovesOf = (components) => ({
   childProcesses: releaseMoves(withDigests(components, "childProcesses"), {
@@ -188,7 +189,7 @@ export const evaluateComponent = (component) => {
     baseline,
     moves:
       component.release?.moves ??
-      releaseMovesOf([{ ...component, comparable: true }]),
+      releaseMovesOf([{ ...component, name: component.id, comparable: true }]),
     windows: component.release?.windows ?? releaseWindowPairing([component]),
     aliases: component.aliases ?? new Map(),
     network: networkView(component.left, component.right, baseline, {

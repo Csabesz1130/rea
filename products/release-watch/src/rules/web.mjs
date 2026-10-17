@@ -10,7 +10,6 @@ import { oldRelease } from "./network.mjs";
 import { displayScript, isEmbeddedScript, scriptHostOf } from "../urls.mjs";
 import {
   APP_SOURCE,
-  absencePhrase,
   cite,
   heuristic,
   isVendorHost,
@@ -161,7 +160,7 @@ const embeddedSourceFindings = (context) => {
         .slice(0, 6)
         .map(({ fact, status }) =>
           cite(
-            `${fact.data.original} (${absencePhrase(status, context.labels.left)})`,
+            `${fact.data.original} (${componentAbsence(context, { status, held: false })})`,
             fact,
             APP_SOURCE,
           ),

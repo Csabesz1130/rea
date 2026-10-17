@@ -3,6 +3,7 @@
 import { builtinModules } from "node:module";
 
 import { packageNameOf, sdkOf } from "../catalog.mjs";
+import { unknownElsewhere } from "./component-absence.mjs";
 import { APP_SOURCE, cite, heuristic, packResult } from "./shared.mjs";
 
 const BUILTINS = new Set(builtinModules);
@@ -41,12 +42,13 @@ export const dependencyPack = (context) => {
     cite(`${facts[0].data.module} imports ${name}`, facts[0], APP_SOURCE),
   );
   const names = fresh.map(([name]) => name);
+  const unknown = unknownElsewhere(context);
   return packResult([
     {
       rule: "RW-D01",
       severity: "low",
       title: `New third-party packages imported (${fresh.length}): ${names.slice(0, 3).join(", ")}${names.length > 3 ? ", …" : ""}`,
-      summary: `${context.labels.right} imports ${fresh.length} package${fresh.length === 1 ? "" : "s"} that no module of the old release imported.`,
+      summary: `${context.labels.right} imports ${fresh.length} package${fresh.length === 1 ? "" : "s"} that no ${unknown === null ? "" : "analyzed "}module of the old release imported${unknown === null ? "" : `; ${unknown}, which may have`}.`,
       why: "New dependencies bring new maintainers and install-time code into the release.",
       recommendation: "Check each package against your dependency policy.",
       evidence: [

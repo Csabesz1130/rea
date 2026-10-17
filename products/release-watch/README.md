@@ -58,6 +58,19 @@ Component names are 1–64 letters, digits, `.`, `_` or `-`, and paths must stay
 inside the release directory. For a single component, `--old-capture` and
 `--new-capture` attach captures instead.
 
+Components pair by name. Of those left unpaired, a component on each side
+with the same kind of target is taken as renamed when it is the only such one
+on each side, or else with the one whose files (by path and size) overlap most
+with its own, when at least 30% of the two components' files are shared;
+otherwise one is reported missing and the other new. A renamed component is
+shown as `old → new`; claims about each side name that side's component, and
+its Evidence files carry that side's name. Without `--vendor-domain`, the host
+a capture of any component starts its session on, its first page load's, is
+the site itself for every component, not a new destination, while the hosts
+that page load redirects through, such as a sign-in at an identity provider or
+an apex redirected to `www`, are the site only for the captured component. A
+host on a vendor domain is first party for every component.
+
 The command writes `report.html`, `report.md` (for CI and pull-request
 comments), `report.json`, and every REA Evidence record it used under
 `evidence/`. Exit status is `2` when a finding reaches `--fail-on` (default
@@ -235,7 +248,7 @@ finding says so.
 | RW-G04 | medium              | A new helper executable                                                                                                                                                                                                                                                       |
 | RW-D01 | low                 | New third-party packages imported, one finding per component                                                                                                                                                                                                                  |
 | RW-C01 | high / medium       | REA examined only part of the new release (truncation, node ceilings, failed or unparsed files, a use of child_process REA classified no process call for, such as `promisify(exec)`); high when that code changed, unless its source map names no changed original source    |
-| RW-C02 | low                 | A component, capture or module pairing available on one side only                                                                                                                                                                                                             |
+| RW-C02 | low                 | A component, its application code, a capture or a module pairing available on one side only                                                                                                                                                                                   |
 | RW-C03 | medium              | The old release's fuses were readable and the new release's are not                                                                                                                                                                                                           |
 | RW-C04 | medium              | A helper REA identified before is not identified now                                                                                                                                                                                                                          |
 | RW-C05 | medium / low        | New or changed modules use an HTTP client library and REA recognised no request site in them, or import or are imported by such a module (low); low when a capture covers the release                                                                                         |
@@ -250,7 +263,15 @@ passed.
 - A fact seen only in the new release is "added" only when REA's coverage of
   the old release is complete. Otherwise it is "not observed in" the old
   release, and destination claims say the host was "not seen in" the old
-  release's analyzed code or capture.
+  release's analyzed code or capture. A claim that a component's old side
+  lacked a fact names any other old component whose code REA did not analyze.
+- A component whose new side REA could not analyze, holds nothing REA can
+  analyze or is a capture only loses nothing: its old process sites, tool
+  registrations and windows are unknown, not gone, so they explain no new
+  site elsewhere, and release totals leave it out and say so. One whose old
+  side REA could not analyze or holds nothing REA can analyze is graded on
+  coverage only, and its analysis error decides the verdict; one whose old
+  side is a capture only has its new code reported as not observed before.
 - Correlations are labelled heuristic: an IPC handler reaching an imported
   exec site, an MCP registration containing one, a request attributed to a URL
   literal in the same module, a module counted as browser code because a page

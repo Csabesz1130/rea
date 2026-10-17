@@ -8,6 +8,8 @@ import { within } from "../ranges.mjs";
 import { isMcpServer } from "../surfaces.mjs";
 import {
   componentAbsence,
+  componentList,
+  componentName,
   heldElsewhere,
   perComponent,
   processAbsence,
@@ -159,7 +161,7 @@ const execAbsence = (context, { groups, old }, exec) => {
   const moved = context.moves?.childProcesses.pairs.get(exec.node_id);
   const left = context.releaseLabels?.left ?? context.labels.left;
   if (moved)
-    return `${left} ran the same command from ${moved.fact.data.module}${moved.component === context.name ? "" : ` in component ${moved.component}`}`;
+    return `${left} ran the same command from ${moved.fact.data.module}${moved.component === context.id ? "" : ` in component ${componentName(context, "left", moved.component)}`}`;
   const group = groups.get(exec.key);
   if (group) return processAbsence(context, group).phrase;
   const registrations = new Set(
@@ -223,7 +225,7 @@ export const toolRegistrations = (app) =>
     ? app.memberCalls.filter((call) => registersTools(app, call))
     : [];
 
-/** Tool registrations across a release's old and new apps: `{ before, after }`. */
+/** Tool registrations across a release's old and new apps: `{ before, after }`; the release context adds what the totals leave out. */
 export const registrationTotals = (leftApps, rightApps) => ({
   before: leftApps.reduce((sum, app) => sum + toolRegistrations(app).length, 0),
   after: rightApps.reduce((sum, app) => sum + toolRegistrations(app).length, 0),
@@ -311,6 +313,20 @@ const newRegistrations = (context, covered) => {
   ];
 };
 
+// What the release totals cover: they leave out components whose new side
+// REA's facts do not describe (`leftOut`), and count the calls of those
+// whose old side they do not describe as none (`unknownBefore`).
+const totalsScope = (context, release, right) => ({
+  except:
+    (release.leftOut ?? []).length > 0
+      ? ` except ${componentList(release.leftOut)}, whose code REA did not analyze in ${right},`
+      : ",",
+  before:
+    (release.unknownBefore ?? []).length > 0
+      ? `; REA did not analyze the code of ${componentList(release.unknownBefore)} of ${oldRelease(context)}, so ${oldRelease(context)} may have made more`
+      : "",
+});
+
 // A new component's calls are counted against nothing, so the summary
 // gives the release's totals rather than calling them more than the old
 // release made.
@@ -326,7 +342,8 @@ const registrationSummary = (context, { old, now, gained }) => {
     (sum, item) => sum + item.after.length - item.before.length,
     0,
   );
-  return `Component ${context.name} is new in ${right} and makes ${calls(now.length)}, ${cited === now.length ? "" : `${cited} of them `}in ${modules}; across the release, ${oldRelease(context)} made ${release.before} and ${right} makes ${release.after}.`;
+  const scope = totalsScope(context, release, right);
+  return `Component ${componentName(context, "right")} is new in ${right} and makes ${calls(now.length)}, ${cited === now.length ? "" : `${cited} of them `}in ${modules}; across the release${scope.except} ${oldRelease(context)} made ${release.before} and ${right} makes ${release.after}${scope.before}.`;
 };
 
 // The calls a module gained, each with how the component lacked it when

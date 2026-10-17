@@ -4,6 +4,7 @@
 import { renamedFrom } from "../diff.mjs";
 import { examinedInPart } from "../facts/coverage.mjs";
 import { shippedBefore } from "../moves.mjs";
+import { appKnown } from "../sides.mjs";
 import { gapLine, processGapsOf } from "./process-gaps.mjs";
 import { APP_SOURCE, cite, reported } from "./shared.mjs";
 
@@ -17,10 +18,10 @@ const listed = (files) =>
 // under any path (moves.mjs shippedBefore owns that test, so a file that
 // moved unchanged did not change, and one REA reported no digest for did).
 // Every file of a component new in this release is compared the same way.
-// Unknown when REA could not analyze the old side of a component the old
-// release had: nothing is called changed then.
+// Unknown when REA's facts do not describe the old side of a component the
+// old release had (`appKnown`): nothing is called changed then.
 export const changedFiles = (context) => {
-  if (context.left.target !== null && !context.left.app) return () => false;
+  if (!appKnown(context.left)) return () => false;
   const shipped = shippedBefore(context.baseline, context.right.app);
   return (file) => !shipped(file);
 };
@@ -28,14 +29,12 @@ export const changedFiles = (context) => {
 /**
  * The changed-file test of the rules that note what REA does not model in
  * new or changed code (RW-C05, RW-C06): `changedFiles`, except that every
- * module counts when REA could not analyze the old side of a component the
- * old release shipped. A file whose content the old release shipped, in
- * any component or under any path, did not change.
+ * module counts when REA's facts do not describe the old side of a
+ * component the old release shipped. A file whose content the old release
+ * shipped, in any component or under any path, did not change.
  */
 export const unmodeledChanges = (context) =>
-  context.left.app || context.left.target === null
-    ? changedFiles(context)
-    : () => true;
+  appKnown(context.left) ? changedFiles(context) : () => true;
 
 // What REA reported it could not examine in the new release: truncation,
 // files at the per-file ceiling, failed files, no semantic graph.

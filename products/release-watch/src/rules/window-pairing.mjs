@@ -15,6 +15,7 @@
 //    other component kept. A window in an existing component never pairs by
 //    options alone with another component's window.
 // A new window left without a counterpart is judged on its own values.
+import { appKnown, unanalyzed } from "../sides.mjs";
 
 export const windowFile = (window) => window.data.source_path ?? window.key;
 
@@ -195,9 +196,9 @@ const entriesOf = (components) => {
 /**
  * Pairs every new window of a release with at most one old window. Takes
  * `[{ name, old, now, aliases, newComponent }]`, one entry per component
- * with the old windows it offers, the new windows to pair and whether the
- * component is new in this release, and returns, per component
- * name, `{ pairs: [{ was, now, tied, from }], added }`: each paired window
+ * (`name` its identity) with the old windows it offers, the new windows to
+ * pair and whether the component is new in this release, and returns, per
+ * component, `{ pairs: [{ was, now, tied, from }], added }`: each paired window
  * with its old counterpart, whether an equally close one existed and the
  * component it came from, and the new windows with no counterpart.
  */
@@ -226,21 +227,19 @@ export const pairReleaseWindows = (components) => {
 };
 
 /**
- * The window pairing of a release from its prepared components (`{ name,
- * left, right, aliases }`). A component whose new side REA could not analyze
- * offers no old windows (they are unknown now, not gone); one whose old side
- * REA could not analyze is graded on coverage only, so its new windows take
- * none.
+ * The window pairing of a release from its prepared components (`{ id,
+ * left, right, aliases }`), by each component's identity. A component whose new side REA's facts do not
+ * describe (`appKnown`) offers no old windows: they are unknown now, not
+ * gone. One whose old side is `unanalyzed` is graded on coverage only, so
+ * its new windows take none; any other new window is paired or judged on
+ * its own values, as the other rules judge its side.
  */
 export const releaseWindowPairing = (components) =>
   pairReleaseWindows(
-    components.map(({ name, left, right, aliases }) => ({
-      name,
-      old: right.target === null || right.app ? (left.app?.windows ?? []) : [],
-      now:
-        right.app && (left.target === null || left.app)
-          ? right.app.windows
-          : [],
+    components.map(({ id, left, right, aliases }) => ({
+      name: id,
+      old: appKnown(right) ? (left.app?.windows ?? []) : [],
+      now: right.app && !unanalyzed(left) ? right.app.windows : [],
       aliases,
       newComponent: left.target === null,
     })),

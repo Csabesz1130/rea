@@ -6,6 +6,8 @@ import path from "node:path";
 import { SECURITY_HEADERS, packageNameOf } from "../catalog.mjs";
 import { captureUnread } from "../facts/capture.mjs";
 import { isDeclarationPath } from "../facts/modules.mjs";
+import { appOneSided, applicationState, unanalyzed } from "../sides.mjs";
+import { unknownElsewhere } from "./component-absence.mjs";
 import { clientImports, clientModules } from "./destinations.mjs";
 import { displayPath } from "../urls.mjs";
 import {
@@ -85,19 +87,41 @@ const captureLines = ({ left, right, labels }) => {
   ];
 };
 
+// What one side of a component gives instead of application code.
+const NO_CODE = {
+  capture: "gives only a capture for",
+  none: "holds nothing REA can analyze for",
+};
+
+// Application code one side of a component has and the other does not,
+// whose side gives a capture only or nothing REA can analyze: what REA saw
+// on one side was not compared with the other.
+const appLines = ({ left, right, labels, name }) => {
+  if (!appOneSided(left, right)) return [];
+  if (left.target.app !== null)
+    return [
+      `${labels.right} ${NO_CODE[applicationState(right)]} component ${name}, so ${labels.left}'s application code in it was compared with nothing; what that code did is unknown now, not gone.`,
+    ];
+  return [
+    `${labels.left} ${NO_CODE[applicationState(left)]} component ${name}, so ${labels.right}'s application code in it was compared with nothing${unanalyzed(left) ? " and only coverage was graded" : "; what it has is reported as not observed before"}.`,
+  ];
+};
+
 // RW-C02: pieces that could only be seen on one side, so nothing was compared.
 const oneSided = (context) => {
   const { left, right, labels, comparison, name } = context;
   const release = context.releaseLabels ?? labels;
+  const unknown = unknownElsewhere(context);
   const lines = [];
   if (left.target === null)
     lines.push(
-      `Component ${name} is new in ${release.right}; its hosts, browser placement, packages, SDKs, keys, windows, source maps and moved code were compared with all of ${release.left}, and everything else in it is reported as new.`,
+      `Component ${name} is new in ${release.right}; its hosts, browser placement, packages, SDKs, keys, windows, source maps and moved code were compared with ${unknown === null ? `all of ${release.left}` : `everything REA analyzed in ${release.left} (${unknown})`}, and everything else in it is reported as new.`,
     );
   if (right.target === null)
     lines.push(
       `Component ${name} is missing from ${release.right}; nothing in it was compared.`,
     );
+  lines.push(...appLines(context));
   lines.push(...captureLines(context));
   for (const page of unmatchedPages(context))
     lines.push(

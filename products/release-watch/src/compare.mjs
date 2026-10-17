@@ -21,16 +21,15 @@ import { discoverRelease } from "./discover.mjs";
 import { deploymentOf } from "./facts/capture.mjs";
 import { isScriptPath } from "./facts/modules.mjs";
 import { pairComponents, pairHelpers, pairRuntimes } from "./pairing.mjs";
-import { connectionTotals, registrationTotals } from "./rules/mcp.mjs";
-import { releaseWindowPairing } from "./rules/window-pairing.mjs";
 import {
   evaluateComponent,
   numberFindings,
   releaseBaseline,
-  releaseMovesOf,
   verdictFor,
 } from "./policy.mjs";
 import { sourceText } from "./redact.mjs";
+import { ownHosts, releaseContext } from "./release.mjs";
+import { unanalyzed } from "./sides.mjs";
 import { continuation, sourceLine } from "./source-line.mjs";
 import { openSources } from "./sources.mjs";
 import { surfaceNames, surfacesOf } from "./surfaces.mjs";
@@ -93,7 +92,8 @@ const comparisonSkip = (mode, left, right) => {
 };
 
 // REA compares two application graphs; its input is assembled from the two
-// saved Evidence files without re-serializing them.
+// saved Evidence files without re-serializing them. `component` is the new
+// side's manifest name, which no other component of that release has.
 const reaComparison = async ({ rea, component, left, right, outDir, mode }) => {
   if (left.appFile === null || right.appFile === null) return null;
   const skipped = comparisonSkip(mode, left, right);
@@ -233,9 +233,11 @@ const openSide = (rea, side) => {
   return openSources(rea, side.target.app, assets, side.label);
 };
 
-// Collect both sides of one component, in parallel unless jobs is 1.
+// Collect both sides of one component, in parallel unless jobs is 1. Each
+// side is collected, and its errors and Evidence files named, under its own
+// manifest name.
 const collectComponent = async ({
-  name,
+  names,
   leftTarget,
   rightTarget,
   rea,
@@ -248,9 +250,9 @@ const collectComponent = async ({
       ? Promise.resolve(emptyCollection())
       : collectSide({
           rea,
-          component: name,
+          component: names[side],
           side,
-          label: `${name} ${side === "left" ? "old" : "new"}`,
+          label: `${names[side]} ${side === "left" ? "old" : "new"}`,
           target,
           outDir,
           errors,
@@ -258,18 +260,15 @@ const collectComponent = async ({
         });
   if (options.jobs === 1) {
     const left = await collect("left", leftTarget);
-    return { name, left, right: await collect("right", rightTarget) };
+    return { left, right: await collect("right", rightTarget) };
   }
   const [left, right] = await Promise.all([
     collect("left", leftTarget),
     collect("right", rightTarget),
   ]);
-  return { name, left, right };
+  return { left, right };
 };
 
-// A side failed when its target was analyzable but REA produced no facts.
-const failed = (side) =>
-  side.target !== null && side.target.app !== null && side.app === null;
 const captureFailed = (side) =>
   side.target !== null && side.target.capture !== null && side.capture === null;
 
@@ -281,7 +280,7 @@ const prepareComponent = async ({
   outDir,
   options,
 }) => {
-  const { name } = collected;
+  const { id, name, names } = collected;
   const labels = distinct(
     versionLabel(collected.left, labelsOfRelease.left),
     versionLabel(collected.right, labelsOfRelease.right),
@@ -292,7 +291,7 @@ const prepareComponent = async ({
   right.surfaces = surfacesOf(right);
   const comparison = await reaComparison({
     rea,
-    component: name,
+    component: names.right,
     left,
     right,
     outDir,
@@ -306,14 +305,16 @@ const prepareComponent = async ({
   );
   const diff = {
     app: diffApplications(left.app, right.app, aliases, {
-      leftKnown: !failed(left),
+      leftKnown: !unanalyzed(left),
     }),
     runtimes: pairRuntimes(left, right),
     helpers: pairHelpers(left, right),
     capture: diffCaptures(left.capture, right.capture),
   };
   return {
+    id,
     name,
+    names,
     renamed: collected.renamed,
     left,
     right,
@@ -325,37 +326,6 @@ const prepareComponent = async ({
   };
 };
 
-/**
- * What the whole release gained and lost, so a site that moved between
- * components is recognised as a move, and how many tool-to-process
- * connections each capability has on each side.
- */
-const releaseContext = (prepared) => ({
-  moves: releaseMovesOf(
-    prepared.map((component) => ({
-      name: component.name,
-      diff: component.diff,
-      comparable: !failed(component.right),
-      left: component.left,
-      right: component.right,
-    })),
-  ),
-  // A component whose new side REA could not analyze is left out: its old
-  // tools are unknown now, not gone.
-  connections: connectionTotals(
-    comparable(prepared).map((component) => component.left.app),
-    comparable(prepared).map((component) => component.right.app),
-  ),
-  registrations: registrationTotals(
-    comparable(prepared).map((component) => component.left.app),
-    comparable(prepared).map((component) => component.right.app),
-  ),
-  windows: releaseWindowPairing(prepared),
-});
-
-const comparable = (prepared) =>
-  prepared.filter((component) => !failed(component.right));
-
 // Grade one prepared component and attach source lines.
 const gradeComponent = async ({
   component,
@@ -365,19 +335,22 @@ const gradeComponent = async ({
   rea,
   options,
 }) => {
-  const { name, left, right, labels, comparison, aliases, diff, deployment } =
+  const { id, name, left, right, labels, comparison, aliases, diff } =
     component;
   const [rightSources, leftSources] = await Promise.all([
     openSide(rea, right),
     openSide(rea, left),
   ]);
   const { findings, network } = evaluateComponent({
+    id,
     name,
     left,
     right,
     comparison,
     diff,
-    deployment,
+    // Its own captures' deployment and the hosts every capture of the
+    // release started on (`ownHosts`); each capture was keyed by its own.
+    deployment: ownHosts(release, component),
     aliases,
     ambiguous: ambiguousBundles(left.app, right.app, aliases),
     baseline,
@@ -388,7 +361,7 @@ const gradeComponent = async ({
     releaseLabels: labelsOfRelease,
     // Without an analyzed old side every fact would look new, so only
     // coverage is graded and the analysis error decides the verdict.
-    coverageOnly: failed(left),
+    coverageOnly: unanalyzed(left),
     // Without a readable old capture, runtime facts cannot be compared.
     captureBaselineFailed: captureFailed(left),
   });
@@ -450,6 +423,9 @@ export const compareReleases = async ({
   for (const pair of pairs)
     collected.push({
       ...(await collectComponent({ ...pair, rea, outDir, options, errors })),
+      id: pair.id,
+      name: pair.name,
+      names: pair.names,
       renamed: pair.renamed,
     });
   const labels = releaseLabels(leftRelease, rightRelease, collected);

@@ -24,7 +24,6 @@ import {
 } from "./component-absence.mjs";
 import {
   APP_SOURCE,
-  absencePhrase,
   cite,
   heuristic,
   newGroups,
@@ -183,7 +182,7 @@ const sdkFindings = (context, placed) => {
           : "Review what data reaches the model and how its output is used.",
         evidence: facts.map((fact) =>
           cite(
-            `${fact.data.module ? `${fact.data.module} imports` : "Installed package"} ${fact.key}${fact.data.version ? ` ${fact.data.version}` : ""} (${absencePhrase(statuses.get(fact.key), context.labels.left)})`,
+            `${fact.data.module ? `${fact.data.module} imports` : "Installed package"} ${fact.key}${fact.data.version ? ` ${fact.data.version}` : ""} (${componentAbsence(context, { status: statuses.get(fact.key), held: false })})`,
             fact,
             APP_SOURCE,
           ),

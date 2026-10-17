@@ -2,7 +2,11 @@
 // service workers, direct eval, HTML sinks, renderer APIs, process sites,
 // MCP tool registrations and native helpers. A fact another component of
 // the old release had is new to this component only, so its claim names the
-// component instead of denying what REA saw elsewhere in the old release.
+// component instead of denying what REA saw elsewhere in the old release;
+// nor does a claim deny what an old component REA has no facts for may
+// have had, also for facts compared with the whole old release (SDKs,
+// packages, shipped original sources). Claims name each side of a renamed
+// component by that side's manifest name.
 import { renamedFrom } from "../diff.mjs";
 import { fileDigests, shippedBefore } from "../moves.mjs";
 import { oldRelease } from "./network.mjs";
@@ -42,22 +46,60 @@ export const heldElsewhere = (context, family, { key, status }) =>
   ABSENT.has(status) && (context.baseline.keys?.[family]?.has(key) ?? false);
 
 /**
+ * The manifest name a component has on one side ("left" or "right"), from
+ * the release's names by identity: `identity` is a component's identity
+ * (`context.id` for this one, `pairComponents`), and a renamed component's
+ * claims name the side they are about. A side the release lacks keeps the
+ * identity, the other side's manifest name.
+ */
+export const componentName = (context, side, identity = context.id) =>
+  context.release?.names?.get(identity)?.[side] ?? identity;
+
+/** "component a", "components a and b". */
+export const componentList = (names) =>
+  `component${names.length === 1 ? "" : "s"} ${names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`}`;
+
+/**
+ * The other components of the old release whose code REA has no facts for
+ * (`appKnown`), as a clause, or null: what this component lacked, they may
+ * have had.
+ */
+export const unknownElsewhere = (context) => {
+  const own = componentName(context, "left");
+  const names = (context.release?.unknown?.left ?? []).filter(
+    (name) => name !== own,
+  );
+  return names.length === 0
+    ? null
+    : `REA did not analyze the code of ${componentList(names)} of ${oldRelease(context)}`;
+};
+
+/**
  * How a per-component fact's absence from the old side is known: the shared
- * `absencePhrase` unless `held`, else that the component is new, or lacked
- * the fact, while another component of the old release `had` it
- * ("registered it").
+ * `absencePhrase` unless `held` or, for a fact absent from the component's
+ * completely covered old side, another component of the old release is
+ * unknown; else that the component is new, or lacked the fact, while
+ * another component of the old release `had` it ("registered it") or may
+ * have had it.
  */
 export const componentAbsence = (
   context,
   { status, counts = null, held, had },
 ) => {
-  if (!held) return absencePhrase(status, context.labels.left, counts);
-  const own = `component ${context.name}`;
+  const unknown = status === "added" ? unknownElsewhere(context) : null;
+  if (!held && unknown === null)
+    return absencePhrase(status, context.labels.left, counts);
   const where =
     context.left.target === null
-      ? `${own} is new`
-      : `${status === "added" ? "absent from" : "not observed in"} ${own} of ${context.labels.left}`;
-  return `${where}; another component of ${oldRelease(context)} ${had}`;
+      ? `component ${componentName(context, "right")} is new`
+      : `${status === "added" ? "absent from" : "not observed in"} component ${componentName(context, "left")} of ${context.labels.left}`;
+  return [
+    where,
+    held ? `another component of ${oldRelease(context)} ${had}` : null,
+    unknown === null ? null : `${unknown}, which may have had it`,
+  ]
+    .filter(Boolean)
+    .join("; ");
 };
 
 /**
@@ -84,8 +126,10 @@ export const contentOrigin = (context, module) => {
 
 // A site at a path the component's old side did not have, in a file whose
 // content that old side shipped under another path.
-const copiedPhrase = (context, status) =>
-  `${status === "added" ? "absent from" : "not observed in"} ${context.labels.left} at this path; ${context.labels.left} shipped this file's content under another path`;
+const copiedPhrase = (context, status) => {
+  const unknown = status === "added" ? unknownElsewhere(context) : null;
+  return `${status === "added" ? "absent from" : "not observed in"} ${context.labels.left} at this path; ${context.labels.left} shipped this file's content under another path${unknown === null ? "" : `; ${unknown}, which may have had it`}`;
+};
 
 /**
  * How a group of process sites (one module#method key, `newGroups`) was

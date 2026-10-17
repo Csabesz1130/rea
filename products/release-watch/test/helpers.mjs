@@ -92,6 +92,7 @@ export const evaluate = (
   } = {},
 ) =>
   evaluateComponent({
+    id: name,
     name,
     release,
     left,

@@ -3,12 +3,16 @@
 // REA examined there only in part or not at all, so the site is unknown now
 // (moves.mjs unknownCounterparts), not gone, and may be the one that moved.
 import { unknownCounterparts } from "../moves.mjs";
+import { componentName } from "./component-absence.mjs";
 
-/** The old release's label for a site of component `component`. */
+/**
+ * The old release's label for a site of the component whose identity is
+ * `component`, naming it as the old release did.
+ */
 export const oldLabel = (context, component) =>
-  component === context.name
+  component === context.id
     ? context.labels.left
-    : `${context.releaseLabels?.left ?? context.labels.left}, component ${component}`;
+    : `${context.releaseLabels?.left ?? context.labels.left}, component ${componentName(context, "left", component)}`;
 
 /**
  * `[note]` when an old site unknown now may be the counterpart of a gained
@@ -22,9 +26,9 @@ export const unexaminedNote = (context, moves, facts, { had, kind }) => {
   const more =
     matches.length > 1 ? ` (and ${matches.length - 1} more such sites)` : "";
   const now =
-    component === context.name
+    component === context.id
       ? context.labels.right
-      : `component ${component} of ${context.releaseLabels?.right ?? context.labels.right}`;
+      : `component ${componentName(context, "right", component)} of ${context.releaseLabels?.right ?? context.labels.right}`;
   return [
     `${oldLabel(context, component)} ${had(fact)} in ${fact.data.module}${more}, which REA could not fully examine in ${now}; this may be the same ${kind}, moved.`,
   ];

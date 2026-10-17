@@ -102,9 +102,19 @@ export const pairRuntimes = (left, right) =>
   });
 
 /**
- * Components pair by manifest name. A component left unpaired on each side
- * with the same kind of target is taken as renamed when it is the only such
- * pair, so its captures are still compared.
+ * Components pair by manifest name. Of the components left unpaired, one on
+ * each side with the same kind of target is taken as renamed when it is the
+ * only one of that kind on each side, or otherwise with the one whose files
+ * overlap most with its own, when at least MIN_OVERLAP of the two
+ * components' files (by path and size) are shared; so its captures are
+ * still compared.
+ *
+ * Each pair has `names`, the manifest name of each side (null for a side
+ * the release lacks), which claims about that side and its Evidence files
+ * use; `id`, its identity and lookup key: the new side's manifest name, else
+ * the old side's (a component the new release lacks keeps its old name,
+ * which no new component has: it would have paired by name); and `name`,
+ * its label for display, "old → new" for a renamed pair.
  */
 export const pairComponents = (leftRelease, rightRelease) =>
   pairBy(leftRelease.components, rightRelease.components, {
@@ -118,15 +128,19 @@ export const pairComponents = (leftRelease, rightRelease) =>
         (a === null ? Infinity : rightRelease.components.indexOf(a)) -
         (b === null ? Infinity : rightRelease.components.indexOf(b)),
     )
-    .map(([before, after]) => ({
-      name:
-        before && after && before.name !== after.name
-          ? `${before.name}-to-${after.name}`
-          : (after ?? before).name,
-      renamed:
+    .map(([before, after]) => {
+      const renamed =
         before && after && before.name !== after.name
           ? { from: before.name, to: after.name }
-          : null,
-      leftTarget: before?.target ?? null,
-      rightTarget: after?.target ?? null,
-    }));
+          : null;
+      return {
+        id: (after ?? before).name,
+        name: renamed
+          ? `${renamed.from} → ${renamed.to}`
+          : (after ?? before).name,
+        names: { left: before?.name ?? null, right: after?.name ?? null },
+        renamed,
+        leftTarget: before?.target ?? null,
+        rightTarget: after?.target ?? null,
+      };
+    });

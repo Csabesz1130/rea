@@ -190,8 +190,17 @@ describe("compare: a renamed component", { skip }, () => {
         component.renamed,
       ]),
       [
-        ["web-to-frontend", { from: "web", to: "frontend" }],
+        ["web → frontend", { from: "web", to: "frontend" }],
         ["api", null],
+      ],
+    );
+    // Each side's Evidence is filed under that side's manifest name.
+    const [web] = renamed.report.components;
+    assert.deepEqual(
+      [web.left.application.evidence_file, web.right.application.evidence_file],
+      [
+        "evidence/web-left-application.json",
+        "evidence/frontend-right-application.json",
       ],
     );
     const rules = renamed.report.findings.map((finding) => finding.rule);

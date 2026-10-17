@@ -4,6 +4,7 @@
 // a safeguard became unsafe, became a dynamic value or one REA did not
 // resolve, or changed dynamic value (compared in the form the facts give
 // it); a new window with no counterpart is judged on its own values.
+import { componentName } from "./component-absence.mjs";
 import { windowFile } from "./window-pairing.mjs";
 import { APP_SOURCE, cite, heuristic } from "./shared.mjs";
 
@@ -177,7 +178,7 @@ const beforeLines = (context, items) =>
   items
     .filter(({ was }) => was !== null)
     .flatMap(({ was, from, names }) => {
-      const where = `${context.labels.left}: BrowserWindow in ${windowFile(was)}${from && from !== context.name ? ` of component ${from}` : ""}`;
+      const where = `${context.labels.left}: BrowserWindow in ${windowFile(was)}${from && from !== context.id ? ` of component ${componentName(context, "left", from)}` : ""}`;
       const settings = names.map((name) => [name, settingOf(was, name)]);
       const omitted = settings
         .filter(([, setting]) => setting === null)
@@ -346,13 +347,13 @@ const regressionFinding = (context, group) => {
   };
 };
 
-/** RW-E02 findings for one component, from the release-wide window pairing. */
+/**
+ * RW-E02 findings for one component, from the release-wide window pairing,
+ * which decides which sides' windows take part.
+ */
 export const webPreferenceRegressions = (context) => {
-  const { left, right } = context;
-  if (!right.app) return [];
-  // An old side REA could not analyze is coverage, not an empty release.
-  if (left.target !== null && !left.app) return [];
-  const paired = context.windows.get(context.name);
+  if (!context.right.app) return [];
+  const paired = context.windows.get(context.id);
   const items = [
     ...paired.pairs,
     ...paired.added.map((now) => ({ was: null, now, tied: false, from: null })),
