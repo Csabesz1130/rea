@@ -63,7 +63,7 @@ const space = (from, to) =>
 // opening parenthesis differs from the space before the closing one, which
 // is taken to sit right before `.member` (REA reports no position for
 // either). The same space on both sides (`( x )`, or line breaks around
-// it) is layout.
+// it), one column more after it for a `?.` read, is layout.
 const leavesRoom = (range, node, path) => {
   const at = rangeOf(node);
   if (!comesBefore(range.start, at.start)) return false;
@@ -73,7 +73,13 @@ const leavesRoom = (range, node, path) => {
     line: range.end.line,
     column: range.end.column - members - 1,
   };
-  return space(opening, at.start) !== space(at.end, closing);
+  const before = space(opening, at.start);
+  const after = space(at.end, closing);
+  // Optional chaining (`(x)?.run`) puts one more column before the member.
+  return !(
+    before === after ||
+    (typeof before === "number" && after === before + 1)
+  );
 };
 
 // The expression a member read is read on, as REA's nodes place it: null

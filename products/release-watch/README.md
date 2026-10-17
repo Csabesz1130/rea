@@ -197,7 +197,7 @@ only as a guess, and so, as well as to that expression's member, is one
 whose single expression leaves uneven space in the parentheses: REA
 reports no node for `this`, so `(replica || this).run()` and
 `(this || replica).run()` may be on it, while the same space on both sides
-(`( x )`, or line breaks around it) is layout. A class runs as it is
+(`( x )`, line breaks around it, or `(x)?.run()`) is layout. A class runs as it is
 constructed: a call or read of it runs its code outside its methods, the
 constructor's included, and a method runs only through a member read,
 `new Svc().run()` included; an instance handed on whole, as a read of a

@@ -50,54 +50,65 @@ const methodsOf = (index, fn) =>
     (child) => child.kind === "method" && child.name !== "constructor",
   );
 
-// The methods of a class a `new` expression constructs whose instance no
-// binding REA reports takes and no member call is made on: it is passed,
-// returned or stored whole (`server.addTool(new GitTool())`, `return new
-// Svc()`, `this.git = new Git()`), and what then calls its methods REA's
-// facts do not show: each, as a guess.
-const leftMethods = (index, module, call, fn) => {
-  if (fn.kind !== "class" || initializes(index, module, call.range)) return [];
-  if (memberOn(index, module, call.range)) return [];
-  return methodsOf(index, fn).map((method) => ({
-    fn: method,
-    step: {
-      kind: "passed",
-      name: method.name,
-      owner: fn.name,
-      how: "guess",
-      location: null,
-    },
-  }));
-};
-
-// The methods a member call on a `new` expression REA resolved to a class
-// names (`new Svc().run()`), each with its step.
-const instanceMethods = (index, module, member) => {
-  const at = member.receiver.range;
+// The classes a `new` expression constructs, each `{ fn, steps }`: the
+// one REA resolved the call to in this module, else the one the read it
+// constructs leads to (an imported class, `new Runner()`).
+const constructedClasses = (state, module, call) => {
+  const { index } = state;
   const calls = index.calls.get(module) ?? [];
-  const classes = [];
+  const found = [];
   for (
-    let next = firstStarting(calls, at);
-    next < calls.length && sameStart(calls[next].range, at);
+    let next = firstStarting(calls, call.range);
+    next < calls.length && sameStart(calls[next].range, call.range);
     next += 1
   )
-    if (sameRange(calls[next].range, at))
-      for (const id of calls[next].callees) {
-        const fn = index.byId.get(id);
-        if (fn?.kind === "class") classes.push(fn);
-      }
-  return classes.flatMap((owner) =>
-    methodsOf(index, owner)
-      .filter((fn) => fn.name === member.path[0])
-      .map((fn) => ({
-        fn,
-        step: {
-          kind: "constructed",
-          name: fn.name,
-          owner: owner.name,
-          location: member.location,
-        },
-      })),
+    if (sameRange(calls[next].range, call.range))
+      for (const fn of calls[next].callees.map((id) => index.byId.get(id)))
+        if (fn?.kind === "class") found.push({ fn, steps: [callStep(fn)] });
+  if (found.length > 0) return found;
+  const read = constructedRead(index, module, call);
+  return read
+    ? followRead(state, read)
+        .filter((target) => target.fn?.kind === "class")
+        .map((target) => ({ fn: target.fn, steps: [target.step] }))
+    : [];
+};
+
+// The methods a `new` expression's instance may have run, each `{ fn,
+// steps }`: the one a member call on it names (`new Svc().run()`); none
+// when a binding REA reports takes the instance, whose member reads say;
+// else each, as a guess, since the instance is handed on whole (passed,
+// returned or stored: `server.addTool(new GitTool())`, `return new
+// Svc()`, `this.git = new Git()`) and REA's facts do not show what then
+// calls its methods.
+const constructedMethods = (state, module, call) => {
+  const { index } = state;
+  const member = memberOn(index, module, call.range);
+  if (!member && initializes(index, module, call.range)) return [];
+  return constructedClasses(state, module, call).flatMap(
+    ({ fn: owner, steps }) =>
+      methodsOf(index, owner)
+        .filter((fn) => !member || fn.name === member.path[0])
+        .map((fn) => ({
+          fn,
+          steps: [
+            ...steps,
+            member
+              ? {
+                  kind: "constructed",
+                  name: fn.name,
+                  owner: owner.name,
+                  location: member.location,
+                }
+              : {
+                  kind: "passed",
+                  name: fn.name,
+                  owner: owner.name,
+                  how: "guess",
+                  location: null,
+                },
+          ],
+        })),
   );
 };
 
@@ -124,12 +135,12 @@ const exploreCode = ({ state, record, visit }, entry) => {
     );
   for (const { exec } of runs(index.execs.get(current))) record(exec, steps);
   for (const call of runs(index.calls.get(current)))
-    for (const fn of call.callees.map((id) => index.byId.get(id))) {
-      if (!fn) continue;
-      visit({ fn }, [...steps, callStep(fn)]);
-      for (const target of leftMethods(index, current, call, fn))
-        visit(target, [...steps, target.step]);
-    }
+    for (const fn of call.callees.map((id) => index.byId.get(id)))
+      if (fn) visit({ fn }, [...steps, callStep(fn)]);
+  for (const call of runs(index.callSites.get(current)))
+    if (call.construct)
+      for (const target of constructedMethods(state, current, call))
+        visit({ fn: target.fn }, [...steps, ...target.steps]);
   for (const item of runs(index.reads.get(current)))
     if (!isOwnReceiver(index, current, item))
       for (const target of followRead(state, item))
@@ -140,9 +151,6 @@ const exploreCode = ({ state, record, visit }, entry) => {
     if (receiver === null || receiver.range === null || receiver.room)
       for (const target of followBareMember(state, member))
         visit(target, [...steps, ...target.steps]);
-    if (receiver?.range)
-      for (const target of instanceMethods(index, current, member))
-        visit(target, [...steps, target.step]);
   }
 };
 

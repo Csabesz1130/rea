@@ -189,10 +189,10 @@ const thisText = (step) => {
 const STEP_TEXT = {
   call: (step) =>
     step.constructs
-      ? `constructs ${step.name ?? "a class"} through a call REA resolved, which runs its constructor`
+      ? `constructs ${step.name ?? "a class"} through a call REA resolved`
       : `calls ${step.name ?? "a function"} through a call REA resolved`,
   constructed: (step) =>
-    `calls ${step.name} on the ${step.owner ?? "class"} instance a new expression REA resolved constructs, a method ${step.owner ?? "the class"} defines`,
+    `calls ${step.name} on the new instance, a method ${step.owner ?? "its class"} defines`,
   local: localText,
   value: valueText,
   initializer: initializerText,
@@ -202,7 +202,7 @@ const STEP_TEXT = {
   element: elementText,
   "this-member": thisText,
   passed: (step) =>
-    `constructs ${step.owner} and hands the instance on whole (passed, returned or stored), so any method of it may run, such as ${step.name}`,
+    `hands the new instance on whole (passed, returned or stored), so any method ${step.owner ?? "its class"} defines may run, such as ${step.name}`,
   import: importText,
   "unresolved-import": (step) =>
     `reads ${importedName(step)}, imported from ${step.module}, which Release Watch could not resolve to one of its functions, so it followed the whole module`,

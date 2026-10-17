@@ -52,7 +52,7 @@ describe("compare: what a tool reaches of a class", { skip }, () => {
     );
     assert.match(
       claims(found),
-      /calls run on the Svc instance a new expression REA resolved constructs, a method Svc defines; execFile\(\) runs there/,
+      /constructs Svc through a call REA resolved, which calls run on the new instance, a method Svc defines; execFile\(\) runs there/,
     );
   });
 
@@ -82,7 +82,7 @@ describe("compare: what a tool reaches of a class", { skip }, () => {
     );
     assert.match(
       claims(found),
-      /reads Svc\.create, a function Svc defines, which constructs Svc and hands the instance on whole \(passed, returned or stored\), so any method of it may run, such as (run|migrate)/,
+      /reads Svc\.create, a function Svc defines, which constructs Svc through a call REA resolved, which hands the new instance on whole \(passed, returned or stored\), so any method Svc defines may run, such as (run|migrate)/,
     );
   });
 
@@ -98,7 +98,7 @@ describe("compare: what a tool reaches of a class", { skip }, () => {
     );
     assert.match(
       claims(found),
-      /constructs Svc and hands the instance on whole \(passed, returned or stored\), so any method of it may run, such as (run|migrate)/,
+      /hands the new instance on whole \(passed, returned or stored\), so any method Svc defines may run, such as (run|migrate)/,
     );
     assert.ok(
       found.unknowns.some((unknown) =>
@@ -108,5 +108,46 @@ describe("compare: what a tool reaches of a class", { skip }, () => {
       ),
       JSON.stringify(found.unknowns),
     );
+  });
+});
+
+describe("compare: what a tool reaches of an imported class", { skip }, () => {
+  const RUNNER =
+    'import { execFile } from "node:child_process";\nexport class Runner {\n  constructor() { this.bin = "/usr/bin/git"; }\n  run(args) { return execFile(this.bin, args); }\n}\n';
+  const tools = (tool) => ({
+    "src/index.js": `${SDK}import { Runner } from "./runner.js";\n${server("1")}${ECHO}${tool}export default server;\n`,
+    "src/runner.js": RUNNER,
+  });
+
+  it("follows a member call on a new expression of an imported class to that method", () => {
+    const result = compare(
+      tools(""),
+      tools(
+        'server.registerTool("git", {}, async ({ args }) => { new Runner().run(args); return { content: [] }; });\n',
+      ),
+      MCP,
+    );
+    assert.equal(result.result.status, 2, result.result.stderr);
+    const found = finding(result, "RW-M01");
+    assert.equal(
+      found.title,
+      "MCP tool can start processes: registerTool() in src/index.js",
+    );
+    assert.match(
+      claims(found),
+      /reads Runner, imported from src\/runner\.js, which calls run on the new instance, a method Runner defines; execFile\(\) runs there/,
+    );
+  });
+
+  it("runs only the constructor of an imported class a local holds", () => {
+    const result = compare(
+      tools(""),
+      tools(
+        'server.registerTool("bin", {}, async () => { const runner = new Runner(); return { content: [{ type: "text", text: runner.bin }] }; });\n',
+      ),
+      MCP,
+    );
+    assert.equal(result.result.status, 0, result.result.stderr);
+    assert.deepEqual(graded(result), [["RW-M02", "medium"]]);
   });
 });

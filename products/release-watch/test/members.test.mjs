@@ -123,6 +123,15 @@ describe("facts: a receiver that may share its parentheses with this", () => {
       ]),
       { range: replica, global: null, room: true },
     );
+    // (await connect())?.run: the `?` is not room for this.
+    const awaited = at(9, 73, 88);
+    assert.deepEqual(
+      receiver([
+        read("run", at(9, 72, 94)),
+        node("task", "awaited expression", awaited),
+      ]),
+      { range: awaited, global: null, room: false },
+    );
     // (this || replica).run
     const later = at(2, 9, 16);
     assert.deepEqual(
