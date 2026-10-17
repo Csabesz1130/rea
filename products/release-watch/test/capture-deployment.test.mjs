@@ -279,9 +279,19 @@ describe("the deployment with vendor domains", () => {
 });
 
 describe("a capture REA could not read", () => {
+  // A side given as a capture only, as discover.mjs targets one.
+  const harTarget = (label, file) => ({
+    root: `/releases/${label}`,
+    kind: "har",
+    app: null,
+    capture: file,
+  });
   const unread = (label, file) =>
+    side(label, null, { target: harTarget(label, file) });
+  const read = (label, capture) =>
     side(label, null, {
-      target: { root: `/releases/${label}`, kind: "har", capture: file },
+      target: harTarget(label, `/releases/${label}/${capture.name}`),
+      capture,
     });
   const run = (left, right) =>
     evaluateComponent(
@@ -290,12 +300,13 @@ describe("a capture REA could not read", () => {
 
   it("says so for the old side in RW-C02 and its coverage gaps", () => {
     const left = unread("v1", "/releases/v1/old.har");
-    const right = side("v2", null, {
-      capture: captured("new.har", [
+    const right = read(
+      "v2",
+      captured("new.har", [
         page("https://app.acme.example/"),
         json("https://ingest.other.example/e"),
       ]),
-    });
+    );
     const findings = run(left, right);
     assert.deepEqual(rules(findings), ["RW-C02"]);
     assert.deepEqual(
@@ -310,7 +321,7 @@ describe("a capture REA could not read", () => {
   });
 
   it("says so for the new side", () => {
-    const left = side("v1", null, { capture: captured("old.har", OLD) });
+    const left = read("v1", captured("old.har", OLD));
     const right = unread("v2", "/releases/v2/new.har");
     const findings = run(left, right);
     assert.deepEqual(
