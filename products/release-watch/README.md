@@ -23,8 +23,13 @@ Release Watch owns the policy and the report.
 
 ## Quick start
 
+You need Node.js 22.19 or later on the 22 line, 24.11 or later, or 26 and
+later (the repository's `engines`), with npm and git. Release Watch is
+verified on Linux x64; the Electron demo also needs Go, `curl` and `unzip`.
+
 ```bash
 npm ci && npm run build:cached        # build REA (from the repository root)
+bash products/release-watch/demo/run-demo.sh cloud   # try it: exit status 2 means the release is blocked
 cd products/release-watch
 node bin/release-watch.mjs compare OLD NEW --vendor-domain vendor.example --out report
 ```
