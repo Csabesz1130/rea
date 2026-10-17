@@ -2,7 +2,8 @@
 // that code changed since the old release, and the changed-file tests the
 // coverage rules share.
 import { renamedFrom } from "../diff.mjs";
-import { examinedInPart } from "../facts/coverage.mjs";
+import { examinedInPart, failedFiles } from "../facts/coverage.mjs";
+import { rerunWith } from "../limits.mjs";
 import { shippedBefore } from "../moves.mjs";
 import { appKnown } from "../sides.mjs";
 import { gapLine, processGapsOf } from "./process-gaps.mjs";
@@ -97,16 +98,19 @@ const applicationGaps = (app) => {
         APP_SOURCE,
       ),
     );
-  for (const failure of app.analysisFailures.slice(0, MAX_FILES))
+  for (const { file, failures } of failedFiles(app).slice(0, MAX_FILES))
     lines.push(
       cite(
-        `REA could not analyze a file: ${failure.data.code ?? "unknown"} ${failure.data.message ?? ""}`.trim(),
-        failure,
+        `REA could not analyze ${file ?? "a file"}: ${failures.map(failureText).join("; ")}`,
+        failures[0],
         APP_SOURCE,
       ),
     );
   return lines;
 };
+
+const failureText = (failure) =>
+  `${failure.data.code ?? "unknown"} ${failure.data.message ?? ""}`.trim();
 
 // What a bundle's source map says changed: `{ known, changed }`, with the
 // original sources added, changed or removed since the old bundle's map.
@@ -161,8 +165,8 @@ const sourceMapLines = (changes) =>
 // The same file failed in the old release too, so higher limits may not help.
 const failedBefore = (context, files) => {
   const old = new Set(
-    (context.left.app?.analysisFailures ?? [])
-      .map((failure) => failure.location?.file)
+    failedFiles(context.left.app)
+      .map(({ file }) => file)
       .filter(Boolean),
   );
   return files.some((file) => old.has(file));
@@ -174,20 +178,38 @@ const recommendationFor = (context, { limited, changes }) => {
     named.length > 0
       ? ` Start with the original sources the source map names as changed.`
       : "";
+  // What a re-run would raise (limits.mjs), for the node limits REA reached.
+  const rerun = rerunWith(
+    context.options.analysis,
+    limited ? reachedLimits(context.right.app.coverage) : [],
+  );
   if (
     failedBefore(
       context,
       changes.map((change) => change.file),
     )
   )
-    return `REA could not examine these files in ${context.labels.left} either, so higher limits may not help; review them by other means.${review}`;
-  return limited
-    ? `Re-run with higher REA limits (--max-semantic-nodes-per-file, --max-heap-mb), or review the listed files by other means.${review}`
-    : `Review the listed files or captures by other means.${review}`;
+    return `REA could not examine these files in ${context.labels.left} either, so higher limits may not help; ${rerun.deep ? `re-run with ${rerun.text} to find out, or review` : "review"} them by other means.${review}`;
+  if (!limited)
+    return `Review the listed files or captures by other means.${review}`;
+  return `Re-run with ${rerun.text}, or review the listed files by other means.${review}`;
 };
 
-// Files REA examined only in part or not at all, or whose use of
-// child_process it classified no process call for.
+// The node limits REA reached, as the facts derive them from its own
+// limits and retained nodes: a file at the per-file ceiling, the global
+// ceiling, or script files the global ceiling left without facts.
+const reachedLimits = (coverage) => [
+  ...(coverage.semantic_ceiling_modules.length > 0
+    ? ["maxSemanticNodesPerFile"]
+    : []),
+  ...(coverage.semantic_global_limit_reached ||
+  (coverage.semantic_unreached_modules ?? []).length > 0
+    ? ["maxSemanticNodes"]
+    : []),
+];
+
+// Files REA examined only in part or not at all (examinedInPart), then
+// files with process uses REA did not classify and pages with inline scripts.
 const unexaminedFiles = (app, processGaps) => [
   ...examinedInPart(app),
   ...processGaps.map((unknown) => unknown.data.module),

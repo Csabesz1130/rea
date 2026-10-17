@@ -65,21 +65,82 @@ export const unreachedModules = (semantic, assets) => {
 };
 
 /**
- * The script files of one analyzed app REA examined only in part or not at
- * all: those at the per-file node ceiling, those the global limit left
- * unreached, every script file once the global limit is reached (REA does
- * not say which files it cut short), and files REA could not analyze.
+ * REA's analysis failures of one app by the file they name: `[{ file,
+ * failures }]`, one entry per file, and one per failure that names no file
+ * (`file` null). REA can record several failures for one file, such as its
+ * semantic graph and its expanded relationships exceeding its result budget.
  */
-export const examinedInPart = (app) => [
-  ...app.coverage.semantic_ceiling_modules,
-  ...(app.coverage.semantic_unreached_modules ?? []),
-  ...(app.coverage.semantic_global_limit_reached
-    ? app.assets.map((asset) => asset.key).filter(isScriptPath)
-    : []),
-  ...app.analysisFailures
-    .map((failure) => failure.location?.file)
-    .filter(Boolean),
-];
+export const failedFiles = (app) => {
+  const byFile = new Map();
+  (app?.analysisFailures ?? []).forEach((failure, index) => {
+    const file = failure.location?.file ?? null;
+    const key = file ?? `#${index}`;
+    if (!byFile.has(key)) byFile.set(key, { file, failures: [] });
+    byFile.get(key).failures.push(failure);
+  });
+  return [...byFile.values()];
+};
+
+/**
+ * What REA left unexamined in one app: `files`, each file it examined in
+ * part or not at all with why ("ceiling": the per-file node ceiling,
+ * "unreached": no semantic node after the global limit, "failed": a failed
+ * or unparsed file), and `anyFile`, true when REA reached its global node
+ * limit, so any file may be partial. Empty for no app.
+ */
+export const unexaminedIn = (app) => {
+  const files = new Map();
+  const add = (file, reason) => {
+    if (file && !files.has(file)) files.set(file, reason);
+  };
+  for (const file of app?.coverage.semantic_ceiling_modules ?? [])
+    add(file, "ceiling");
+  for (const file of app?.coverage.semantic_unreached_modules ?? [])
+    add(file, "unreached");
+  for (const { file } of failedFiles(app)) add(file, "failed");
+  return {
+    files,
+    anyFile: app?.coverage.semantic_global_limit_reached === true,
+  };
+};
+
+/**
+ * Files of one app whose imports REA's graph does not report: files REA
+ * recorded a failure for and no import relationship from, as when it
+ * rejected a file's expanded relationships on its result budget or could
+ * not analyze the file at all. What they import is unknown, not nothing.
+ */
+export const importsUnknown = (app) => {
+  const reported = (file) => {
+    const entry = app.modules.get(file);
+    return (
+      entry !== undefined &&
+      (entry.local.size > 0 ||
+        entry.externalImports.size > 0 ||
+        entry.unresolvedSites.length > 0)
+    );
+  };
+  return new Set(
+    failedFiles(app)
+      .map(({ file }) => file)
+      .filter((file) => file !== null && !reported(file)),
+  );
+};
+
+/**
+ * The files of one analyzed app REA examined only in part or not at all:
+ * each file unexaminedIn names, then every script file once REA reached its
+ * global node limit, since REA does not say which files it cut short.
+ */
+export const examinedInPart = (app) => {
+  const { files, anyFile } = unexaminedIn(app);
+  return [
+    ...files.keys(),
+    ...(anyFile
+      ? app.assets.map((asset) => asset.key).filter(isScriptPath)
+      : []),
+  ];
+};
 
 /**
  * A test for the files of one app whose semantic facts REA may not report

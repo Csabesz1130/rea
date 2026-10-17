@@ -6,6 +6,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { compareReleases } from "../src/compare.mjs";
+import { analysisSettings } from "../src/limits.mjs";
 import { createRea, resolveReaCommand } from "../src/rea.mjs";
 import { parseStep, recordHar } from "../src/record.mjs";
 import { renderHtml } from "../src/report/html.mjs";
@@ -32,10 +33,13 @@ release-watch.json manifest listing several components.
   --rea-compare <mode>    auto | always | never: ask REA to pair renamed modules
                           (default: auto, skipped when no file could be a
                           rename or the Evidence exceeds 64 MB)
+  --depth <depth>         standard | deep: REA's semantic node limits (default:
+                          standard). deep examines more of large bundles for
+                          more memory and time
   --max-semantic-nodes <n>, --max-semantic-nodes-per-file <n>, --max-heap-mb <n>
-                          Passed to REA's JavaScript analysis for large bundles
-  --jobs <1|2>            Analyze the two sides one at a time (1) to halve peak
-                          memory on large apps, or together (2, the default)
+                          Replace that one limit of the depth
+  --jobs <1|2>            Analyze the two sides one at a time (1) for lower peak
+                          memory, or together (2); default 2, 1 with deep
 
 record: loads <url> in Chromium, runs the steps, and saves a HAR without
 response bodies.
@@ -82,22 +86,17 @@ const OPTIONS = {
   "fail-on": { type: "string", default: "high" },
   rea: { type: "string" },
   "rea-compare": { type: "string", default: "auto" },
+  depth: { type: "string" },
   "max-semantic-nodes": { type: "string" },
   "max-semantic-nodes-per-file": { type: "string" },
   "max-heap-mb": { type: "string" },
-  jobs: { type: "string", default: "2" },
+  jobs: { type: "string" },
   step: { type: "string", multiple: true, default: [] },
   "settle-ms": { type: "string", default: "1000" },
   browser: { type: "string" },
   "browser-arg": { type: "string", multiple: true, default: [] },
   help: { type: "boolean", default: false },
 };
-
-const ANALYSIS_LIMITS = [
-  "max-semantic-nodes",
-  "max-semantic-nodes-per-file",
-  "max-heap-mb",
-];
 
 // "*.Example.com.", "https://example.com/x" and "example.com" name the same domain.
 const vendorDomain = (value) => {
@@ -147,8 +146,6 @@ const parse = () => {
     throw new Error("Expected: compare <old> <new>");
   if (values["fail-on"] !== "never" && !SEVERITIES.includes(values["fail-on"]))
     throw new Error(`--fail-on must be one of ${SEVERITIES.join(", ")}, never`);
-  if (!["1", "2"].includes(values.jobs))
-    throw new Error("--jobs must be 1 or 2");
   if (!["auto", "always", "never"].includes(values["rea-compare"]))
     throw new Error("--rea-compare must be one of auto, always, never");
   return {
@@ -163,13 +160,7 @@ const parse = () => {
       leftCapture: values["old-capture"] ?? null,
       rightCapture: values["new-capture"] ?? null,
       reaCompare: values["rea-compare"],
-      jobs: Number(values.jobs),
-      analysisArgs: ANALYSIS_LIMITS.flatMap((name) => {
-        if (values[name] === undefined) return [];
-        if (!/^[1-9]\d*$/.test(values[name]))
-          throw new Error(`--${name} must be a positive whole number`);
-        return [`--${name}`, values[name]];
-      }),
+      analysis: analysisSettings(values),
     },
   };
 };

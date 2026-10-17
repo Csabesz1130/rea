@@ -7,6 +7,7 @@ import path from "node:path";
 import { applicationFacts } from "./facts/application.mjs";
 import { fuseFacts, goFacts } from "./facts/binaries.mjs";
 import { captureFacts } from "./facts/capture.mjs";
+import { reaAnalysisArguments } from "./limits.mjs";
 
 const API_SURFACE_PAGE = 1000;
 
@@ -20,7 +21,7 @@ const analyzeApp = async (scope) => {
   const file = evidencePath(scope, "application");
   const result = await rea.run(
     "analyze-javascript-application",
-    [target.app, ...scope.analysisArgs],
+    [target.app, ...reaAnalysisArguments(scope.analysis)],
     {
       label: `analyze ${scope.label}`,
       saveTo: file,
@@ -175,7 +176,8 @@ const inspectCapture = async (scope) => {
 
 /**
  * Collect one side of one component. `component` is the side's manifest
- * name, `side` is "left" or "right"; `label` names it in progress lines.
+ * name, `side` is "left" or "right"; `label` names it in progress lines;
+ * `analysis` holds the limits.mjs settings for REA's JavaScript analysis.
  * Evidence files start with `${component}-${side}`, unique because a
  * manifest's names differ even without case. Errors are appended to
  * `errors`.
@@ -188,7 +190,7 @@ export const collectSide = async ({
   target,
   outDir,
   errors,
-  analysisArgs = [],
+  analysis,
 }) => {
   const scope = {
     rea,
@@ -198,7 +200,7 @@ export const collectSide = async ({
     target,
     outDir,
     errors,
-    analysisArgs,
+    analysis,
     prefix: `${component}-${side}`,
   };
   if (target.kind === "unknown") {

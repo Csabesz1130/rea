@@ -1,4 +1,5 @@
 // Runs REA CLI operations and returns their Evidence JSON with timing.
+import { constants } from "node:buffer";
 import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -64,13 +65,43 @@ const parse = (bytes) => {
   }
 };
 
+// Output REA completed that exceeds `maxOutputBytes`, the largest JSON text
+// Release Watch parses (V8 caps one string at about 512 MiB).
+const tooLarge = (outcome, maxOutputBytes) =>
+  outcome.code === 0 && outcome.stdout.length > maxOutputBytes;
+
+// Why a call failed, from REA's error output, else its stderr or exit code.
+// Complete output too large to parse says so, and where it was saved.
+const failureOf = (operation, outcome, parsed, { maxOutputBytes, saveTo }) => {
+  if (tooLarge(outcome, maxOutputBytes))
+    return {
+      operation,
+      code: "output_too_large",
+      message: `REA's output is ${Math.round(outcome.stdout.length / 2 ** 20)} MiB, more than Release Watch can read as one JSON text (${Math.floor(maxOutputBytes / 2 ** 20)} MiB)${saveTo === null ? "" : `; it is saved in full as ${saveTo}`}; lower --max-semantic-nodes`,
+    };
+  return {
+    operation,
+    code: parsed?.code ?? null,
+    message: [
+      parsed?.message ??
+        (lastStderrLine(outcome.stderr) || `exit code ${outcome.code}`),
+      ...issuesOf(parsed),
+    ].join("; "),
+  };
+};
+
 /**
  * Create a runner that records every REA call it makes. Each call resolves to
  * `{ ok: true, evidence, file }` or `{ ok: false, error }`; it never throws for
  * an REA failure, so callers can keep partial results. With `saveTo`, REA's
- * exact output bytes are written to that file.
+ * exact output bytes are written to that file, also when REA completed but
+ * its output is larger than `maxOutputBytes`, the largest output Release
+ * Watch parses (V8's string limit).
  */
-export const createRea = (resolved, { onCall = () => {} } = {}) => {
+export const createRea = (
+  resolved,
+  { onCall = () => {}, maxOutputBytes = constants.MAX_STRING_LENGTH } = {},
+) => {
   const calls = [];
   const run = async (
     operation,
@@ -86,10 +117,13 @@ export const createRea = (resolved, { onCall = () => {} } = {}) => {
       "json",
     ]);
     const elapsedMs = Math.round(performance.now() - started);
-    const parsed = parse(outcome.stdout);
+    const parsed =
+      outcome.stdout.length > maxOutputBytes ? null : parse(outcome.stdout);
     const failed =
       outcome.code !== 0 || parsed === null || typeof parsed.error === "string";
-    if (!failed && saveTo !== null) writeFileSync(saveTo, outcome.stdout);
+    // Complete Evidence is kept even when Release Watch cannot read it.
+    if ((!failed || tooLarge(outcome, maxOutputBytes)) && saveTo !== null)
+      writeFileSync(saveTo, outcome.stdout);
     const record = {
       label,
       operation,
@@ -103,15 +137,7 @@ export const createRea = (resolved, { onCall = () => {} } = {}) => {
     if (!failed) return { ok: true, evidence: parsed, file: saveTo };
     return {
       ok: false,
-      error: {
-        operation,
-        code: parsed?.code ?? null,
-        message: [
-          parsed?.message ??
-            (lastStderrLine(outcome.stderr) || `exit code ${outcome.code}`),
-          ...issuesOf(parsed),
-        ].join("; "),
-      },
+      error: failureOf(operation, outcome, parsed, { maxOutputBytes, saveTo }),
     };
   };
   return { run, calls };

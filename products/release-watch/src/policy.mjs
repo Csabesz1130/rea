@@ -1,6 +1,6 @@
 // Turns a component diff into graded findings, and findings into a verdict.
 import { deploymentHosts } from "./facts/capture.mjs";
-import { partlyExamined } from "./facts/coverage.mjs";
+import { partlyExamined, unexaminedIn } from "./facts/coverage.mjs";
 import { aiPack, shippedTokens } from "./rules/ai.mjs";
 import { browserSdkUses } from "./rules/ai-placement.mjs";
 import { coveragePack } from "./rules/coverage.mjs";
@@ -131,9 +131,41 @@ const shippedTokensOf = (leftSides) => {
   };
 };
 
+// Why REA's facts do not establish one old file, as a clause.
+const UNEXAMINED = {
+  ceiling: "could not fully analyze",
+  failed: "could not fully analyze",
+  unreached: "gave no semantic facts to",
+};
+
+// Findings that report what REA examined, not a fact new in the release.
+const COVERAGE_NOTES = new Set(["RW-C01", "RW-C02", "RW-C03", "RW-C04"]);
+
+// Old files REA did not fully examine outside a finding's own files, and
+// REA's global node limit on the old release, as one sentence naming two of
+// the files: the same text closes every finding about the new release.
+const elsewhereUnknowns = (left, { elsewhere, anyFile }) => {
+  if (elsewhere.length === 0)
+    return anyFile
+      ? [
+          `REA reached its global node limit on ${left}, so it may have examined any of its files only in part, and what is reported here may have been there before.`,
+        ]
+      : [];
+  const what = [...new Set(elsewhere.map(([, why]) => UNEXAMINED[why]))].join(
+    " or ",
+  );
+  const named = elsewhere.slice(0, 2).map(([file]) => file);
+  const more = elsewhere.length - named.length;
+  return [
+    `REA ${what} ${elsewhere.length} other file${elsewhere.length === 1 ? "" : "s"} of ${left} (${named.join(", ")}${more > 0 ? ` and ${more} more` : ""})${anyFile ? " and reached its global node limit there" : ""}, so what is reported here may have been there before.`,
+  ];
+};
+
 // What limits a finding located in a given file: a bundle Release Watch
-// could not pair with its old version, or an old file REA could not fully
-// analyze, so the "new" fact may have been there before.
+// could not pair with its old version, or an old file REA examined only in
+// part or not at all (unexaminedIn), so the "new" fact may have been there
+// before; and, for findings about the new release, the old files elsewhere
+// REA did not fully examine and its global node limit on the old release.
 const locatedUnknowns = (finding, component) => {
   const files = [
     ...new Set(
@@ -141,23 +173,20 @@ const locatedUnknowns = (finding, component) => {
     ),
   ];
   const ambiguous = component.ambiguous ?? new Set();
-  const oldApp = component.left?.app;
-  const unexamined = new Set([
-    ...(oldApp?.analysisFailures ?? [])
-      .map((failure) => failure.location?.file)
-      .filter(Boolean),
-    ...(oldApp?.coverage.semantic_ceiling_modules ?? []),
-  ]);
-  const elsewhere = [...unexamined].filter((file) => !files.includes(file));
+  const unexamined = unexaminedIn(component.left?.app);
+  const elsewhere = [...unexamined.files].filter(
+    ([file]) => !files.includes(file),
+  );
   return [
     ...files.flatMap((file) =>
       located(component, { file, ambiguous, unexamined }),
     ),
-    ...(elsewhere.length > 0 && finding.rule !== "RW-C01"
-      ? [
-          `REA could not fully analyze ${elsewhere.length} file${elsewhere.length === 1 ? "" : "s"} of ${component.labels.left} (${elsewhere.slice(0, 3).join(", ")}), so what is reported here may have been there before.`,
-        ]
-      : []),
+    ...(COVERAGE_NOTES.has(finding.rule)
+      ? []
+      : elsewhereUnknowns(component.labels.left, {
+          elsewhere,
+          anyFile: unexamined.anyFile,
+        })),
   ];
 };
 
@@ -167,9 +196,9 @@ const located = (component, { file, ambiguous, unexamined }) => [
         `Several bundles share ${file}'s name without its content hash, so Release Watch could not pair it with its old version; what it reports here may predate this release.`,
       ]
     : []),
-  ...(unexamined.has(file)
+  ...(unexamined.files.has(file)
     ? [
-        `REA could not fully analyze ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
+        `REA ${UNEXAMINED[unexamined.files.get(file)]} ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
       ]
     : []),
 ];

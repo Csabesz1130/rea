@@ -3,6 +3,7 @@
 import path from "node:path";
 
 import { captureUnread } from "../facts/capture.mjs";
+import { failedFiles, unexaminedIn } from "../facts/coverage.mjs";
 
 // What Release Watch itself never examines; true of every run.
 export const RELEASE_WATCH_LIMITS = [
@@ -18,8 +19,40 @@ const COMPARISON_NOTES = {
   size: "REA module pairing was skipped because the Evidence is larger than 64 MB; renamed modules are paired by name only.",
 };
 
-// Specific gaps in what REA examined on one side, then REA's standing
-// limitations for the operations that ran.
+// How many files a coverage line names in full; report.json keeps them all.
+const MAX_NAMED = 10;
+
+const named = (files) =>
+  `${files.slice(0, MAX_NAMED).join(", ")}${files.length > MAX_NAMED ? ` and ${files.length - MAX_NAMED} more` : ""}`;
+
+// What REA examined in part or not at all on one side, as facts/coverage.mjs
+// reads it: files at the per-file ceiling, files the global limit left
+// without semantic facts, the global limit itself, and failed files.
+const unexaminedGaps = (app) => {
+  const { files, anyFile } = unexaminedIn(app);
+  const why = (reason) =>
+    [...files].filter(([, of]) => of === reason).map(([file]) => file);
+  const ceiling = why("ceiling");
+  const unreached = why("unreached");
+  const failed = failedFiles(app).length;
+  return [
+    ...(ceiling.length > 0
+      ? [`Files at the per-file node ceiling: ${named(ceiling)}.`]
+      : []),
+    ...(unreached.length > 0
+      ? [
+          `${unreached.length} script file(s) with no semantic facts after REA's global node limit: ${named(unreached)}.`,
+        ]
+      : []),
+    ...(anyFile
+      ? [
+          "REA reached its global node limit, so any file it analyzed may have been examined only in part.",
+        ]
+      : []),
+    ...(failed > 0 ? [`REA could not analyze ${failed} file(s).`] : []),
+  ];
+};
+
 const appGaps = (app) => {
   const { coverage } = app;
   return [
@@ -36,14 +69,7 @@ const appGaps = (app) => {
           `Semantic graph truncated${coverage.semantic_limits.length ? ` (limits: ${coverage.semantic_limits.join(", ")})` : ""}.`,
         ]
       : []),
-    ...(coverage.semantic_ceiling_modules.length > 0
-      ? [
-          `Files at the per-file node ceiling: ${coverage.semantic_ceiling_modules.join(", ")}.`,
-        ]
-      : []),
-    ...(app.analysisFailures.length > 0
-      ? [`REA could not analyze ${app.analysisFailures.length} file(s).`]
-      : []),
+    ...unexaminedGaps(app),
   ];
 };
 

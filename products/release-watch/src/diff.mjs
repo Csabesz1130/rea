@@ -1,6 +1,7 @@
 // Keyed comparison of capability facts across two releases. Absence counts as
 // "added"/"removed" only when the other side's REA coverage is complete;
 // otherwise the item stays "not-previously-observed"/"no-longer-observed".
+import { importsUnknown } from "./facts/coverage.mjs";
 import { isScriptPath, withoutHash } from "./facts/modules.mjs";
 
 const groupByKey = (facts) => {
@@ -311,6 +312,32 @@ const pool = (facts, pools) =>
         return { ...fact, key: `${bare}${fact.key.slice(modulePath.length)}` };
       });
 
+// An import seen on one side only, from a file whose imports REA's graph
+// does not report on the other side (importsUnknown), is not compared: the
+// other side may import it there.
+const comparedImports = (items, leftApp, rightApp, aliases) => {
+  const unknown = {
+    left: leftApp ? importsUnknown(leftApp) : new Set(),
+    right: rightApp ? importsUnknown(rightApp) : new Set(),
+  };
+  if (unknown.left.size === 0 && unknown.right.size === 0) return items;
+  const oldPath = renamedFrom(aliases);
+  const counterpart = {
+    left: (module) => oldPath(module) ?? module,
+    right: (module) => aliases.get(module)?.path ?? module,
+  };
+  const hidden = (facts, other) =>
+    facts.some((fact) =>
+      unknown[other].has(counterpart[other](fact.data.module)),
+    );
+  return items.map((item) =>
+    (item.left.length === 0 && hidden(item.right, "left")) ||
+    (item.right.length === 0 && hidden(item.left, "right"))
+      ? { ...item, status: "not-compared" }
+      : item,
+  );
+};
+
 /** Compare the application facts of two releases, family by family. */
 export const diffApplications = (
   leftApp,
@@ -334,7 +361,7 @@ export const diffApplications = (
     );
   const pools =
     leftApp && rightApp ? pooledNames(left, right, aliases) : new Set();
-  return Object.fromEntries(
+  const diffs = Object.fromEntries(
     FAMILIES.map(
       ({ family, coverage, moduleKeyed, equal, unique, countable }) => [
         family,
@@ -354,6 +381,10 @@ export const diffApplications = (
       ],
     ),
   );
+  return {
+    ...diffs,
+    imports: comparedImports(diffs.imports, leftApp, rightApp, aliases),
+  };
 };
 
 // Capture families: a capture records one session, so absence is never

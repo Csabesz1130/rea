@@ -77,16 +77,18 @@ comments), `report.json`, and every REA Evidence record it used under
 `high`); `1` when REA produced no facts at all for a component and no finding
 reached the threshold; and `0` otherwise, so a CI job can gate the rollout.
 Code REA examined only in part is not an error: it is reported as RW-C01,
-high when the unexamined code changed.
+high when the unexamined code changed, and `--depth deep` examines more of
+large bundles ([Limits and cost](#limits-and-cost)).
 
-| Option                                                                               | Effect                                                                                                                |
-| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `--vendor-domain <domain>`                                                           | Hosts on this domain are first party; repeat for several. `*.x.com` and URLs are accepted.                            |
-| `--fail-on <severity>`                                                               | `critical`, `high`, `medium`, `low` or `never`                                                                        |
-| `--rea-compare <auto\|always\|never>`                                                | When to ask REA to pair renamed modules; `auto` skips it when no file could be a rename or the Evidence exceeds 64 MB |
-| `--max-semantic-nodes <n>`, `--max-semantic-nodes-per-file <n>`, `--max-heap-mb <n>` | Passed to REA's JavaScript analysis when large bundles are truncated                                                  |
-| `--jobs <1\|2>`                                                                      | Analyze the two sides together (2, the default) or one at a time (1), which halves peak memory                        |
-| `--rea <path>`                                                                       | REA CLI to use (default: this checkout, then `rea` on `PATH`)                                                         |
+| Option                                                                               | Effect                                                                                                                      |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `--vendor-domain <domain>`                                                           | Hosts on this domain are first party; repeat for several. `*.x.com` and URLs are accepted.                                  |
+| `--fail-on <severity>`                                                               | `critical`, `high`, `medium`, `low` or `never`                                                                              |
+| `--rea-compare <auto\|always\|never>`                                                | When to ask REA to pair renamed modules; `auto` skips it when no file could be a rename or the Evidence exceeds 64 MB       |
+| `--depth <standard\|deep>`                                                           | REA's semantic node limits ([Limits and cost](#limits-and-cost)); `deep` examines more of large bundles, one side at a time |
+| `--max-semantic-nodes <n>`, `--max-semantic-nodes-per-file <n>`, `--max-heap-mb <n>` | Replace that one limit of the depth                                                                                         |
+| `--jobs <1\|2>`                                                                      | Analyze the two sides together (2) or one at a time (1), which lowers peak memory; default 2, and 1 with `--depth deep`     |
+| `--rea <path>`                                                                       | REA CLI to use (default: this checkout, then `rea` on `PATH`)                                                               |
 
 ### Recording a capture
 
@@ -272,6 +274,14 @@ passed.
   side REA could not analyze or holds nothing REA can analyze is graded on
   coverage only, and its analysis error decides the verdict; one whose old
   side is a capture only has its new code reported as not observed before.
+- An old file REA examined only in part or not at all (at the per-file node
+  ceiling, left without semantic facts after the global node limit, or
+  failed) is unknown, not absent: a finding in it, or beside it, says what it
+  reports may predate the release, and once the global limit is reached any
+  old file may be partial. An import of a file whose imports REA's graph does
+  not report on the other side (REA recorded a failure and no import
+  relationship for it) is "not compared" rather than new or gone, and RW-D01
+  does not call the package new.
 - Correlations are labelled heuristic: an IPC handler reaching an imported
   exec site, an MCP registration containing one, a request attributed to a URL
   literal in the same module, a module counted as browser code because a page
@@ -501,24 +511,176 @@ captures itself. The saved Evidence under `evidence/` is REA's output
 verbatim and can hold the raw values a release ships; treat that directory
 as sensitive.
 
-## Cost
+## Limits and cost
 
-Measured on a 4-core Linux container (16 GB): wall time, CPU (user + system
-of all processes) and peak process-tree memory sampled every 100 ms. Ranges
-are three warm runs after a first run; the first runs fell inside or just
-above them. No model is called, so no tokens are used.
+REA's JavaScript analysis keeps a bounded number of semantic nodes (the
+functions, calls, bindings, requests and literals the rules read) per file and
+per side, with a bounded analyzer heap. Code a limit cuts short is reported as
+RW-C01, never passed, and RW-C01 names the depth or option that would raise
+the limit REA reached, with the limits that re-run would use: an option you
+gave keeps its value at any depth, so RW-C01 names it when it is the limit
+that binds. `--depth` picks the limits:
 
-| Review                                                         | Wall        | CPU     | Peak memory |
-| -------------------------------------------------------------- | ----------- | ------- | ----------- |
-| Acme Notes Cloud (2 components, HAR)                           | 9.1–9.9 s   | 25–27 s | 1.3 GB      |
-| Acme Notes Electron distribution                               | 9.8–10.7 s  | 32–33 s | 1.7 GB      |
-| `@modelcontextprotocol/server-everything` 2026.1.26 → 2026.7.4 | 14.8–15.3 s | 32–33 s | 0.9 GB      |
-| `swagger-ui-dist` 5.32.15 → 5.33.1 (12 MB of bundles, one run) | 234 s       | 9.7 min | 5.3 GB      |
+| Depth                | Semantic nodes | In one file | Analyzer heap | Sides at once |
+| -------------------- | -------------- | ----------- | ------------- | ------------- |
+| `standard` (default) | 150 000        | 120 000     | 1024 MiB      | 2             |
+| `deep`               | 220 000        | 200 000     | 1024 MiB      | 1             |
 
-Each side's JavaScript analysis needs about 2.5 GB at the swagger-ui scale, so
-use `--jobs 1` on runners with less than 6 GB of memory; it roughly doubles
-wall time. Saved Evidence for such a release is about 600 MB. Neither side's
-Evidence is reused between runs yet.
+`--max-semantic-nodes`, `--max-semantic-nodes-per-file`, `--max-heap-mb` and
+`--jobs` each replace that one value of the depth, so `--depth deep --jobs 2`
+analyzes both sides at once with the deep limits. `report.json` records the
+settings under `run.analysis`, and each application Evidence records the
+limits REA received. REA accepts up to 1 000 000 nodes and a 16 384 MiB heap;
+its own defaults, which Release Watch used before, are 100 000 nodes, 20 000
+in one file and 1024 MiB.
+
+- **`standard`** suits most reviews: with both sides at once, 17 of the 22
+  release pairs measured peaked under 3.2 GiB and the other five at
+  3.2–3.8 GiB; the highest, `flowise-ui` and `swagger-ui-dist` at 3.8 GiB
+  (4.1 GB), sit at the edge of a 4 GB budget. How far
+  the two sides' analyses overlap moves that peak: `swagger-ui-dist` peaked
+  at 3.6 GiB at REA's defaults here and at 5.2 GiB in an earlier run on an
+  idle machine. `--jobs 1` runs the two analyses in sequence, so their
+  peaks cannot add up: `@nuxt/devtools` then peaked at 2.1 GiB instead of
+  3.7 GiB. Use it on runners with less than 8 GB of memory, or for a
+  release that reaches the global limit on both sides.
+- **`deep`** helps a release dominated by one or two large bundles when
+  RW-C01 names it: it examined `deep-chat`, `@notionhq/notion-mcp-server`
+  and `@vitest/ui` in full, which `standard` could not, for 1.2–1.8 times
+  the CPU time. Analyzing one side at a time, its peaks were close to or
+  below `standard`'s for the same release: 1.9–2.5 GiB against 2.6–2.8 GiB
+  for `@notionhq/notion-mcp-server` over three runs each, 2.4 GiB against
+  2.5 GiB for `@vitest/ui`.
+- **Releases of many bundles** gain little from `deep`.
+  desktop-commander and `flowise-ui` reached the deep global limit with the
+  same files unreached as at `standard` (145 and 323), and `@nuxt/devtools`
+  left 38 instead of 78. On such releases `standard` can leave more files
+  without any semantic facts than REA's defaults did, since one bundle can
+  take more of the global limit: desktop-commander 0.2.52 had 2 files at
+  the file limit and 40 unreached at the defaults, and none at the file
+  limit but 128 unreached (64 of them `.js`) at `standard`. Every finding
+  about the new release then says what it reports may have been there
+  before, naming some of those old files. REA also admits analysis results
+  only up to about half its CLI process's heap limit, which Node.js sets
+  from the machine's memory (8 GiB here) and no option here raises. At the
+  deep depth REA rejected two `@nuxt/devtools` files and four
+  `swagger-ui-dist` files on that budget ("exceeds the parent's result
+  budget"; three at 200 000 nodes). The budget follows REA's live heap, so
+  which files it rejects can differ between runs, and a rejected file can be
+  missing from the application graph, so the report's file inventory lists it
+  as new or gone although both releases ship it. A file whose relationships
+  REA rejected has no import facts either: at the deep depth the old
+  `swagger-ui.js` of `swagger-ui-dist` 5.32.15 imports nothing REA reports, so
+  RW-D01 and the imports inventory list the 31 packages the new one imports as
+  not compared, where `standard` finds one new package
+  (`@tanstack/react-virtual`).
+
+The values follow these measurements:
+
+- **Memory follows retained nodes.** Each side's REA process holds its
+  semantic graph while it writes the Evidence, and Release Watch then holds
+  both sides' facts. `@nuxt/devtools`, which reaches the global limit on
+  both sides, peaked at 2.6, 3.7 and 4.8 GiB at 100 000, 150 000 and
+  200 000 nodes: 150 000 kept it under 4 GB, 200 000 did not.
+- **The largest single files** needed 116 000 nodes (`aicommits`), 164 000
+  (`@notionhq/notion-mcp-server`), 185 000 (`@vitest/ui`) and 191 000
+  (`@browserbasehq/stagehand`). The standard per-file limit covers the
+  first and the deep one the rest; a file that takes most of the global
+  limit leaves the rest of the side less, as `deep-chat`'s two bundles
+  did at the standard depth.
+- **Release Watch reads a side's Evidence as one JSON text**, which V8 caps
+  at 512 MiB. Evidence is 1.7–2.2 KiB per retained node, so about 240 000
+  nodes fit at the densest measured; the deep global limit stays below
+  that, and a side past it fails with `output_too_large` instead of being
+  read in part, with REA's complete Evidence still saved under `evidence/`.
+- **A larger heap rescued no file that exhausted it.** `llm-cli`'s 1.5 MB
+  bundle ran out at 1024, 2048 and 4096 MiB and `rapidoc`'s at 1024 and
+  2048 MiB; at 8192 MiB both ran past REA's 300 s per-file deadline, which
+  fails the whole side. Files of up to 191 000 nodes fit in 1024 MiB, so
+  both depths keep REA's default heap. `opencommit`'s 5 MB single-file
+  bundle overflows REA's parser stack at any heap.
+
+Measured on a 4-core Linux container (16 GB, Node.js 22) that other jobs
+shared at a load average of 0.5–24, with CPU as user + system time of every
+process and peak process-tree memory sampled every 100 ms. Runs of one pair
+differ: CPU by 6 % to almost half (`aicommits` at `standard` took 4.5–4.8
+min, `@nuxt/devtools` 8.0 min at a load of 5–10 and 11.8 min, in less wall
+time, at a load of 2), and peaks with both sides at once by up to 0.5 GiB
+(`aicommits` at `standard` peaked at 2.4, 2.7 and 2.9 GiB), so a difference
+within that does not tell two depths apart. Wall times are upper bounds. A
+range covers the runs made: a first run and two repeats for the first four
+pairs, two more of `firecrawl-mcp`, and two to four separate runs, some made
+after this change, for `aicommits`, `@notionhq/notion-mcp-server`,
+desktop-commander, `@nuxt/devtools` and `swagger-ui-dist`. Release Watch
+reuses nothing between runs, so a repeat differs only by the operating
+system's file cache and the machine's load. Other rows are single runs. The
+standard runs of stagehand and `flowise-ui`, and one each of
+desktop-commander, `@nuxt/devtools` and `swagger-ui-dist`, ran the release
+before this change with the standard limits given as options, which passes
+REA the same limits. "Not examined" is what RW-C01 reports for the new
+release, and the verdict lists the rules that found something high or
+critical. The table leaves out six pairs whose coverage and findings did not
+change with the limits (the Acme Notes Electron app, `ai-renamer`,
+`@codacy/codacy-mcp`, `mcp-server-kubernetes`, `opencommit` and `rapidoc`)
+and `aicommit2`, whose 31 600-node bundle the standard depth examined in
+full, like `aicommits`'.
+
+| Release pair                                                   | Limits                 | Wall         | CPU          | Peak (GiB) | Not examined in the new release                                                                 | Verdict                             |
+| -------------------------------------------------------------- | ---------------------- | ------------ | ------------ | ---------- | ----------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Acme Notes Cloud (2 components, HAR)                           | REA defaults, standard | 11–29 s      | 23–25 s      | 1.1–1.3    | —                                                                                               | block, the same findings            |
+| Acme Notes Electron distribution                               | REA defaults, standard | 17–46 s      | 29–34 s      | 1.4–1.5    | —                                                                                               | block, the same findings            |
+| `@modelcontextprotocol/server-everything` 2026.1.26 → 2026.7.4 | REA defaults, standard | 20–40 s      | 27–32 s      | 0.8–0.9    | —                                                                                               | review, the same findings           |
+| `firecrawl-mcp` 3.30.1 → 3.30.2                                | REA defaults           | 42–58 s      | 72–80 s      | 1.3–1.4    | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
+|                                                                | standard               | 40–85 s      | 75–97 s      | 1.2–1.4    | —                                                                                               | pass                                |
+| `aicommits` 4.1.0 → 4.1.1                                      | REA defaults           | 39 s         | 81 s         | 1.3        | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
+|                                                                | standard               | 2.1–4.4 min  | 4.5–4.8 min  | 2.4–2.9    | unclassified `child_process` uses                                                               | block (RW-P01 high, RW-C01 high)    |
+|                                                                | standard, `--jobs 1`   | 3.8 min      | 4.7 min      | 1.5        | unclassified `child_process` uses                                                               | block (RW-P01 high, RW-C01 high)    |
+| `@notionhq/notion-mcp-server` 2.4.1 → 2.5.0                    | REA defaults           | 66 s         | 2.2 min      | 1.5        | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
+|                                                                | standard               | 2.4–2.9 min  | 4.6–5.3 min  | 2.6–2.8    | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
+|                                                                | deep                   | 5.5–8.6 min  | 6.1–6.9 min  | 1.9–2.5    | —                                                                                               | pass                                |
+| `@vitest/ui` 5.0.4 → 5.0.5                                     | REA defaults           | 49 s         | 103 s        | 1.5        | 1 file at the file limit, inline scripts                                                        | review                              |
+|                                                                | standard               | 2.9 min      | 4.3 min      | 2.5        | 1 file at the file limit, inline scripts                                                        | review                              |
+|                                                                | deep                   | 6.9 min      | 7.8 min      | 2.4        | inline scripts                                                                                  | review                              |
+| `deep-chat` 2.4.1 → 2.4.2                                      | REA defaults           | 2.5 min      | 2.8 min      | 1.8        | 2 files at the file limit                                                                       | block (RW-C01 high)                 |
+|                                                                | standard               | 3.9 min      | 5.2 min      | 3.1        | 329 files unreached (all `.d.ts`), global limit                                                 | block (RW-C01 high)                 |
+|                                                                | deep                   | 7.2 min      | 6.6 min      | 2.2        | —                                                                                               | review                              |
+| `task-master-ai` 0.43.0 → 0.43.1                               | REA defaults           | 5.0 min      | 3.8 min      | 2.0        | 2 files at the file limit, unclassified `child_process` uses                                    | block (RW-C01 high)                 |
+|                                                                | standard               | 2.9 min      | 4.4 min      | 3.6        | unclassified `child_process` uses                                                               | block (RW-C01 high)                 |
+| `@browserbasehq/stagehand` 4.1.0 → 4.2.0                       | REA defaults           | 4.1 min      | 3.3 min      | 1.7        | 2 files at the file limit, unclassified `child_process` uses                                    | block (RW-C01 high)                 |
+|                                                                | standard               | 4.3 min      | 5.3 min      | 3.1        | 1 file at the file limit, global limit                                                          | block (RW-C01 high)                 |
+|                                                                | deep                   | 7.4 min      | 7.1 min      | 2.9        | global limit                                                                                    | block (RW-C01 high)                 |
+| `@wonderwhy-er/desktop-commander` 0.2.52 → 0.3.0               | REA defaults           | 7.0 min      | 6.0 min      | 2.3        | 2 files at the file limit, 108 files unreached, global limit, unclassified `child_process` uses | block (RW-P01 high ×2, RW-C01 high) |
+|                                                                | standard               | 3.7–5.3 min  | 6.8–8.4 min  | 3.7        | 145 files unreached, global limit, unclassified `child_process` uses                            | block (RW-P01 high ×2, RW-C01 high) |
+|                                                                | deep                   | 9.8 min      | 8.6 min      | 3.2        | 145 files unreached, global limit, unclassified `child_process` uses                            | block (RW-P01 high ×2, RW-C01 high) |
+| `@nuxt/devtools` 3.4.2 → 3.4.3                                 | REA defaults           | 7.7 min      | 7.3 min      | 2.6        | 2 files at the file limit, 106 files unreached, global limit, inline scripts                    | block (RW-C01 high, RW-C06 high)    |
+|                                                                | standard               | 4.7–5.5 min  | 8.0–11.8 min | 3.7        | 78 files unreached, global limit, inline scripts                                                | block (RW-C01 high, RW-C06 high)    |
+|                                                                | standard, `--jobs 1`   | 9.4 min      | 11.3 min     | 2.1        | 78 files unreached, global limit, inline scripts                                                | block (RW-C01 high, RW-C06 high)    |
+|                                                                | 200 000 nodes, 2 sides | 8.1 min      | 10.9 min     | 4.8        | 41 files unreached, global limit, inline scripts                                                | block, the same findings            |
+|                                                                | deep                   | 10.0 min     | 11.8 min     | 3.5        | 38 files unreached, global limit, 2 files failed, inline scripts                                | block (RW-C01 high, RW-C06 high)    |
+| `swagger-ui-dist` 5.32.15 → 5.33.1                             | REA defaults           | 8.7 min      | 9.4 min      | 3.6        | 4 files at the file limit, global limit                                                         | block (RW-C01 high)                 |
+|                                                                | standard               | 4.1–8.2 min  | 8.2–11.3 min | 3.2–3.8    | 1 file at the file limit, 3 files unreached, global limit                                       | block (RW-C01 high)                 |
+|                                                                | standard, `--jobs 1`   | 12.4 min     | 9.9 min      | 2.1        | 1 file at the file limit, 3 files unreached, global limit                                       | block (RW-C01 high)                 |
+|                                                                | deep                   | 7.9–10.9 min | 9.0–13.3 min | 3.4–3.5    | 1 file at the file limit, 4 files failed                                                        | block (RW-C01 high)                 |
+| `flowise-ui` 3.1.3 → 3.1.4                                     | REA defaults           | 9.6 min      | 10.5 min     | 3.7        | 2 files at the file limit, 236 files unreached, global limit, 1 file failed, inline scripts     | block (RW-C01 high)                 |
+|                                                                | standard               | 10.7 min     | 11.5 min     | 3.8        | 323 files unreached, global limit, 1 file failed, inline scripts                                | block (RW-C01 high)                 |
+|                                                                | deep                   | 18.6 min     | 16.8 min     | 3.0        | 323 files unreached, global limit, 1 file failed, inline scripts                                | block (RW-C01 high)                 |
+| `llm-cli` 0.0.11 → 0.0.12                                      | REA defaults           | 61 s         | 2.0 min      | 2.8        | 1 file failed                                                                                   | block (RW-C01 high)                 |
+|                                                                | standard               | 115 s        | 119 s        | 2.8        | 1 file failed                                                                                   | block (RW-C01 high)                 |
+|                                                                | deep                   | 107 s        | 2.5 min      | 1.4        | 1 file failed                                                                                   | block (RW-C01 high)                 |
+
+Higher limits cost CPU that grows with the nodes they add, and they
+change findings: `firecrawl-mcp` 3.30.2 passes at the standard depth (its
+20 300-node bundle was cut at REA's 20 000), and `aicommits`' 116 000-node
+bundle, examined in full on both sides, exposes an `npm install -g`
+`exec()` that RW-P01 reports as new because the bundle's content-hashed
+name changed (the finding notes the same call in the old bundle).
+desktop-commander's verdict does not change: at either depth RW-P01
+reports the `exec()` and the `execFile()` in the new
+`diagnostics/report.js` high, saying they may have been there before since
+old files had no semantic facts (128 at the standard depth). Saved Evidence is 1.7–2.2 KiB per retained node and side (620 MB
+for a standard `swagger-ui-dist` review, 900 MB at the deep depth), and
+neither side's Evidence is reused between runs yet. No model is called, so
+no tokens are used.
 
 ## Tests
 

@@ -10,6 +10,7 @@ import {
   packageNameOf,
   sdkOf,
 } from "../catalog.mjs";
+import { failedFiles } from "../facts/coverage.mjs";
 import { localPath, localText, scrubDeep } from "../redact.mjs";
 import { RELEASE_WATCH_LIMITS, coverageOf } from "./coverage.mjs";
 import { displaySetting } from "../rules/go.mjs";
@@ -404,7 +405,8 @@ const sideSummary = (side) => ({
         format: side.app.format,
         coverage: side.app.coverage,
         inline_scripts: side.app.inlineScripts,
-        analysis_failures: side.app.analysisFailures.length,
+        // The files REA could not analyze, null for a failure naming none.
+        failed_files: failedFiles(side.app).map(({ file }) => file),
       }
     : null,
   runtimes: side.runtimes.map((runtime) => ({

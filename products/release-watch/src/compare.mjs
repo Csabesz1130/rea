@@ -20,6 +20,7 @@ import {
 import { discoverRelease } from "./discover.mjs";
 import { deploymentOf } from "./facts/capture.mjs";
 import { isScriptPath } from "./facts/modules.mjs";
+import { analysisRecord } from "./limits.mjs";
 import { pairComponents, pairHelpers, pairRuntimes } from "./pairing.mjs";
 import {
   evaluateComponent,
@@ -256,9 +257,9 @@ const collectComponent = async ({
           target,
           outDir,
           errors,
-          analysisArgs: options.analysisArgs ?? [],
+          analysis: options.analysis,
         });
-  if (options.jobs === 1) {
+  if (options.analysis.jobs === 1) {
     const left = await collect("left", leftTarget);
     return { left, right: await collect("right", rightTarget) };
   }
@@ -470,6 +471,7 @@ export const compareReleases = async ({
     errors,
     run: {
       elapsed_ms: Math.round(performance.now() - started),
+      analysis: analysisRecord(options.analysis),
       rea_calls: rea.calls,
       llm_tokens: 0,
     },
