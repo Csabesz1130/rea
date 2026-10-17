@@ -208,13 +208,44 @@ const reachedLimits = (coverage) => [
     : []),
 ];
 
-// Files REA examined only in part or not at all (examinedInPart), then
-// files with process uses REA did not classify and pages with inline scripts.
-const unexaminedFiles = (app, processGaps) => [
-  ...examinedInPart(app),
-  ...processGaps.map((unknown) => unknown.data.module),
-  ...(app.inlineScriptFiles ?? []),
+// What REA left unexamined in each file, in the order RW-C01 names them:
+// files it examined only in part or not at all (examinedInPart), files it
+// examined but left child_process uses in unclassified, and pages whose
+// inline scripts it does not analyze.
+const MISSING = [
+  {
+    files: (app) => examinedInPart(app),
+    words: (files) => `could not fully examine ${listed(files)}`,
+  },
+  {
+    files: (_app, processGaps) =>
+      processGaps.map((unknown) => unknown.data.module),
+    words: (files) =>
+      `classified no process call for uses of child_process in ${listed(files)}`,
+  },
+  {
+    files: (app) => app.inlineScriptFiles ?? [],
+    words: (files) => `did not analyze the inline scripts of ${listed(files)}`,
+  },
 ];
+
+// The changed files of each kind REA left unexamined (MISSING), and the
+// summary that says what is missing in each.
+const changedUnexamined = (context, app, processGaps) => {
+  const changed = changedFiles(context);
+  const kinds = MISSING.map((kind) => ({
+    ...kind,
+    changed: [...new Set(kind.files(app, processGaps).filter(changed))],
+  })).filter((kind) => kind.changed.length > 0);
+  const clauses = kinds.map(
+    (kind, index) =>
+      `${index === 0 ? "REA" : "it"} ${kind.words(kind.changed)}`,
+  );
+  return {
+    files: [...new Set(kinds.flatMap((kind) => kind.changed))],
+    summary: `In code that changed since ${context.labels.left}, ${clauses.join("; ")}; findings in the unexamined part are missing.`,
+  };
+};
 
 /**
  * RW-C01: part of the new release was not examined. High when the
@@ -231,8 +262,10 @@ export const unexaminedAnalysis = (context) => {
     ...captureGaps.map((gap) => reported(gap, "derived", COMPONENT)),
   ];
   if (evidence.length === 0) return [];
-  const files = app ? unexaminedFiles(app, processGaps) : [];
-  const changed = app ? [...new Set(files.filter(changedFiles(context)))] : [];
+  const missing = app
+    ? changedUnexamined(context, app, processGaps)
+    : { files: [], summary: null };
+  const changed = missing.files;
   const { changes, substantive } = unexaminedChanges(context, changed);
   const limited =
     app &&
@@ -253,7 +286,7 @@ export const unexaminedAnalysis = (context) => {
           : `Analysis of ${context.labels.right} is incomplete`,
       summary:
         changed.length > 0
-          ? `REA could not fully examine ${listed(changed)}, which changed since ${context.labels.left}; findings in the unexamined part are missing.`
+          ? missing.summary
           : `REA examined only part of ${context.labels.right}; findings in the unexamined part are missing from this report.`,
       why: "A pass is meaningful only for code that was examined. Large bundles are where injected code hides most easily.",
       recommendation: recommendationFor(context, { limited, changes }),

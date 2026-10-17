@@ -202,6 +202,23 @@ describe("coverage", () => {
     );
     assert.equal(changed[0].severity, "high");
     assert.match(changed[0].title, /Changed code in v2 was not examined/);
+    // Each kind of gap says what REA left out of its files.
+    const page = fact("index.html", { sha256: "p2" });
+    const inline = evaluate(
+      side(
+        "v1",
+        app({ assets: [bundle("a"), fact("index.html", { sha256: "p1" })] }),
+      ),
+      side("v2", {
+        ...truncated("b"),
+        assets: [bundle("b"), page],
+        inlineScriptFiles: ["index.html"],
+      }),
+    );
+    assert.equal(
+      inline[0].summary,
+      "In code that changed since v1, REA could not fully examine vendor/bundle.js; it did not analyze the inline scripts of index.html; findings in the unexamined part are missing.",
+    );
     // REA reported no digest for a renamed bundle on either side: not
     // known to be unchanged.
     const unknown = evaluate(

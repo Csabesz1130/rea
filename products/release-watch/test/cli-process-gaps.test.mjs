@@ -307,7 +307,7 @@ describe(
       );
       assert.match(
         coverage.summary,
-        /^REA could not fully examine dist\/cli\.mjs, which changed/,
+        /^In code that changed since v1\.0\.0, REA classified no process call for uses of child_process in dist\/cli\.mjs; findings in the unexamined part are missing\.$/,
       );
       assertGap(
         report,
@@ -372,7 +372,7 @@ describe("compare: loads REA shows no use of", { skip }, () => {
     );
     assert.match(
       coverage.summary,
-      /^REA could not fully examine dist\/cli\.cjs, dist\/[a-g]\.service\.cjs,/,
+      /^In code that changed since v1\.0\.0, REA classified no process call for uses of child_process in dist\/cli\.cjs, dist\/[a-g]\.service\.cjs,/,
     );
     assert.match(
       coverage.evidence[0].claim,
