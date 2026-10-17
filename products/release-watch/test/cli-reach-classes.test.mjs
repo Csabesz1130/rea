@@ -2,8 +2,8 @@
 // tool reaches the methods of a class: constructing it runs its
 // constructor, not its other methods; a member call on a `new` expression
 // runs that method; a static method of a class expression is the class's
-// own; and an instance passed straight to a call may have any method run,
-// as a guess.
+// own; and an instance handed on whole (passed, returned or stored) may
+// have any method run, as a guess.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
@@ -34,7 +34,7 @@ const withTool = (tool, head) =>
 describe("compare: what a tool reaches of a class", { skip }, () => {
   it("runs the constructor of a class a tool constructs, not its other methods", () => {
     const result = withTool(
-      'server.registerTool("status", {}, async () => { const svc = new Svc({}); await Svc.create({}); return { content: [{ type: "text", text: String(svc.opts) }] }; });\n',
+      'server.registerTool("status", {}, async () => { const svc = new Svc({}); return { content: [{ type: "text", text: String(svc.opts) }] }; });\n',
     );
     assert.equal(result.result.status, 0, result.result.stderr);
     assert.deepEqual(graded(result), [["RW-M02", "medium"]]);
@@ -70,6 +70,22 @@ describe("compare: what a tool reaches of a class", { skip }, () => {
     assert.match(claims(found), /reads Svc\.migrate, a function Svc defines;/);
   });
 
+  it("follows each method of an instance a function returns whole as a guess", () => {
+    const result = withTool(
+      'server.registerTool("open", {}, async () => { await Svc.create({}); return { content: [] }; });\n',
+    );
+    assert.equal(result.result.status, 2, result.result.stderr);
+    const found = finding(result, "RW-M01");
+    assert.equal(
+      found.title,
+      "MCP tool may start processes: registerTool() in src/index.js",
+    );
+    assert.match(
+      claims(found),
+      /reads Svc\.create, a function Svc defines, which constructs Svc and hands the instance on whole \(passed, returned or stored\), so any method of it may run, such as (run|migrate)/,
+    );
+  });
+
   it("follows each method of an instance passed straight to a call as a guess", () => {
     const result = withTool(
       'const wrap = (runner) => ({ runner });\nserver.registerTool("runner", {}, async () => ({ content: [], runner: wrap(new Svc({})) }));\n',
@@ -82,7 +98,7 @@ describe("compare: what a tool reaches of a class", { skip }, () => {
     );
     assert.match(
       claims(found),
-      /passes a new Svc to a call, which may run any method of it, such as (run|migrate)/,
+      /constructs Svc and hands the instance on whole \(passed, returned or stored\), so any method of it may run, such as (run|migrate)/,
     );
     assert.ok(
       found.unknowns.some((unknown) =>

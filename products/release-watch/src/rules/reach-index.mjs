@@ -154,6 +154,14 @@ const buildIndex = (app) => {
       (assignment) => assignment.module,
     ),
     bindings: groupByModule(app.bindings, (binding) => binding.module),
+    // The calls REA says a binding holds the result of, by range.
+    initializers: new Set(
+      (app.bindings ?? []).flatMap((binding) =>
+        (binding.initializers ?? []).map((range) =>
+          rangeKey(binding.module, range),
+        ),
+      ),
+    ),
     // Functions REA reports a name of their own for (`class e {…}` in an
     // expression, `function run() {}` assigned to another name).
     ownNamed: new Set(
@@ -244,6 +252,10 @@ export const callStartingAt = (index, module, range, past) => {
   while (last < calls.length && sameStart(calls[last].range, range)) last += 1;
   return innermostCall(calls.slice(first, last), past);
 };
+
+/** True when REA says a binding holds the result of the call at `range`. */
+export const initializes = (index, module, range) =>
+  index.initializers.has(rangeKey(module, range));
 
 /** The property write that starts where `range` starts (`handlers.git = …` at `handlers`), or null. */
 export const writeAt = (index, module, range) => {

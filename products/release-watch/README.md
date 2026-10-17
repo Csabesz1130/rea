@@ -200,8 +200,10 @@ reports no node for `this`, so `(replica || this).run()` and
 (`( x )`, or line breaks around it) is layout. A class runs as it is
 constructed: a call or read of it runs its code outside its methods, the
 constructor's included, and a method runs only through a member read,
-`new Svc().run()` included; an instance read whole or passed straight to a
-call (`server.addTool(new Tool())`) may have any method run, as a guess. A
+`new Svc().run()` included; an instance handed on whole, as a read of a
+binding holding it or a `new` expression no binding takes and no member
+call is made on (passed, returned or stored: `server.addTool(new Tool())`,
+`return new Svc()`), may have any method run, as a guess. A
 binding's function is the one it declares, one REA names after it, or a
 class or function expression with a name of its own assigned to it
 (`const Svc = class e {…}`), so `Svc.create` reads that class's static

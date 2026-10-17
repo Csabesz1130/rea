@@ -202,7 +202,7 @@ const STEP_TEXT = {
   element: elementText,
   "this-member": thisText,
   passed: (step) =>
-    `passes a new ${step.owner} to a call, which may run any method of it, such as ${step.name}`,
+    `constructs ${step.owner} and hands the instance on whole (passed, returned or stored), so any method of it may run, such as ${step.name}`,
   import: importText,
   "unresolved-import": (step) =>
     `reads ${importedName(step)}, imported from ${step.module}, which Release Watch could not resolve to one of its functions, so it followed the whole module`,
@@ -242,7 +242,7 @@ export const reachUnknowns = (paths) => {
     );
   if (steps.some(instanceGuess))
     unknowns.push(
-      "Code runs an instance's methods only through member reads, and REA does not show which methods a call given the instance, or code reading it whole, runs; Release Watch followed each method of its class, and the handler may not reach this process site.",
+      "Code runs an instance's methods only through member reads, and REA does not show which methods run on an instance handed on whole (an argument, a return value, a stored property or a read of the whole instance); Release Watch followed each method of its class, and the handler may not reach this process site.",
     );
   if (steps.some((step) => step.destructured?.path === null))
     unknowns.push(

@@ -24,7 +24,9 @@ import {
   childFunctions,
   enclosingFunction,
   indexOf,
+  initializes,
   inside,
+  memberOn,
 } from "./reach-index.mjs";
 import { followRead, producedBy } from "./reach-resolve.mjs";
 import { isGuess } from "./reach-text.mjs";
@@ -48,18 +50,14 @@ const methodsOf = (index, fn) =>
     (child) => child.kind === "method" && child.name !== "constructor",
   );
 
-// The methods of a class a `new` expression constructs and passes straight
-// to a call (`server.addTool(new GitTool())`), which may run any of them:
-// each, as a guess.
-const passedMethods = (index, module, call, fn) => {
-  if (fn.kind !== "class") return [];
-  const args = index.arguments.get(module) ?? [];
-  let next = firstStarting(args, call.range);
-  while (next < args.length && !sameRange(args[next].range, call.range)) {
-    if (!sameStart(args[next].range, call.range)) return [];
-    next += 1;
-  }
-  if (next >= args.length) return [];
+// The methods of a class a `new` expression constructs whose instance no
+// binding REA reports takes and no member call is made on: it is passed,
+// returned or stored whole (`server.addTool(new GitTool())`, `return new
+// Svc()`, `this.git = new Git()`), and what then calls its methods REA's
+// facts do not show: each, as a guess.
+const leftMethods = (index, module, call, fn) => {
+  if (fn.kind !== "class" || initializes(index, module, call.range)) return [];
+  if (memberOn(index, module, call.range)) return [];
   return methodsOf(index, fn).map((method) => ({
     fn: method,
     step: {
@@ -129,7 +127,7 @@ const exploreCode = ({ state, record, visit }, entry) => {
     for (const fn of call.callees.map((id) => index.byId.get(id))) {
       if (!fn) continue;
       visit({ fn }, [...steps, callStep(fn)]);
-      for (const target of passedMethods(index, current, call, fn))
+      for (const target of leftMethods(index, current, call, fn))
         visit(target, [...steps, target.step]);
     }
   for (const item of runs(index.reads.get(current)))
