@@ -759,8 +759,8 @@ full, like `aicommits`'.
 | `firecrawl-mcp` 3.30.1 → 3.30.2                                | REA defaults           | 42–58 s      | 72–80 s      | 1.3–1.4    | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
 |                                                                | standard               | 40–85 s      | 75–97 s      | 1.2–1.4    | —                                                                                              | pass                                |
 | `aicommits` 4.1.0 → 4.1.1                                      | REA defaults           | 39 s         | 81 s         | 1.3        | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
-|                                                                | standard               | 2.1–4.4 min  | 4.5–4.8 min  | 2.4–2.9    | unclassified `child_process` uses                                                              | block (RW-P01 high, RW-C01 high)    |
-|                                                                | standard, `--jobs 1`   | 3.8 min      | 4.7 min      | 1.5        | unclassified `child_process` uses                                                              | block (RW-P01 high, RW-C01 high)    |
+|                                                                | standard               | 2.1–4.4 min  | 4.5–4.8 min  | 2.4–2.9    | unclassified `child_process` uses                                                              | block (RW-C01 high)                 |
+|                                                                | standard, `--jobs 1`   | 3.8 min      | 4.7 min      | 1.5        | unclassified `child_process` uses                                                              | block (RW-C01 high)                 |
 | `@notionhq/notion-mcp-server` 2.4.1 → 2.5.0                    | REA defaults           | 66 s         | 2.2 min      | 1.5        | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
 |                                                                | standard               | 2.4–2.9 min  | 4.6–5.3 min  | 2.6–2.8    | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
 |                                                                | deep                   | 5.5–8.6 min  | 6.1–6.9 min  | 1.9–2.5    | —                                                                                              | pass                                |
@@ -797,9 +797,10 @@ full, like `aicommits`'.
 Higher limits cost CPU that grows with the nodes they add, and they
 change findings: `firecrawl-mcp` 3.30.2 passes at the standard depth (its
 20 300-node bundle was cut at REA's 20 000), and `aicommits`' 116 000-node
-bundle, examined in full on both sides, exposes an `npm install -g`
-`exec()` that RW-P01 reports as new because the bundle's content-hashed
-name changed (the finding notes the same call in the old bundle).
+bundle is examined in full on both sides. Release Watch pairs that bundle
+across its content-hash rename (`cli-BdNGpeW-.mjs` → `cli-BSMGyFTn.mjs`,
+beside an unchanged `cli.mjs`), so the `npm install -g` `exec()` both
+releases hold there is not reported as new.
 desktop-commander's verdict does not change: at either depth RW-P01
 reports the `exec()` and the `execFile()` in the new
 `diagnostics/report.js` high, saying they may have been there before since
