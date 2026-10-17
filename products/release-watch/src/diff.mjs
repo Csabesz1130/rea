@@ -131,10 +131,6 @@ const EMPTY_APP = {
   ...Object.fromEntries(FAMILIES.map(({ family }) => [family, []])),
 };
 
-// Content-hashed bundle names: Vite/Rollup `name-Hash.js`, webpack
-// `name.hash.js`. A hash segment has a digit or an uppercase letter, so a
-// plain word such as `-generator` is never taken for one.
-
 const scriptPaths = (app) =>
   app.assets.map((asset) => asset.key).filter(isScriptPath);
 
@@ -147,6 +143,33 @@ const htmlLoaded = (app) =>
         .replace(/^\.?\//, ""),
     ),
   );
+
+/**
+ * The script paths of two releases that compete for one name once its
+ * bundler content hash is removed (withoutHash), by that name: `{ left,
+ * right }`, each side's paths that the other side does not ship at the same
+ * path. A path both sides ship is that file on both sides, so an unhashed
+ * `cli.mjs` kept beside `cli-<hash>.mjs` leaves the bundle's name unique.
+ * Aliases, ambiguous bundles and pooled names all read this one grouping.
+ */
+const hashFreeNames = (leftApp, rightApp) => {
+  const leftPaths = scriptPaths(leftApp);
+  const rightPaths = scriptPaths(rightApp);
+  const kept = new Set(rightPaths);
+  const both = new Set(leftPaths.filter((modulePath) => kept.has(modulePath)));
+  const names = new Map();
+  for (const [side, paths] of [
+    ["left", leftPaths],
+    ["right", rightPaths],
+  ])
+    for (const modulePath of paths) {
+      if (both.has(modulePath)) continue;
+      const bare = withoutHash(modulePath);
+      if (!names.has(bare)) names.set(bare, { left: [], right: [] });
+      names.get(bare)[side].push(modulePath);
+    }
+  return names;
+};
 
 /**
  * The old path of a new-side module `moduleAliases` paired with one, else
@@ -162,7 +185,11 @@ export const renamedFrom = (aliases) => {
 /**
  * Map old module paths to new ones: REA's own pairing of changed assets
  * first, then bundles whose names match once their content hash is removed,
- * when that name is unique on both sides. Unpaired paths keep their name.
+ * when that name is unique on both sides (hashFreeNames). Several bundles
+ * sharing a hash-free name (a Vite entry and a lazy chunk both named
+ * index-*.js) pair by role: the one an HTML page loads, and the one it
+ * does not, when each role has one bundle on each side. Unpaired paths keep
+ * their name.
  */
 export const moduleAliases = (leftApp, rightApp, reaPairs = []) => {
   const aliases = new Map();
@@ -170,54 +197,31 @@ export const moduleAliases = (leftApp, rightApp, reaPairs = []) => {
   for (const pair of reaPairs)
     if (pair.left !== pair.right)
       aliases.set(pair.left, { path: pair.right, basis: `REA ${pair.basis}` });
-  const leftPaths = scriptPaths(leftApp);
-  const rightPaths = new Set(scriptPaths(rightApp));
-  const byBareName = (paths) => {
-    const names = new Map();
-    for (const modulePath of paths) {
-      const bare = withoutHash(modulePath);
-      names.set(bare, names.has(bare) ? null : modulePath);
-    }
-    return names;
-  };
-  const leftNames = byBareName(leftPaths);
-  const rightNames = byBareName(rightPaths);
+  const pairedRight = new Set([...aliases.values()].map((alias) => alias.path));
   const pair = (leftPath, rightPath, basis) => {
-    if (!leftPath || !rightPath || leftPath === rightPath) return;
-    if (aliases.has(leftPath) || rightPaths.has(leftPath)) return;
+    if (aliases.has(leftPath) || pairedRight.has(rightPath)) return;
     aliases.set(leftPath, { path: rightPath, basis });
+    pairedRight.add(rightPath);
   };
-  for (const [bare, leftPath] of leftNames)
-    pair(
-      leftPath,
-      rightNames.get(bare),
-      "same bundle name without content hash",
-    );
-  // Several bundles sharing a hash-free name (a Vite entry and a lazy chunk
-  // both named index-*.js) pair by role: the one an HTML page loads, and the
-  // one it does not, when each role has one bundle on each side.
+  const names = [...hashFreeNames(leftApp, rightApp).values()];
+  for (const { left, right } of names)
+    if (left.length === 1 && right.length === 1)
+      pair(left[0], right[0], "same bundle name without content hash");
   const leftHtml = htmlLoaded(leftApp);
   const rightHtml = htmlLoaded(rightApp);
-  const unpaired = (paths, taken) =>
-    paths.filter((modulePath) => !taken.has(modulePath));
-  const pairedRight = new Set([...aliases.values()].map((alias) => alias.path));
-  for (const [bare, leftPath] of leftNames) {
-    if (leftPath !== null || rightNames.get(bare) !== null) continue;
-    const before = unpaired(
-      leftPaths.filter((path) => withoutHash(path) === bare),
-      aliases,
-    );
-    const after = unpaired(
-      [...rightPaths].filter((path) => withoutHash(path) === bare),
-      pairedRight,
-    );
+  for (const { left, right } of names) {
+    if (left.length < 2 || right.length < 2) continue;
     for (const loaded of [true, false]) {
-      const left = before.filter((path) => leftHtml.has(path) === loaded);
-      const right = after.filter((path) => rightHtml.has(path) === loaded);
-      if (left.length === 1 && right.length === 1)
+      const before = left.filter(
+        (path) => !aliases.has(path) && leftHtml.has(path) === loaded,
+      );
+      const after = right.filter(
+        (path) => !pairedRight.has(path) && rightHtml.has(path) === loaded,
+      );
+      if (before.length === 1 && after.length === 1)
         pair(
-          left[0],
-          right[0],
+          before[0],
+          after[0],
           `same bundle name and role (${loaded ? "loaded by HTML" : "imported"}) without content hash`,
         );
     }
@@ -225,36 +229,26 @@ export const moduleAliases = (leftApp, rightApp, reaPairs = []) => {
   return aliases;
 };
 
+// The content-hashed paths among `paths` (hashFreeNames' list for `bare`)
+// that `paired` does not hold.
+const unpairedHashed = (paths, bare, paired) =>
+  paths.filter((modulePath) => modulePath !== bare && !paired.has(modulePath));
+
 /**
  * New-side scripts Release Watch could not pair: their name without the
- * content hash is shared by several scripts on either side, and neither REA
- * nor a unique name paired them.
+ * content hash is shared by several scripts on either side that the other
+ * side does not ship at the same path (hashFreeNames), and neither REA nor
+ * a unique name paired them.
  */
 export const ambiguousBundles = (leftApp, rightApp, aliases) => {
   if (!leftApp || !rightApp) return new Set();
-  const count = (paths) =>
-    paths.reduce((counts, modulePath) => {
-      const bare = withoutHash(modulePath);
-      return bare === modulePath
-        ? counts
-        : counts.set(bare, (counts.get(bare) ?? 0) + 1);
-    }, new Map());
-  const leftPaths = scriptPaths(leftApp);
-  const before = count(leftPaths);
-  const after = count(scriptPaths(rightApp));
   const paired = new Set([...aliases.values()].map((alias) => alias.path));
-  const unchanged = new Set(leftPaths);
   return new Set(
-    scriptPaths(rightApp).filter((modulePath) => {
-      const bare = withoutHash(modulePath);
-      if (
-        bare === modulePath ||
-        paired.has(modulePath) ||
-        unchanged.has(modulePath)
-      )
-        return false;
-      return (before.get(bare) ?? 0) > 1 || (after.get(bare) ?? 0) > 1;
-    }),
+    [...hashFreeNames(leftApp, rightApp)].flatMap(([bare, { left, right }]) =>
+      left.length > 1 || right.length > 1
+        ? unpairedHashed(right, bare, paired)
+        : [],
+    ),
   );
 };
 
@@ -274,28 +268,20 @@ const rekey = (facts, aliases) =>
       });
 
 // Bundle names several unpaired files share once their content hash is
-// removed (two `index-<hash>.js` chunks): their facts are compared as one
-// pool, so unchanged code in them is not new.
+// removed (two `index-<hash>.js` chunks, hashFreeNames): their facts are
+// compared as one pool, so unchanged code in them is not new.
 const pooledNames = (left, right, aliases) => {
   const paired = new Set([
     ...aliases.keys(),
     ...[...aliases.values()].map((alias) => alias.path),
   ]);
-  const counts = new Map();
-  for (const [side, app] of [
-    ["left", left],
-    ["right", right],
-  ])
-    for (const modulePath of scriptPaths(app)) {
-      const bare = withoutHash(modulePath);
-      if (bare === modulePath || paired.has(modulePath)) continue;
-      const entry = counts.get(bare) ?? { left: 0, right: 0 };
-      entry[side] += 1;
-      counts.set(bare, entry);
-    }
   return new Set(
-    [...counts]
-      .filter(([, entry]) => entry.left > 1 || entry.right > 1)
+    [...hashFreeNames(left, right)]
+      .filter(
+        ([bare, sides]) =>
+          unpairedHashed(sides.left, bare, paired).length > 1 ||
+          unpairedHashed(sides.right, bare, paired).length > 1,
+      )
       .map(([bare]) => bare),
   );
 };

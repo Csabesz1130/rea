@@ -66,6 +66,31 @@ describe("moduleAliases", () => {
     );
   });
 
+  it("pairs a hashed bundle whose hash-free name an unchanged path also has", () => {
+    // aicommits 4.1.0 -> 4.1.1: dist/cli.mjs ships on both sides beside
+    // the content-hashed chunk it loads, cli-BdNGpeW-.mjs -> cli-BSMGyFTn.mjs.
+    const left = app({
+      assets: assets("dist/cli.mjs", "dist/cli-BdNGpeW-.mjs"),
+    });
+    const right = app({
+      assets: assets("dist/cli.mjs", "dist/cli-BSMGyFTn.mjs"),
+    });
+    const aliases = moduleAliases(left, right);
+    assert.deepEqual(
+      [...aliases],
+      [
+        [
+          "dist/cli-BdNGpeW-.mjs",
+          {
+            path: "dist/cli-BSMGyFTn.mjs",
+            basis: "same bundle name without content hash",
+          },
+        ],
+      ],
+    );
+    assert.equal(ambiguousBundles(left, right, aliases).size, 0);
+  });
+
   it("does not treat a renamed source file as a hashed bundle", () => {
     const aliases = moduleAliases(
       app({ assets: assets("src/report-generator.js") }),
@@ -91,5 +116,22 @@ describe("ambiguousBundles", () => {
       "assets/index-Ee55Ff66.js",
       "assets/index-Gg77Hh88.js",
     ]);
+  });
+
+  it("leaves out a bundle both sides ship at the same path", () => {
+    const assets = (...paths) =>
+      paths.map((modulePath) => fact(modulePath, { sha256: modulePath }));
+    const left = app({
+      assets: assets("assets/index-Aa11Bb22.js", "assets/index-Cc33Dd44.js"),
+    });
+    const right = app({
+      assets: assets("assets/index-Aa11Bb22.js", "assets/index-Ee55Ff66.js"),
+    });
+    const aliases = moduleAliases(left, right);
+    assert.equal(
+      aliases.get("assets/index-Cc33Dd44.js")?.path,
+      "assets/index-Ee55Ff66.js",
+    );
+    assert.equal(ambiguousBundles(left, right, aliases).size, 0);
   });
 });
