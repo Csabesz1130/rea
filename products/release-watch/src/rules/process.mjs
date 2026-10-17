@@ -9,12 +9,13 @@ import {
   componentName,
   contentOrigin,
   copiedSite,
+  oldLabel,
   perComponent,
   processAbsence,
   relocatedUnresolved,
 } from "./component-absence.mjs";
 import { changedClaims, commandText, unresolved } from "./process-commands.mjs";
-import { oldLabel, unexaminedNote } from "./unknown-moves.mjs";
+import { unexaminedNote } from "./unknown-moves.mjs";
 import {
   APP_SOURCE,
   cite,

@@ -412,7 +412,7 @@ describe(
       );
       assert.ok(
         found.unknowns.includes(
-          "v1.0.0 had a exec() with an unresolved command in src/shell.js that is gone now; this may be the same call, moved.",
+          "v1.0.0 had an exec() with an unresolved command in src/shell.js that is gone now; this may be the same call, moved.",
         ),
         found.unknowns.join("\n"),
       );

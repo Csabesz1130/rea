@@ -63,6 +63,36 @@ describe("sites moved between components", () => {
     );
   });
 
+  it("names the old component of an unresolved site gone elsewhere", () => {
+    const components = {
+      core: [app({ childProcesses: [exec("a.js", null)] }), app()],
+      worker: [app(), app({ childProcesses: [exec("w.js", null)] })],
+    };
+    const prepared = Object.entries(components).map(([name, [old, now]]) => ({
+      name,
+      left: side("v1", old),
+      right: side("v2", now),
+      diff: { app: diffApplications(old, now) },
+      comparable: true,
+    }));
+    const [finding] = evaluate(
+      side("v1", components.worker[0]),
+      side("v2", components.worker[1]),
+      {
+        name: "worker",
+        release: { moves: releaseMovesOf(prepared) },
+        baseline: releaseBaseline(prepared.map((component) => component.left)),
+      },
+    );
+    assert.equal(finding.severity, "high");
+    assert.ok(
+      finding.unknowns.includes(
+        "v1, component core had an execFile() with an unresolved command in a.js that is gone now; this may be the same call, moved.",
+      ),
+      finding.unknowns.join("\n"),
+    );
+  });
+
   it("takes nothing from a component whose new side REA could not analyze", () => {
     assert.deepEqual(
       graded(release, "worker", { comparable: (name) => name !== "core" }),

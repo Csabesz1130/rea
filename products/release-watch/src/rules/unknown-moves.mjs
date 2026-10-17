@@ -3,16 +3,7 @@
 // REA examined there only in part or not at all, so the site is unknown now
 // (moves.mjs unknownCounterparts), not gone, and may be the one that moved.
 import { unknownCounterparts } from "../moves.mjs";
-import { componentName } from "./component-absence.mjs";
-
-/**
- * The old release's label for a site of the component whose identity is
- * `component`, naming it as the old release did.
- */
-export const oldLabel = (context, component) =>
-  component === context.id
-    ? context.labels.left
-    : `${context.releaseLabels?.left ?? context.labels.left}, component ${componentName(context, "left", component)}`;
+import { componentName, oldLabel } from "./component-absence.mjs";
 
 /**
  * `[note]` when an old site unknown now may be the counterpart of a gained

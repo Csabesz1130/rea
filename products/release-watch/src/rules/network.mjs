@@ -2,6 +2,11 @@
 // resolved and cleartext channels, graded against what the whole old
 // release contacted (destinations.mjs owns that attribution).
 import { shippedBefore, unaccounted } from "../moves.mjs";
+import {
+  globalLimitClause,
+  unexaminedLimits,
+  unexaminedVerb,
+} from "./unexamined.mjs";
 import { unexaminedNote } from "./unknown-moves.mjs";
 import {
   contextEvidence,
@@ -177,42 +182,29 @@ const UNEXAMINED = {
     `had a ${fact.data.method}() request without a known destination`,
 };
 
-// Why REA's facts do not establish how many sites an old module had, as a
-// clause about the old release (facts/coverage.mjs unexaminedIn says why),
-// and the node limits REA reached there (limits.mjs keys; none named for a
-// file REA could not analyze).
-const OLD_GAP = {
-  ceiling: (file, label) => ({
-    text: `REA examined ${file} of ${label} only in part (it reached the per-file node ceiling)`,
-    limits: ["maxSemanticNodesPerFile"],
-  }),
-  unreached: (file, label) => ({
-    text: `REA gave ${file} of ${label} no semantic facts (it reached its global node limit first)`,
-    limits: ["maxSemanticNodes"],
-  }),
-  failed: (file, label) => ({
-    text: `REA could not analyze ${file} of ${label}`,
-    limits: [],
-  }),
-  global: (_file, label) => ({
-    text: `REA reached its global node limit on ${label} and may have examined any of its files only in part`,
-    limits: ["maxSemanticNodes"],
-  }),
-};
-
-// Why the old count of a module's sites is not established (`{ text,
-// limits }`), or null: the module's old file (its old path when renamed)
-// is one REA did not fully examine, or REA's global node limit leaves every
-// old file partial.
+// Why the old count of a module's sites is not established, as a clause
+// about the old release (unexamined.mjs words facts/coverage.mjs
+// unexaminedIn's reason), with the node limits REA reached there
+// (`{ text, limits }`), or null: the module's old file (its old path when
+// renamed) is one REA did not fully examine, or REA's global node limit
+// leaves every old file partial.
 const oldGap = (context, unexamined, item, module) => {
   const paths =
     item.left.length > 0
       ? item.left.map((fact) => fact.data.module)
       : [renamedFrom(context.aliases)(module) ?? module];
   const file = paths.find((path) => unexamined.files.has(path));
-  if (file)
-    return OLD_GAP[unexamined.files.get(file)](file, context.labels.left);
-  return unexamined.anyFile ? OLD_GAP.global(null, context.labels.left) : null;
+  const label = context.labels.left;
+  if (file) {
+    const reason = unexamined.files.get(file);
+    return {
+      text: `REA ${unexaminedVerb([reason])} ${file} in ${label}`,
+      limits: unexaminedLimits(reason),
+    };
+  }
+  return unexamined.anyFile
+    ? { text: globalLimitClause(label), limits: ["maxSemanticNodes"] }
+    : null;
 };
 
 // Title, summary and recommendation of RW-N02: a count REA established

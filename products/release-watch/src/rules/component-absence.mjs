@@ -55,6 +55,15 @@ export const heldElsewhere = (context, family, { key, status }) =>
 export const componentName = (context, side, identity = context.id) =>
   context.release?.names?.get(identity)?.[side] ?? identity;
 
+/**
+ * The old release's label for a site of the component whose identity is
+ * `component`, naming it as the old release did.
+ */
+export const oldLabel = (context, component) =>
+  component === context.id
+    ? context.labels.left
+    : `${context.releaseLabels?.left ?? context.labels.left}, component ${componentName(context, "left", component)}`;
+
 /** "component a", "components a and b". */
 export const componentList = (names) =>
   `component${names.length === 1 ? "" : "s"} ${names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`}`;
@@ -173,7 +182,8 @@ export const perComponent = (what) =>
 /**
  * The unknown a new process site with a command REA did not resolve carries
  * when the release lost a site of its method with none, or null: such sites
- * never pair as moved, so it may be the same call.
+ * never pair as moved, so it may be the same call. The old site is named in
+ * its own component (oldLabel).
  */
 export const relocatedUnresolved = (context, method) => {
   const [gone] = lostUnresolved(
@@ -182,7 +192,7 @@ export const relocatedUnresolved = (context, method) => {
     "command",
   );
   return gone
-    ? `${context.labels.left} had a ${method}() with an unresolved command in ${gone.fact.data.module} that is gone now; this may be the same call, moved.`
+    ? `${oldLabel(context, gone.component)} had ${/^[aeiou]/i.test(method) ? "an" : "a"} ${method}() with an unresolved command in ${gone.fact.data.module} that is gone now; this may be the same call, moved.`
     : null;
 };
 

@@ -257,7 +257,7 @@ describe(
       );
       assert.match(
         finding.summary,
-        /\(0 observed → 2 in this module\), but REA examined dist\/index\.js of v1\.0\.0 only in part \(it reached the per-file node ceiling\), so Release Watch cannot tell whether any is new\.$/,
+        /\(0 observed → 2 in this module\), but REA reached its per-file node ceiling on dist\/index\.js in v1\.0\.0, so Release Watch cannot tell whether any is new\.$/,
       );
       // The limit the old file reached, as limits.mjs words a re-run: the
       // per-file option given here keeps its value at any depth.
@@ -277,18 +277,19 @@ describe(
             filler(6, `p${n}_`),
           ]),
         );
-      // The entry chunk is renamed and REA reaches its global node limit on
-      // the old release before it.
+      // The entry chunk changed and its content hash with it (a file with
+      // the old one's content would hold its sites: "kept"), and REA
+      // reaches its global node limit on the old release before it.
       const { result, report } = compare(
         {
-          "index.html": page("zq81mfka.js"),
+          "index.html": page("zq-Zq81mfKa.js"),
           ...parts(12),
-          "assets/zq81mfka.js": sync,
+          "assets/zq-Zq81mfKa.js": sync,
         },
         {
-          "index.html": page("ab3kd9xw.js"),
+          "index.html": page("zq-Ab3kd9Xw.js"),
           ...parts(2),
-          "assets/ab3kd9xw.js": sync,
+          "assets/zq-Ab3kd9Xw.js": `${sync}export const ping = (url) => fetch(url, { method: "HEAD" });\n`,
         },
         { args: ["--max-semantic-nodes", "300"] },
       );
@@ -296,11 +297,11 @@ describe(
       const [finding] = requests(report);
       assert.match(
         finding.title,
-        /^Request with an unresolved destination not observed in v1\.0\.0: assets\/ab3kd9xw\.js$/,
+        /^Request with an unresolved destination not observed in v1\.0\.0: assets\/zq-Ab3kd9Xw\.js$/,
       );
       assert.match(
         finding.summary,
-        /REA gave assets\/zq81mfka\.js of v1\.0\.0 no semantic facts/,
+        /REA gave no semantic facts to assets\/zq-Zq81mfKa\.js in v1\.0\.0, so Release Watch cannot tell whether any is new\.$/,
       );
       // The old release's files elsewhere and its global limit are one
       // sentence on every finding about the new release.

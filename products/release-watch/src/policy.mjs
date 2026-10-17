@@ -23,6 +23,7 @@ import { networkPack, networkView } from "./rules/network.mjs";
 import { processPack } from "./rules/process.mjs";
 import { runtimePack } from "./rules/runtime.mjs";
 import { maxSeverity, severityRank } from "./rules/shared.mjs";
+import { globalLimitClause, unexaminedVerb } from "./rules/unexamined.mjs";
 import { shipsOriginals, webPack } from "./rules/web.mjs";
 import { releaseWindowPairing } from "./rules/window-pairing.mjs";
 import { fileDigests, releaseMoves } from "./moves.mjs";
@@ -134,13 +135,6 @@ const shippedTokensOf = (leftSides) => {
   };
 };
 
-// Why REA's facts do not establish one old file, as a clause.
-const UNEXAMINED = {
-  ceiling: "could not fully analyze",
-  failed: "could not fully analyze",
-  unreached: "gave no semantic facts to",
-};
-
 // Findings that report what REA examined, not a fact new in the release.
 const COVERAGE_NOTES = new Set(["RW-C01", "RW-C02", "RW-C03", "RW-C04"]);
 
@@ -151,12 +145,10 @@ const elsewhereUnknowns = (left, { elsewhere, anyFile }) => {
   if (elsewhere.length === 0)
     return anyFile
       ? [
-          `REA reached its global node limit on ${left}, so it may have examined any of its files only in part, and what is reported here may have been there before.`,
+          `${globalLimitClause(left)}, so what is reported here may have been there before.`,
         ]
       : [];
-  const what = [...new Set(elsewhere.map(([, why]) => UNEXAMINED[why]))].join(
-    " or ",
-  );
+  const what = unexaminedVerb(elsewhere.map(([, why]) => why));
   const named = elsewhere.slice(0, 2).map(([file]) => file);
   const more = elsewhere.length - named.length;
   return [
@@ -201,7 +193,7 @@ const located = (component, { file, ambiguous, unexamined }) => [
     : []),
   ...(unexamined.files.has(file)
     ? [
-        `REA ${UNEXAMINED[unexamined.files.get(file)]} ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
+        `REA ${unexaminedVerb([unexamined.files.get(file)])} ${file} in ${component.labels.left}, so what is reported here may predate this release.`,
       ]
     : []),
 ];
