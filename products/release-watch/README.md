@@ -394,7 +394,8 @@ passed.
   a refactor that relocates one is reported high, with a note that it may be
   the same call. When an MCP tool reaches it, RW-M01 carries the same note and
   says how many old tool registrations reached a site of that method with an
-  unresolved command.
+  unresolved command; when a renderer API reaches a new site, RW-E01 carries
+  the notes RW-P01 would.
 - RW-P01 compares a process site's method and the command REA resolved (its
   first argument). REA reports the length of a literal argv array (none for
   `exec` or a computed array), not the argument values or options such as

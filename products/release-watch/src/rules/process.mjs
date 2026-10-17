@@ -139,6 +139,29 @@ const changedFinding = (context, group, unknowns) => {
   };
 };
 
+/**
+ * What the old release may have had of a group of new or changed process
+ * sites (newGroups) that no lost site took: the same site in another
+ * component or a copied file, an unresolved site the release lost, or an
+ * old site REA could not see now. RW-E01 carries the same unknowns for the
+ * sites it claims from RW-P01. `absence` is processAbsence's.
+ */
+export const siteUnknowns = (
+  context,
+  group,
+  absence = processAbsence(context, group),
+) => [
+  ...(absence.held ? [perComponent("process execution sites")] : []),
+  ...(absence.copied ? [copiedSite(context)] : []),
+  ...goneNote(context, group),
+  ...unexaminedNote(
+    context,
+    context.moves.childProcesses,
+    group.facts,
+    UNEXAMINED,
+  ),
+];
+
 const finding = (context, group) => {
   const unknowns = group.facts.some(unresolved)
     ? ["REA did not resolve the command statically."]
@@ -146,17 +169,7 @@ const finding = (context, group) => {
   const moved = movedSites(context, group);
   if (moved) return movedFinding(context, group, moved, unknowns);
   const absence = processAbsence(context, group);
-  if (absence.held) unknowns.push(perComponent("process execution sites"));
-  if (absence.copied) unknowns.push(copiedSite(context));
-  unknowns.push(
-    ...goneNote(context, group),
-    ...unexaminedNote(
-      context,
-      context.moves.childProcesses,
-      group.facts,
-      UNEXAMINED,
-    ),
-  );
+  unknowns.push(...siteUnknowns(context, group, absence));
   if (group.status === "changed")
     return changedFinding(context, group, unknowns);
   const { method, module } = group.facts[0].data;

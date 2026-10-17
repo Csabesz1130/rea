@@ -301,3 +301,41 @@ describe("compare: how RW-E01 words a reach", { skip }, () => {
     assert.match(found.why, /^If the handler does reach it, any script/);
   });
 });
+
+describe(
+  "compare: what a renderer API's new process site may be",
+  { skip },
+  () => {
+    it("notes an unresolved site the release lost, as RW-P01 would", () => {
+      // v1.0.0 runs a command it computes from lib/old.js at startup; v1.1.0
+      // drops that file and runs one from lib/run.js for a new renderer API.
+      const run = (name) =>
+        `const { execFile } = require("node:child_process");\nexports.${name} = (cmd, args) => execFile(cmd, args);\n`;
+      const result = compare(
+        {
+          ...desktop(
+            'const { boot } = require("./lib/old.js");\nboot(process.argv[2], []);\n',
+          ),
+          "lib/old.js": run("boot"),
+        },
+        {
+          ...desktop(
+            'const { run } = require("./lib/run.js");\nipcMain.handle("app:run", (_e, cmd) => run(cmd, []));\n',
+            ', run: (cmd) => ipcRenderer.invoke("app:run", cmd)',
+          ),
+          "lib/run.js": run("run"),
+        },
+        ELECTRON,
+      );
+      assert.equal(result.result.status, 2, result.result.stderr);
+      const found = finding(result, "RW-E01");
+      assert.match(found.summary, /reaches execFile\(\) in lib\/run\.js/);
+      assert.ok(
+        found.unknowns.includes(
+          "v1.0.0 had an execFile() with an unresolved command in lib/old.js that is gone now; this may be the same call, moved.",
+        ),
+        JSON.stringify(found.unknowns),
+      );
+    });
+  },
+);

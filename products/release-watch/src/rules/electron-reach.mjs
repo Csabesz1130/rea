@@ -20,6 +20,7 @@ import {
   oldReach,
   scopeOf,
 } from "./electron-kept.mjs";
+import { siteUnknowns } from "./process.mjs";
 import { reachOf } from "./reach.mjs";
 import { reachClaim, reachUnknowns } from "./reach-text.mjs";
 import {
@@ -64,9 +65,12 @@ const execEvidence = (group, absence) =>
     ),
   );
 
-const heldUnknowns = (member, exec) => [
+// What another component or an old site REA could not see may have had:
+// of the renderer API, and of new or changed process sites, what RW-P01
+// would say of them (siteUnknowns).
+const heldUnknowns = (context, { member, group, exec }) => [
   ...(member.held ? [perComponent("renderer APIs")] : []),
-  ...(exec.held ? [perComponent("process execution sites")] : []),
+  ...(group.status === "existing" ? [] : siteUnknowns(context, group, exec)),
 ];
 
 /**
@@ -204,7 +208,7 @@ const reachFinding = (context, site) => {
       "REA did not establish that the IPC argument reaches the exec command; the path is a correlation of REA facts by location.",
       ...reachUnknowns([path]),
       ...(api.old ? keptUnknowns(context.labels, site) : []),
-      ...heldUnknowns(api.absence, execHeld),
+      ...heldUnknowns(context, { member: api.absence, group, exec: execHeld }),
     ],
   };
 };
