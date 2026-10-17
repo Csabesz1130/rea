@@ -51,3 +51,23 @@ export const firstStarting = (
   }
   return low;
 };
+
+/**
+ * Of call sites that start where a read starts (`candidates`), the
+ * innermost one that ends after position `past`, the end of the read (its
+ * callee or receiver), or null: a call that ends before it is one inside
+ * the read's receiver (`getServer().setRequestHandler(…)`). `rangeOf`
+ * reads a site's range (its `range` by default).
+ */
+export const innermostCall = (
+  candidates,
+  past,
+  rangeOf = (site) => site.range,
+) =>
+  candidates.reduce((found, site) => {
+    const { end } = rangeOf(site);
+    return comesBefore(past, end) &&
+      (found === null || comesBefore(end, rangeOf(found).end))
+      ? site
+      : found;
+  }, null);

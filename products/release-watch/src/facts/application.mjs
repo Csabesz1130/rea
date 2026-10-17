@@ -1,7 +1,7 @@
 // Projects `analyze_javascript_application` Evidence into the capability
 // facts Release Watch compares. This module never reads application source.
 import { HTML_SINKS, MCP_REGISTRATION_MEMBERS } from "../catalog.mjs";
-import { comesBefore, sameStart } from "../ranges.mjs";
+import { innermostCall, sameStart } from "../ranges.mjs";
 import { isUrl, scriptKey } from "../urls.mjs";
 import { callGraph } from "./calls.mjs";
 import { coverageOf, unreachedModules } from "./coverage.mjs";
@@ -385,20 +385,15 @@ const memberCalls = (scope) => {
   for (const read of scope.trackedReads) {
     const range = rangeOf(read);
     const modulePath = read.identity?.module_path ?? null;
-    const call = scope.callSites
-      .filter(
+    const call = innermostCall(
+      scope.callSites.filter(
         (site) =>
           site.identity?.module_path === modulePath &&
-          sameStart(rangeOf(site), range) &&
-          comesBefore(range.end, rangeOf(site).end),
-      )
-      .reduce(
-        (inner, site) =>
-          !inner || comesBefore(rangeOf(site).end, rangeOf(inner).end)
-            ? site
-            : inner,
-        null,
-      );
+          sameStart(rangeOf(site), range),
+      ),
+      range.end,
+      rangeOf,
+    );
     if (call === null) continue;
     scope.facts.memberCalls.push(
       semanticFact(call, scope.contexts, `${modulePath}#${read.label}`, {

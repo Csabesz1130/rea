@@ -5,8 +5,8 @@
 // the pattern elements REA reports destructuring them, statement markers,
 // export statements and process sites of each module sorted by position.
 import {
-  comesBefore,
   firstStarting,
+  innermostCall,
   sameStart,
   startsBefore,
   within,
@@ -232,17 +232,10 @@ export const memberOn = (index, module, range) =>
  */
 export const callStartingAt = (index, module, range, past) => {
   const calls = index.callSites.get(module) ?? [];
-  let found = null;
-  for (
-    let next = firstStarting(calls, range);
-    next < calls.length && sameStart(calls[next].range, range);
-    next += 1
-  ) {
-    const { end } = calls[next].range;
-    if (comesBefore(past, end) && (!found || comesBefore(end, found.range.end)))
-      found = calls[next];
-  }
-  return found;
+  let last = firstStarting(calls, range);
+  const first = last;
+  while (last < calls.length && sameStart(calls[last].range, range)) last += 1;
+  return innermostCall(calls.slice(first, last), past);
 };
 
 /** The property write that starts where `range` starts (`handlers.git = …` at `handlers`), or null. */
