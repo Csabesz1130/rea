@@ -194,7 +194,9 @@ describe(
       );
       assert.ok(
         found.unknowns.some((unknown) =>
-          /found no v1\.0\.0 handler by this API's channel/.test(unknown),
+          /found no one v1\.0\.0 handler by the channel of notes\.sync\(\)/.test(
+            unknown,
+          ),
         ),
         JSON.stringify(found.unknowns),
       );

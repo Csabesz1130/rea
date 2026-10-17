@@ -38,6 +38,26 @@ export const handlersOf = (app) => {
 export const handlerFor = (handlers, channel) =>
   channel === null ? null : (handlers.byChannel.get(channel) ?? null);
 
+/**
+ * The handlers of one side that may serve an exposure of a renderer API
+ * (`member`): `{ handler, unsure }` for the one for its channel; else, as
+ * candidates (`unsure`), each handler whose channel REA did not resolve
+ * and, when REA did not resolve the exposure's own channel, each handler
+ * whose channel no exposure REA resolved invokes (`invoked`).
+ */
+export const servingHandlers = (handlers, member, invoked) => {
+  const handler = handlerFor(handlers, member.data.channel);
+  if (handler) return [{ handler, unsure: false }];
+  const candidates =
+    member.data.channel === null
+      ? handlers.all.filter(
+          (other) =>
+            other.data.channel === null || !invoked.has(other.data.channel),
+        )
+      : handlers.unresolved;
+  return candidates.map((other) => ({ handler: other, unsure: true }));
+};
+
 // What one old handler reaches, as Release Watch connects it (settled or
 // guessed): its sites, the method and command of each site whose command
 // REA resolved, the methods of every site, and those of the sites whose
@@ -61,22 +81,34 @@ const reachedBy = (app, handler) => {
   return reached;
 };
 
-/**
- * The old side of an API the component kept: `{ member, handler,
- * candidates, reached() }`, the handler for its old channel, else each one
- * whose channel REA did not resolve (any may be it), or every one when REA
- * did not resolve the API's own channel, and what each candidate reaches.
- */
-export const keptOld = (app, handlers, member) => {
+// The old handlers one old exposure may have been served by: the one for
+// its channel, else each whose channel REA did not resolve, or every one
+// when REA did not resolve the exposure's own channel.
+const oldCandidates = (handlers, member) => {
   const handler = handlerFor(handlers, member.data.channel);
+  if (handler) return [handler];
+  return member.data.channel === null ? handlers.all : handlers.unresolved;
+};
+
+/**
+ * The old side of an API the component kept, for one new exposure of it:
+ * `{ member, members, handler, candidates, reached() }`, the old exposures
+ * it is compared with (`members`, the first as `member`), the handler for
+ * their one channel when there is one, else every handler any of them may
+ * have been served by (`oldCandidates`; any may be it), and what each
+ * candidate reaches.
+ */
+export const keptOld = (app, handlers, members) => {
+  const [member] = members;
+  const handler =
+    members.length === 1 ? handlerFor(handlers, member.data.channel) : null;
   const candidates = handler
     ? [handler]
-    : member.data.channel === null
-      ? handlers.all
-      : handlers.unresolved;
+    : [...new Set(members.flatMap((old) => oldCandidates(handlers, old)))];
   let reached = null;
   return {
     member,
+    members,
     handler,
     candidates,
     reached: () =>
@@ -133,8 +165,12 @@ const oldHandlerWords = (left, old) => {
   const count = old.candidates.length;
   if (old.handler)
     return `the ${left} handler for "${old.member.data.channel}"`;
-  const which = `main-process handler${count === 1 ? "" : "s"}${old.member.data.channel === null ? "" : " whose channel REA did not resolve"}`;
-  return `the ${count === 1 ? "one" : count} ${left} ${which}`;
+  const one = count === 1 ? "one" : count;
+  const handlers = `main-process handler${count === 1 ? "" : "s"}`;
+  if (old.members.length > 1)
+    return `the ${one} ${left} ${handlers} its ${old.members.length} ${left} exposures may have invoked`;
+  const which = `${handlers}${old.member.data.channel === null ? "" : " whose channel REA did not resolve"}`;
+  return `the ${one} ${left} ${which}`;
 };
 
 // The method and commands one site's old handlers reached, in words, each
@@ -236,7 +272,7 @@ export const keptUnknowns = (labels, { api, outcomes }) => {
       : []),
     ...(!old.handler && old.candidates.length > 0
       ? [
-          `Release Watch found no ${labels.left} handler by this API's channel, so it compared with ${oldHandlerWords(labels.left, old)}, ${old.candidates.length === 1 ? "which" : "any of which"} may have served it.`,
+          `Release Watch found no one ${labels.left} handler by the channel of ${api.member.data.member}(), so it compared with ${oldHandlerWords(labels.left, old)}, ${old.candidates.length === 1 ? "which" : "any of which"} may have served it.`,
         ]
       : []),
   ];
