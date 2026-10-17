@@ -223,12 +223,13 @@ const inArgument = (entry, callRange, range) => {
   return false;
 };
 
-// True when a node REA reports inside the call at `callRange` contains
-// `range`: a function whose body holds it (an IIFE), a member read of which
-// it is the object or a computed key, a call it is part of.
-const wrapped = (entry, callRange, range) => {
+// True when a node REA reports inside `outerRange` contains `range`: for a
+// call, a function whose body holds it (an IIFE), a member read of which it
+// is the object or a computed key, a call it is part of; for a member read,
+// the call whose result it reads (`execSync(cmd)` of `execSync(cmd).trim`).
+const wrapped = (entry, outerRange, range) => {
   for (
-    let index = firstAt(entry.nodes, callRange.start);
+    let index = firstAt(entry.nodes, outerRange.start);
     index < entry.nodes.length;
     index += 1
   ) {
@@ -236,7 +237,7 @@ const wrapped = (entry, callRange, range) => {
     if (startsBefore(nodeRange, range) > 0) break;
     if (
       strictlyWithin(range, nodeRange) &&
-      strictlyWithin(nodeRange, callRange)
+      strictlyWithin(nodeRange, outerRange)
     )
       return true;
   }
@@ -291,8 +292,11 @@ export const calleeOf = (entry, call) => {
 };
 
 /**
- * The innermost member read that starts where `range` starts and contains
- * it: the read of which `range` is the object (`cp.exec`, `cp[name]`).
+ * The member read of which `range` is the object (`cp.exec`, `cp[name]`):
+ * the innermost member read that starts where `range` starts and contains
+ * it, with no node REA reports between them. Null for a read of something
+ * `range` is only part of, such as the result of a call it makes
+ * (`execSync(cmd).trim`, whose object is the call `execSync(cmd)`).
  */
 export const memberReadAt = (entry, range) => {
   let found = null;
@@ -307,7 +311,7 @@ export const memberReadAt = (entry, range) => {
     )
       found = read;
   }
-  return found;
+  return found && !wrapped(entry, rangeOf(found), range) ? found : null;
 };
 
 // True when REA's facts allow `binding` to hold the value read at a

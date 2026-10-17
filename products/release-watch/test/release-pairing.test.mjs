@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { diffApplications } from "../src/diff.mjs";
+import { unknownCounterparts } from "../src/moves.mjs";
 import { releaseBaseline, releaseMovesOf } from "../src/policy.mjs";
 import { app, at, evaluate, fact, range, side } from "./helpers.mjs";
 
@@ -65,6 +66,95 @@ describe("sites moved between components", () => {
       graded(release, "worker", { comparable: (name) => name !== "core" }),
       [["RW-P01", "high"]],
     );
+  });
+});
+
+describe("old process sites the new facts lack", () => {
+  const GIT = "/usr/bin/git";
+  const asset = (key, sha256) => fact(key, { sha256 }, at(key, 1));
+  // One component: the old side's a.js runs git; the new side runs it from
+  // b.js and ships `files` (path → digest), with REA's coverage `coverage`.
+  const moves = (files, { coverage = {}, sites = [] } = {}) => {
+    const old = app({
+      childProcesses: [exec("a.js", GIT)],
+      assets: [asset("a.js", "aa")],
+    });
+    const now = app({
+      childProcesses: [exec("b.js", GIT), ...sites],
+      assets: Object.entries(files).map(([key, digest]) => asset(key, digest)),
+      coverage: { ...app().coverage, ...coverage },
+    });
+    return releaseMovesOf([
+      {
+        name: "app",
+        left: side("v1", old),
+        right: side("v2", now),
+        diff: { app: diffApplications(old, now) },
+        comparable: true,
+      },
+    ]).childProcesses;
+  };
+  const pairedFrom = (result) =>
+    [...result.pairs.values()].map(({ fact: site }) => site.data.module);
+
+  it("pairs a site whose file is gone, or changed and examined, as before", () => {
+    for (const files of [{ "b.js": "bb" }, { "a.js": "a2", "b.js": "bb" }])
+      assert.deepEqual(pairedFrom(moves(files)), ["a.js"]);
+  });
+
+  it("keeps a site in a file the new side still ships unchanged", () => {
+    const result = moves({ "a.js": "aa", "b.js": "bb" });
+    assert.deepEqual(
+      [result.pairs.size, result.lost, result.unknown],
+      [0, [], []],
+    );
+  });
+
+  it("holds a site in a changed file REA examined only in part as unknown", () => {
+    const result = moves(
+      { "a.js": "a2", "b.js": "bb" },
+      { coverage: { semantic_unreached_modules: ["a.js"] } },
+    );
+    assert.equal(result.pairs.size, 0);
+    assert.deepEqual(
+      result.unknown.map(({ fact: site }) => site.data.module),
+      ["a.js"],
+    );
+  });
+
+  it("names the unknown sites an unpaired new site may be", () => {
+    const partial = { coverage: { semantic_unreached_modules: ["a.js"] } };
+    const result = moves({ "a.js": "a2", "b.js": "bb" }, partial);
+    const modules = (sites) => sites.map(({ fact: site }) => site.data.module);
+    assert.deepEqual(
+      modules(unknownCounterparts(result, [exec("b.js", GIT)])),
+      ["a.js"],
+    );
+    // Another command, or a site whose file cannot hold a.js's old content
+    // (c.js now holds it), is not that site.
+    const other = moves(
+      { "a.js": "a2", "b.js": "bb" },
+      { ...partial, sites: [exec("c.js", "/bin/sh")] },
+    );
+    assert.deepEqual(
+      modules(unknownCounterparts(other, [exec("c.js", "/bin/sh")])),
+      [],
+    );
+    const copied = moves({ "a.js": "a2", "b.js": "bb", "c.js": "aa" }, partial);
+    assert.deepEqual(
+      modules(unknownCounterparts(copied, [exec("b.js", GIT)])),
+      [],
+    );
+  });
+
+  it("pairs a site whose file moved to another path only with its copy", () => {
+    // c.js holds a.js's old content; REA reported no site there.
+    assert.equal(moves({ "b.js": "bb", "c.js": "aa" }).pairs.size, 0);
+    const copied = moves(
+      { "b.js": "bb", "c.js": "aa" },
+      { sites: [exec("c.js", GIT)] },
+    );
+    assert.deepEqual([...copied.pairs.keys()], [exec("c.js", GIT).node_id]);
   });
 });
 

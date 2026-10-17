@@ -63,3 +63,32 @@ export const unreachedModules = (semantic, assets) => {
     .filter((key) => isScriptPath(key) && !reached.has(key))
     .sort();
 };
+
+/**
+ * The script files of one analyzed app REA examined only in part or not at
+ * all: those at the per-file node ceiling, those the global limit left
+ * unreached, every script file once the global limit is reached (REA does
+ * not say which files it cut short), and files REA could not analyze.
+ */
+export const examinedInPart = (app) => [
+  ...app.coverage.semantic_ceiling_modules,
+  ...(app.coverage.semantic_unreached_modules ?? []),
+  ...(app.coverage.semantic_global_limit_reached
+    ? app.assets.map((asset) => asset.key).filter(isScriptPath)
+    : []),
+  ...app.analysisFailures
+    .map((failure) => failure.location?.file)
+    .filter(Boolean),
+];
+
+/**
+ * A test for the files of one app whose semantic facts REA may not report
+ * in full: those examinedInPart lists, and every file when REA produced no
+ * semantic graph. What REA does not report there is unknown, not absent.
+ */
+export const partlyExamined = (app) => {
+  if (!app) return () => false;
+  if (app.coverage.semantic === "unavailable") return () => true;
+  const files = new Set(examinedInPart(app));
+  return (module) => files.has(module);
+};

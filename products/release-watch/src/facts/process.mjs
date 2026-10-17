@@ -9,6 +9,7 @@
 // never by its text alone, so a redux-saga `fork` or a game's `world.spawn`
 // is not a process API.
 import { within } from "../ranges.mjs";
+import { isDeclarationPath } from "./modules.mjs";
 import { moduleUses } from "./process-flow.mjs";
 import { wholeHolder } from "./process-exports.mjs";
 import { processGraph, rangeOf } from "./process-graph.mjs";
@@ -150,7 +151,9 @@ const heldNames = (whole) => {
  * REA ties to child_process and REA reported no process site for it.
  * `modules` is the import index and `childProcesses` the process sites
  * already projected from the graph; a module without semantic facts is
- * left to the coverage rules that report it unexamined. Modules that use
+ * left to the coverage rules that report it unexamined, and a TypeScript
+ * declaration file is not examined: it runs nothing, and what REA reports
+ * reading in it is a type. Modules that use
  * child_process are examined first, then the modules importing them; a
  * module that now exports child_process under more names (its bindings
  * escape under new names, Release Watch's correlation, or a module it
@@ -163,12 +166,15 @@ export const processUnknowns = (
   { modules, childProcesses },
 ) => {
   const loaders = loaderModules(semantic, modules);
+  const runs = (module) => !isDeclarationPath(module);
   const direct = new Set(
     [...modules]
-      .filter(([, entry]) => processSites(entry).length > 0)
+      .filter(
+        ([module, entry]) => runs(module) && processSites(entry).length > 0,
+      )
       .map(([module]) => module),
   );
-  for (const module of loaders) direct.add(module);
+  for (const module of loaders) if (runs(module)) direct.add(module);
   if (direct.size === 0) return [];
   const graph = processGraph(semantic, childProcesses);
   const escaped = new Map();
@@ -177,6 +183,7 @@ export const processUnknowns = (
     namedList: (module) => [...(escaped.get(module)?.keys() ?? [])],
   };
   const usesOf = (module) => {
+    if (!runs(module)) return null;
     const index = graph.include(module);
     if (!index) return null;
     const seeds = seedsOf({

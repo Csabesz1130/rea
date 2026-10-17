@@ -2,7 +2,7 @@
 // that code changed since the old release, and the changed-file tests the
 // coverage rules share.
 import { renamedFrom } from "../diff.mjs";
-import { isScriptPath } from "../facts/modules.mjs";
+import { examinedInPart } from "../facts/coverage.mjs";
 import { shippedBefore } from "../moves.mjs";
 import { gapLine, processGapsOf } from "./process-gaps.mjs";
 import { APP_SOURCE, cite, reported } from "./shared.mjs";
@@ -187,17 +187,10 @@ const recommendationFor = (context, { limited, changes }) => {
     : `Review the listed files or captures by other means.${review}`;
 };
 
-// Files REA examined only in part or not at all.
+// Files REA examined only in part or not at all, or whose use of
+// child_process it classified no process call for.
 const unexaminedFiles = (app, processGaps) => [
-  ...app.coverage.semantic_ceiling_modules,
-  ...(app.coverage.semantic_unreached_modules ?? []),
-  // Any script file may be partial once the global limit is reached.
-  ...(app.coverage.semantic_global_limit_reached
-    ? app.assets.map((asset) => asset.key).filter(isScriptPath)
-    : []),
-  ...app.analysisFailures
-    .map((failure) => failure.location?.file)
-    .filter(Boolean),
+  ...examinedInPart(app),
   ...processGaps.map((unknown) => unknown.data.module),
   ...(app.inlineScriptFiles ?? []),
 ];

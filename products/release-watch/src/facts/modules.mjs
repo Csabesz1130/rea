@@ -20,6 +20,14 @@ export const modulePathOf = (node) => {
 export const isScriptPath = (modulePath) =>
   /\.(m?js|cjs|jsx|ts|mts|cts|tsx)$/.test(modulePath);
 
+/**
+ * True for a TypeScript declaration file (`.d.ts`, `.d.mts`, `.d.cts`, as
+ * REA's parser selects declaration mode): it declares types and runs
+ * nothing, so its imports and reads start no process and send no request.
+ */
+export const isDeclarationPath = (modulePath) =>
+  /\.d\.(ts|mts|cts)$/i.test(modulePath);
+
 // Bundler content hashes in file names: `index-Gg77Hh88.js`, `main.3f2a9c1b.js`.
 const HASHED_NAME = [
   /-(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{8,}(?=\.(m?js|css)$)/,
@@ -82,11 +90,25 @@ const recordExports = (graph, entry) => {
   }
 };
 
+// How a load or export was written, from either of the two edges REA
+// reports for it: the load site (`kind`: `static-import`, `dynamic-import`,
+// `require`) and the module link it creates (`module_link_kind`: `import`,
+// `require`, `export`, `re-export`, `commonjs-export`). A link of kind
+// `import` is a static import declaration, one per name it binds or one
+// with no name for `import "x"`, so both edges of a static import read as
+// `static-import`: neither is a call whose result holds the module.
+const LINK_FORMS = { import: "static-import" };
+
+const formOf = (properties) =>
+  properties.kind ??
+  LINK_FORMS[properties.module_link_kind] ??
+  properties.module_link_kind ??
+  null;
+
 // One import edge as REA reports it: the binding it creates (`local`, null
-// when it creates none, as for `require(...).exec` or a dynamic import),
-// the imported name and property path, how it was written (`require`,
-// `import`, `static-import`, `dynamic-import`, or for an export
-// `export`, `re-export`, `commonjs-export`) and its source range.
+// when it creates none, as for `require(...).exec`, a dynamic import or a
+// side-effect import), the imported name and property path, how it was
+// written (`formOf`) and its source range.
 const siteOf = (edge, key, extra) => {
   const properties = edge.properties ?? {};
   const location = edge.evidence?.location?.value;
@@ -95,7 +117,7 @@ const siteOf = (edge, key, extra) => {
     local: properties.local_name ?? null,
     imported: properties.imported_name ?? null,
     path: properties.imported_path ?? null,
-    form: properties.kind ?? properties.module_link_kind ?? null,
+    form: formOf(properties),
     range:
       location?.kind === "source-range"
         ? { start: location.start, end: location.end }
@@ -126,7 +148,7 @@ const recordReexport = (edge, exporter, target, entry) => {
     entry(exporter).reexports.set(exported, {
       module: targetPath,
       name: imported ?? exported,
-      form: edge.properties?.module_link_kind ?? edge.properties?.kind ?? null,
+      form: formOf(edge.properties ?? {}),
     });
   else if (imported === "*") entry(exporter).stars.add(targetPath);
 };

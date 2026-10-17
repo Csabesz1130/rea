@@ -208,6 +208,17 @@ describe("source lines: secrets whatever the syntax", () => {
     for (const [line, secrets] of TOKEN_CASES)
       assertMasked(line, "fetch(", secrets);
   });
+
+  it("masks curl's user:password, and no other tool's -u value", () => {
+    for (const option of ["-u ", "-u", "--user ", "--user=", "-U "])
+      assertMasked(
+        `exec("curl -s ${option}admin:FAKEpw01 https://api.example.com")`,
+        "exec(",
+        ["admin:FAKEpw01"],
+      );
+    const text = shown('exec("docker run -u 1000:1000 node")', "exec(");
+    assert.ok(text.includes("-u 1000:1000"), text);
+  });
 });
 
 describe("source lines: what stays readable", () => {

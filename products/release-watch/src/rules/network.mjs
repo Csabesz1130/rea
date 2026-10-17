@@ -2,6 +2,7 @@
 // resolved and cleartext channels, graded against what the whole old
 // release contacted (destinations.mjs owns that attribution).
 import { shippedBefore, unaccounted } from "../moves.mjs";
+import { unexaminedNote } from "./unknown-moves.mjs";
 import { sourceEvidence, sourceUnknowns } from "./network-evidence.mjs";
 import { captureUnread } from "../facts/capture.mjs";
 import { displayUrl, schemeOf } from "../urls.mjs";
@@ -189,6 +190,14 @@ const candidateLines = (app, request) =>
       ),
     );
 
+// What an old request REA could not see in the new release was, for the
+// note that a new one may be it, moved (unknown-moves.mjs).
+const UNEXAMINED = {
+  kind: "request",
+  had: (fact) =>
+    `had a ${fact.data.method}() request without a known destination`,
+};
+
 // Request sites without a known destination (withoutDestination: REA
 // resolved none and Release Watch binds no URL literal to them) that a
 // module gained, which no removed site of the release accounts for (code
@@ -233,6 +242,7 @@ const unresolvedRequests = (context, explained) => {
         ],
         unknowns: [
           `REA did not resolve the destination${open.length > 1 ? "s" : ""}, and ${open.length > 1 ? "the requests read" : "the request reads"} no URL literal Release Watch can bind ${open.length > 1 ? "them" : "it"} to${open.length > added ? "; Release Watch cannot tell which site is new" : ""}.`,
+          ...unexaminedNote(context, context.moves.requests, open, UNEXAMINED),
         ],
       },
     ];

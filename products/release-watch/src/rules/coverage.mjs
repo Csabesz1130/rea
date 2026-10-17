@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { SECURITY_HEADERS, packageNameOf } from "../catalog.mjs";
 import { captureUnread } from "../facts/capture.mjs";
+import { isDeclarationPath } from "../facts/modules.mjs";
 import { clientImports, clientModules } from "./destinations.mjs";
 import { displayPath } from "../urls.mjs";
 import {
@@ -235,20 +236,20 @@ const helperCoverage = (context) =>
       unknowns: [],
     }));
 
-/**
- * RW-C05: new or changed modules that import an HTTP client library, or a
- * local module that does, and have no request site REA recognised. Their
- * requests are not examined by the network or AI rules. Medium unless a
- * runtime capture of the new release covers what they send.
- */
+// A TypeScript declaration file runs nothing: what it imports or
+// re-exports sends no request.
+const runs = (module) => !isDeclarationPath(module);
+
 // The modules one module imports, directly or through one more local
-// import, each with the module it goes through (null when direct).
+// import, each with the module it goes through (null when direct); none
+// through a declaration file.
 const reachable = (app, from) => {
   const found = new Map();
   for (const first of app.modules.get(from)?.local ?? []) {
+    if (!runs(first)) continue;
     if (!found.has(first)) found.set(first, null);
     for (const second of app.modules.get(first)?.local ?? [])
-      if (!found.has(second)) found.set(second, first);
+      if (runs(second) && !found.has(second)) found.set(second, first);
   }
   return found;
 };
@@ -269,7 +270,7 @@ const transitiveSites = (app, clients, changed) => {
     if (!sites.has(site.module)) sites.set(site.module, site);
   };
   for (const [module] of app.modules) {
-    if (clients.has(module) || !changed(module)) continue;
+    if (clients.has(module) || !runs(module) || !changed(module)) continue;
     for (const [target, via] of reachable(app, module))
       if (clients.has(target)) {
         add(
@@ -295,11 +296,19 @@ const transitiveSites = (app, clients, changed) => {
   return [...sites.values()];
 };
 
+/**
+ * RW-C05: new or changed modules that import an HTTP client library, or a
+ * local module that does, and have no request site REA recognised. Their
+ * requests are not examined by the network or AI rules. Medium unless a
+ * runtime capture of the new release covers what they send.
+ */
 const unmodeledClients = (context) => {
   const app = context.right.app;
   if (!app) return [];
-  const direct = clientImports(app);
-  const clients = clientModules(app);
+  const direct = clientImports(app).filter((fact) => runs(fact.data.module));
+  const clients = new Map(
+    [...clientModules(app)].filter(([module]) => runs(module)),
+  );
   // New and changed modules, which a new import of the client makes: code
   // that moved or stayed unchanged, in any component, keeps the requests it
   // had (unmodeledChanges).
@@ -348,12 +357,15 @@ const unmodeledClients = (context) => {
 };
 
 /** Coverage rules. */
-export const coveragePack = (context) =>
-  packResult([
+export const coveragePack = (context) => {
+  const unmodeled = unmodeledChanges(context);
+  return packResult([
     ...unexaminedAnalysis(context),
-    ...processLibraries(context, unmodeledChanges(context)),
+    // A declaration file's import of a process library starts nothing.
+    ...processLibraries(context, (module) => runs(module) && unmodeled(module)),
     ...oneSided(context),
     ...fuseCoverage(context),
     ...helperCoverage(context),
     ...unmodeledClients(context),
   ]);
+};

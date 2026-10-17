@@ -386,6 +386,21 @@ const schemeSpans = (view) => {
   return spans;
 };
 
+// The `user:password` of curl's `-u`/`--user` (`-U`/`--proxy-user`) option
+// in a text that names curl: HTTP Basic credentials on a command line.
+const CURL_USER =
+  /(?<![\w-])(?:-u|-U|--user|--proxy-user)(?:=|[ \t]{0,8})(["']?)([^\s"'`:]{0,256}:[^\s"'`]{1,512})\1/g;
+const curlUserSpans = ({ text }) => {
+  const curl = text.search(/\bcurl\b/);
+  if (curl === -1) return [];
+  const spans = [];
+  for (const match of text.slice(curl).matchAll(CURL_USER)) {
+    const end = curl + match.index + match[0].length - match[1].length;
+    spans.push(tagged(text, end - match[2].length, end, "pattern"));
+  }
+  return spans;
+};
+
 const CREDENTIAL_WORDS =
   /key|token|secret|auth|pass|pwd|signature|credential|subscription|session|cookie|appid|client_?id/i;
 const NAME = /[A-Za-z0-9_$-]/;
@@ -635,9 +650,9 @@ const pieceSpans = (view) => {
 /**
  * Spans of secrets written anywhere in a text view, in no order and
  * possibly overlapping: credential formats, the secret parts of its URL
- * runs, random-looking runs outside URLs, JWTs, Bearer/Basic/Token values
- * and values written after a credential-like name or as pieces of a query
- * value or user info. `rank` names the rule: "url", "credential",
+ * runs, random-looking runs outside URLs, JWTs, Bearer/Basic/Token values,
+ * curl's `-u user:password`, and values written after a credential-like
+ * name or as pieces of a query value or user info. `rank` names the rule: "url", "credential",
  * "pattern", "quoted" (a value read up to a quote) or "word".
  */
 export const secretSpans = (view) => [
@@ -646,6 +661,7 @@ export const secretSpans = (view) => [
   ...wordSpans(view),
   ...jwtSpans(view),
   ...schemeSpans(view),
+  ...curlUserSpans(view),
   ...fieldSpans(view),
   ...pieceSpans(view),
 ];

@@ -148,7 +148,15 @@ once, with both counts, because Release Watch cannot tell which site is new.
 Across the release, each site a component gained is paired with at most one
 site a component lost, by method and resolved command, so a call that moved
 between modules or components is low and a second copy is not. A site whose
-file moved unchanged pairs with its old copy first, wherever it is.
+file moved unchanged pairs with its old copy first, wherever it is, and an
+old site whose file content now ships under another path pairs only with a
+site in that copy. An old site the new facts lack is lost only when its
+file is gone from its component or changed there and REA examined it in
+full: one in a file the new side still ships unchanged was not removed,
+and one in a file REA examined there only in part (or not at all) is
+unknown, so a new site with its command stays high and the finding says
+it may be that call, moved. Requests without a known destination follow
+the same rule: such a new request is reported (RW-N02) with the same note.
 
 Reachability (RW-E01, RW-M01) follows REA's semantic graph: the functions
 REA reports, the calls it resolved, the binding reads each function owns,
@@ -304,7 +312,16 @@ passed.
   first argument). REA reports the length of a literal argv array (none for
   `exec` or a computed array), not the argument values or options such as
   `shell: true`, so a changed argument list or a shell newly enabled at the
-  same site is not reported.
+  same site is not reported. A changed key's finding names each command
+  REA resolved, masked as a source line is (a Bearer or Basic value,
+  curl's `-u user:password`, credential formats, URL user info, a value
+  after a credential-like name such as `API_KEY=…`; another tool's password
+  option, such as `sshpass -p`, is not). A command is called new only when
+  REA resolved every command the old side ran at that module and method;
+  where REA did not resolve a command on either side (`spawn("/bin/bash")`
+  becoming `spawn(shell)`), the finding stays high and says which commands
+  or sites may be the same; it counts the old sites REA did not resolve as
+  sites, since two of them may run one command.
 - RW-C01 finds process calls REA did not classify through the values REA
   ties to child_process: import bindings, `require("child_process")` calls,
   bindings destructured from them, the parameters REA passes them to, and
@@ -338,11 +355,24 @@ passed.
   name (`module.exports = { run: spawn }`), a guessed load used without a
   child_process export name, and code REA does not parse (`new Function`,
   the source string `eval` runs). A read of child_process that REA's graph
-  does not follow (`if (!cp)`) is reported as a gap on that read.
+  does not follow (`if (!cp)`) is reported as a gap on that read. A
+  side-effect `import "child_process"` binds nothing and is no gap. REA
+  reports no statement facts, so a `require("child_process")` whose result
+  is discarded (rollup's CommonJS output for that import) reads as one
+  whose result REA's graph does not follow (`x || require(…)`), and is
+  still reported as a possible gap; RW-C01 lists such loads after the
+  gaps at a use REA's graph shows. A
+  method called on what a process call returns (`execSync(cmd).trim()`)
+  is reported as that call (`calls execSync`). TypeScript declaration
+  files (`.d.ts`, `.d.mts`, `.d.cts`) run nothing and are not examined.
+  REA leaves out type-only imports (`import type`), but reports a type
+  annotation in a `.ts` source as a read, so a child_process import used
+  only in types there may be reported as a gap.
 - RW-C06 notes that changed modules import a process library; what those
   libraries run is not examined, and a library bundled into a file without
   an import is not seen. A module whose content the old release shipped,
-  under any path, did not change.
+  under any path, did not change, and a declaration file's import of one
+  starts nothing.
 - Browser code is classified from what HTML pages and service workers load.
   Dedicated workers and scripts loaded at runtime are not classified, so a
   call that moved from a worker into page code is reported at medium.
@@ -374,7 +404,9 @@ passed.
   an object property, a namespace member), is a possible destination, not
   an observed one: it is reported medium, titled and explained as a guess.
   A URL in a module that only imports such a module is not taken as one;
-  RW-C05 notes the module when it changed. REA reports no literal for a URL
+  RW-C05 notes the module when it changed. A declaration file sends
+  nothing, so RW-C05 neither counts it nor follows its imports and
+  re-exports. REA reports no literal for a URL
   in an anonymous default-exported object, so such a URL is not reported.
   A host the old release only guessed at is new once the new release is
   seen contacting it, and the finding says the old release held its URL. A
@@ -418,10 +450,11 @@ credential formats masked.
 
 Source lines shown next to evidence are masked by span on a bounded window
 of the line, whatever the code's syntax: random-looking runs (hex, UUIDs,
-base62 and base64), JWTs, Bearer and Basic values and `btoa("user:pw")`,
-values after a credential-like name (key, token, secret, auth, pass, pwd,
-sig, signature, appid, client_id and the like) in code, JSON, form bodies,
-headers, bracketed keys, setters such as `setPassword("…")`, call arguments
+base62 and base64), JWTs, Bearer and Basic values, `btoa("user:pw")` and
+curl's `-u user:pw` (`--user`, `-U`, `--proxy-user`), values after a
+credential-like name (key, token, secret, auth, pass, pwd, sig, signature,
+appid, client_id and the like) in code, JSON, form bodies, headers,
+bracketed keys, setters such as `setPassword("…")`, call arguments
 and `||`, `??` or ternary fallbacks, unquoted values in comments and
 template text or mixing letters and digits, strings that follow `?name=`
 pieces or end user info with `@`, URL parts as their claims show them, and

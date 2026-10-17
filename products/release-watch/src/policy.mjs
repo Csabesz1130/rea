@@ -1,5 +1,6 @@
 // Turns a component diff into graded findings, and findings into a verdict.
 import { deploymentHosts } from "./facts/capture.mjs";
+import { partlyExamined } from "./facts/coverage.mjs";
 import { aiPack, shippedTokens } from "./rules/ai.mjs";
 import { browserSdkUses } from "./rules/ai-placement.mjs";
 import { coveragePack } from "./rules/coverage.mjs";
@@ -48,14 +49,9 @@ const PACKS = [
  * is not comparable when REA could not analyze its new side.
  */
 export const releaseMovesOf = (components) => ({
-  childProcesses: releaseMoves(
-    components.map(({ name, diff, comparable }) => ({
-      name,
-      items: diff.app.childProcesses,
-      comparable,
-    })),
-    { field: "command" },
-  ),
+  childProcesses: releaseMoves(withDigests(components, "childProcesses"), {
+    field: "command",
+  }),
   // Only requests with no known destination move as unresolved sites; one
   // Release Watch binds to a URL literal is compared by its host instead.
   requests: releaseMoves(
@@ -81,6 +77,7 @@ const withDigests = (components, family) =>
     items: diff.app[family],
     comparable,
     digests: { left: fileDigests(left?.app), right: fileDigests(right?.app) },
+    partial: partlyExamined(right?.app),
   }));
 
 /**

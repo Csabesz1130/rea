@@ -37,9 +37,11 @@ export const processSites = (entry) =>
     isProcessModule(site.data.specifier),
   );
 
-// Import edges that bind no name, once per range, apart from the ones a
-// binding import covers (CommonJS reports `require(...)` inside its
-// declaration as a second edge) and side-effect `import "child_process"`.
+// Loads whose result holds the module (`require(...)`, `import(...)`), once
+// per range, apart from the ones a binding import covers (CommonJS reports
+// `require(...)` inside its declaration as a second edge). A static import
+// binds its names or, as a side-effect `import "child_process"`, nothing:
+// it is never a value (modules.mjs reads both of its edges as one form).
 const valueSites = (sites) => {
   const named = sites.filter((site) => site.data.local !== null);
   const seen = new Set();

@@ -2,7 +2,8 @@
 // finding per module and method. A key counts when it gained sites or when
 // a site's command differs from every old one. A new site that takes a site
 // the release lost, with the same method and resolved command, moved; it is
-// reported low with the old location. An unresolved command never pairs.
+// reported low with the old location. An unresolved command never pairs,
+// and what a changed key's commands are called is process-commands.mjs's.
 import { movedFrom } from "../moves.mjs";
 import {
   contentOrigin,
@@ -10,6 +11,8 @@ import {
   perComponent,
   processAbsence,
 } from "./component-absence.mjs";
+import { changedClaims, commandText, unresolved } from "./process-commands.mjs";
+import { oldLabel, unexaminedNote } from "./unknown-moves.mjs";
 import {
   APP_SOURCE,
   cite,
@@ -32,98 +35,134 @@ const newFileNote = (context, modulePath) =>
     ? ", a file new in this release"
     : "";
 
-const siteLine = (fact) =>
+// What a site runs, naming the command REA resolved when `named`.
+const runs = (fact, named) => {
+  if (unresolved(fact)) return " with a command REA did not resolve";
+  return named ? ` running ${commandText(fact.data.command)}` : "";
+};
+
+const siteLine = (fact, named = false) =>
   cite(
-    `${fact.data.method}() child-process creation${fact.data.command ? "" : " with a command REA did not resolve"}`,
+    `${fact.data.method}() child-process creation${runs(fact, named)}`,
     fact,
     APP_SOURCE,
   );
 
-const finding = (context, group) => {
-  const [fact] = group.facts;
-  const { method, module } = fact.data;
-  const sites = group.facts.map(siteLine);
-  const unknowns = group.facts.some((site) => site.data.command === null)
-    ? ["REA did not resolve the command statically."]
-    : [];
-  const moved = movedSites(context, group);
-  if (moved)
-    return {
-      rule: "RW-P01",
-      severity: "low",
-      title: `Process execution moved: ${method}() now in ${module}`,
-      summary: `${context.labels.right} creates child processes from ${module}; ${context.labels.left} ran the same command${moved.length === 1 ? "" : "s"} from ${moved.length === 1 ? "a site" : "sites"} that no longer ${moved.length === 1 ? "has" : "have"} it.`,
-      why: "Moved process execution is usually a refactor, but the new location may be reachable from different inputs.",
-      recommendation:
-        "Check that the moved call takes its command from the same source as before.",
-      evidence: [
-        ...sites,
-        ...moved.map(({ component, fact: old }) => {
-          const line = cite(
-            component === context.name
-              ? `${context.labels.left}: ${method}() with the same command in ${old.data.module}`
-              : `${context.releaseLabels?.left ?? context.labels.left}, component ${component}: ${method}() with the same command in ${old.data.module}`,
-            old,
-            APP_SOURCE,
-            { side: "left" },
-          );
-          return component === context.name
-            ? line
-            : {
-                ...line,
-                location: line.location && { ...line.location, component },
-              };
-        }),
-        heuristic(
-          "Release Watch pairs each new site with one removed site of the same method and command; REA does not establish that they are the same call",
-        ),
-      ],
-      unknowns,
-    };
-  const changed = group.status === "changed";
-  const absence = processAbsence(context, group);
-  if (absence.held) unknowns.push(perComponent("process execution sites"));
-  if (absence.copied) unknowns.push(copiedSite(context));
+const WHY =
+  "Process execution is a common step in supply-chain payloads and widens what the app can do on the machine it runs on.";
+const RECOMMENDATION =
+  "Confirm the command source and that it cannot be influenced by web content, model output or network data.";
+
+const movedLine = (context, method, { component, fact: old }) => {
+  const line = cite(
+    `${oldLabel(context, component)}: ${method}() with the same command in ${old.data.module}`,
+    old,
+    APP_SOURCE,
+    { side: "left" },
+  );
+  return component === context.name
+    ? line
+    : { ...line, location: line.location && { ...line.location, component } };
+};
+
+const movedFinding = (context, group, moved, unknowns) => {
+  const { method, module } = group.facts[0].data;
+  return {
+    rule: "RW-P01",
+    severity: "low",
+    title: `Process execution moved: ${method}() now in ${module}`,
+    summary: `${context.labels.right} creates child processes from ${module}; ${context.labels.left} ran the same command${moved.length === 1 ? "" : "s"} from ${moved.length === 1 ? "a site" : "sites"} that no longer ${moved.length === 1 ? "has" : "have"} it.`,
+    why: "Moved process execution is usually a refactor, but the new location may be reachable from different inputs.",
+    recommendation:
+      "Check that the moved call takes its command from the same source as before.",
+    evidence: [
+      ...group.facts.map((fact) => siteLine(fact)),
+      ...moved.map((site) => movedLine(context, method, site)),
+      heuristic(
+        "Release Watch pairs each new site with one removed site of the same method and command; REA does not establish that they are the same call",
+      ),
+    ],
+    unknowns,
+  };
+};
+
+// What an old site REA could not see in the new release ran, for the note
+// that a new site may be that call, moved (unknown-moves.mjs).
+const UNEXAMINED = {
+  kind: "call",
+  had: (fact) =>
+    `ran ${fact.data.method}() with ${unresolved(fact) ? "a command REA did not resolve" : "the same command"}`,
+};
+
+// A new site with an unresolved command next to one the release lost.
+const goneNote = (context, group) => {
+  const { method } = group.facts[0].data;
   const gone = context.moves.childProcesses.lost
     .map((site) => site.fact)
-    .filter(
-      (site) => site.data.method === method && site.data.command === null,
-    );
-  if (
-    !changed &&
+    .filter((site) => site.data.method === method && unresolved(site));
+  return group.status !== "changed" &&
     gone.length > 0 &&
-    group.facts.every((site) => site.data.command === null)
-  )
-    unknowns.push(
-      `${context.labels.left} had a ${method}() with an unresolved command in ${gone[0].data.module} that is gone now; this may be the same call, moved.`,
-    );
+    group.facts.every(unresolved)
+    ? [
+        `${context.labels.left} had a ${method}() with an unresolved command in ${gone[0].data.module} that is gone now; this may be the same call, moved.`,
+      ]
+    : [];
+};
+
+const changedFinding = (context, group, unknowns) => {
+  const { method, module } = group.facts[0].data;
+  const claims = changedClaims(context, group);
   return {
     rule: "RW-P01",
     severity: "high",
-    title: changed
-      ? `Process execution changed: ${method}() in ${module}`
-      : `New process execution: ${method}() in ${module}`,
-    summary: changed
-      ? `${context.labels.right} runs a different command from ${module} than ${context.labels.left} did.`
-      : `${context.labels.right} creates child processes from ${module}${newFileNote(context, module)} (${absence.phrase}).`,
-    why: "Process execution is a common step in supply-chain payloads and widens what the app can do on the machine it runs on.",
-    recommendation:
-      "Confirm the command source and that it cannot be influenced by web content, model output or network data.",
+    title: `Process execution changed: ${method}() in ${module}`,
+    summary: claims.summary,
+    why: WHY,
+    recommendation: RECOMMENDATION,
     evidence: [
-      ...sites,
-      ...(changed
-        ? group.left.map((old) =>
-            cite(
-              `${context.labels.left}: ${method}() ran ${old.data.command ? "a resolved command" : "a command REA did not resolve"}`,
-              old,
-              APP_SOURCE,
-              {
-                side: "left",
-              },
-            ),
-          )
-        : []),
+      ...group.facts.map((fact) => siteLine(fact, true)),
+      ...group.left.map((old) =>
+        cite(
+          `${context.labels.left}: ${method}() ran ${unresolved(old) ? "a command REA did not resolve" : commandText(old.data.command)}`,
+          old,
+          APP_SOURCE,
+          { side: "left" },
+        ),
+      ),
     ],
+    unknowns: [...unknowns, ...claims.unknowns],
+  };
+};
+
+const finding = (context, group) => {
+  const unknowns = group.facts.some(unresolved)
+    ? ["REA did not resolve the command statically."]
+    : [];
+  const moved = movedSites(context, group);
+  if (moved) return movedFinding(context, group, moved, unknowns);
+  const absence = processAbsence(context, group);
+  if (absence.held) unknowns.push(perComponent("process execution sites"));
+  if (absence.copied) unknowns.push(copiedSite(context));
+  unknowns.push(
+    ...goneNote(context, group),
+    ...unexaminedNote(
+      context,
+      context.moves.childProcesses,
+      group.facts,
+      UNEXAMINED,
+    ),
+  );
+  if (group.status === "changed")
+    return changedFinding(context, group, unknowns);
+  const { method, module } = group.facts[0].data;
+  return {
+    rule: "RW-P01",
+    severity: "high",
+    title: `New process execution: ${method}() in ${module}`,
+    summary: `${context.labels.right} creates child processes from ${module}${newFileNote(context, module)} (${absence.phrase}).`,
+    why: WHY,
+    recommendation: RECOMMENDATION,
+    evidence: group.facts.map((fact) => siteLine(fact)),
     unknowns,
   };
 };

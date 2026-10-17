@@ -75,11 +75,27 @@ export const gapLine = (unknown) =>
     ? heuristic(gapClaim(unknown.data), unknown.location)
     : cite(gapClaim(unknown.data), unknown, APP_SOURCE);
 
-/** The process gaps in files `changed` says changed, once per place. */
-export const processGapsOf = (app, changed) => [
-  ...new Map(
-    (app?.processUnknowns ?? [])
-      .filter((unknown) => changed(unknown.data.module))
-      .map((unknown) => [unknown.key, unknown]),
-  ).values(),
-];
+// A load whose value REA's graph shows no use of at all: REA reports no
+// statement facts, so a `require("child_process");` whose result is
+// discarded (rollup's CommonJS form of `import "child_process"`) reads the
+// same as one whose result goes where the graph does not show.
+const unused = (unknown) => unknown.data.use === "load";
+
+/**
+ * The process gaps in files `changed` says changed, once per place: those
+ * at a use REA's graph shows first, then loads it shows no use of, so a
+ * capped list of evidence and files leads with the specific ones.
+ */
+export const processGapsOf = (app, changed) => {
+  const gaps = [
+    ...new Map(
+      (app?.processUnknowns ?? [])
+        .filter((unknown) => changed(unknown.data.module))
+        .map((unknown) => [unknown.key, unknown]),
+    ).values(),
+  ];
+  return [
+    ...gaps.filter((unknown) => !unused(unknown)),
+    ...gaps.filter(unused),
+  ];
+};
