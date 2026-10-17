@@ -89,6 +89,30 @@ describe("facts: the expression a member read is read on", () => {
     );
   });
 
+  it("gives no receiver range when REA's nodes there form no one expression", () => {
+    const unsettled = { range: null, global: null, room: false };
+    // (a || b).run
+    assert.deepEqual(
+      receiver([
+        read("run", at(1, 0, 12)),
+        node("expression", "a", at(1, 1, 2)),
+        node("expression", "b", at(1, 6, 7)),
+      ]),
+      unsettled,
+    );
+    // [a, b].forEach
+    assert.deepEqual(
+      receiver([
+        read("forEach", at(2, 0, 14)),
+        node("expression", "a", at(2, 1, 2)),
+        node("expression", "b", at(2, 4, 5)),
+      ]),
+      unsettled,
+    );
+  });
+});
+
+describe("facts: a receiver that may share its parentheses with this", () => {
   it("says when the one expression in the parentheses may share them with this", () => {
     // (replica || this).run: REA reports no node for this.
     const replica = at(16, 73, 80);
@@ -116,28 +140,6 @@ describe("facts: the expression a member read is read on", () => {
         node("expression", "replica", broken),
       ]),
       { range: broken, global: null, room: true },
-    );
-  });
-
-  it("gives no receiver range when REA's nodes there form no one expression", () => {
-    const unsettled = { range: null, global: null, room: false };
-    // (a || b).run
-    assert.deepEqual(
-      receiver([
-        read("run", at(1, 0, 12)),
-        node("expression", "a", at(1, 1, 2)),
-        node("expression", "b", at(1, 6, 7)),
-      ]),
-      unsettled,
-    );
-    // [a, b].forEach
-    assert.deepEqual(
-      receiver([
-        read("forEach", at(2, 0, 14)),
-        node("expression", "a", at(2, 1, 2)),
-        node("expression", "b", at(2, 4, 5)),
-      ]),
-      unsettled,
     );
   });
 });
