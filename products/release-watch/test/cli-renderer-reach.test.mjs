@@ -115,6 +115,28 @@ describe("compare: renderer APIs a release keeps", { skip }, () => {
       'Renderer can now reach process execution via "notes:sync"',
     );
   });
+
+  it("masks a credential in the command a kept API's claims name", () => {
+    const main = (sync) =>
+      `const { app, ipcMain, BrowserWindow } = require("electron");\nconst { exec } = require("node:child_process");\nipcMain.handle("notes:sync", ${sync});\napp.whenReady().then(() => new BrowserWindow({ webPreferences: { preload: __dirname + "/preload.js" } }).loadFile("index.html"));\n`;
+    const release = (sync) => ({
+      "main.js": main(sync),
+      "preload.js": SYNC_PRELOAD,
+    });
+    const result = compare(
+      release('(_e, a) => fetch("https://sync.acme.example/" + a)'),
+      release(
+        '(_e, a) => exec("curl -u admin:hunter2 https://sync.acme.example/push")',
+      ),
+      ELECTRON,
+    );
+    assert.equal(result.result.status, 2, result.result.stderr);
+    assert.match(
+      claims(finding(result, "RW-E01")),
+      /to no exec\(\) running "curl -u \S+ https:\/\/sync\.acme\.example\/push"/,
+    );
+    for (const text of result.outputs) assert.doesNotMatch(text, /hunter2/);
+  });
 });
 
 // One app whose lib/run.js runs git with a configurable binary and any

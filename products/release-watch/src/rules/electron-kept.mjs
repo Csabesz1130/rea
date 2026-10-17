@@ -6,6 +6,7 @@
 // commands stay unknown: a site is the same as an old one only when every
 // old handler that may have served the API reached it.
 import { startsBefore } from "../ranges.mjs";
+import { commandText } from "./process-commands.mjs";
 import { reachedFrom } from "./reach.mjs";
 import { heuristic } from "./shared.mjs";
 
@@ -136,7 +137,8 @@ const oldHandlerWords = (left, old) => {
   return `the ${count === 1 ? "one" : count} ${left} ${which}`;
 };
 
-// The method and commands one site's old handlers reached, in words.
+// The method and commands one site's old handlers reached, in words, each
+// command as process-commands.mjs shows one.
 const ranWords = (old, method) => {
   const commands = new Set();
   let unresolved = false;
@@ -147,7 +149,9 @@ const ranWords = (old, method) => {
     unresolved ||= reached.unresolved.has(method);
   }
   return [
-    commands.size > 0 ? `running ${[...commands].join(", ")}` : null,
+    commands.size > 0
+      ? `running ${[...commands].map(commandText).join(", ")}`
+      : null,
     unresolved ? "at another site whose command REA did not resolve" : null,
   ]
     .filter(Boolean)
@@ -160,7 +164,7 @@ const mixedClaim = (whom, outcomes, { method, command }) => {
   const parts = [
     [
       "same",
-      `${method}() ${command ? `running ${command}` : "at this site's place"}`,
+      `${method}() ${command ? `running ${commandText(command)}` : "at this site's place"}`,
     ],
     ["unsure", `${method}() at a site whose command REA did not resolve`],
     ["new", `no such site`],
@@ -177,10 +181,10 @@ const oldClaim = (whom, old, site) => {
   if (new Set(site.outcomes).size > 1)
     return mixedClaim(whom, site.outcomes, site.exec.data);
   if (site.compared === "new")
-    return `Release Watch connected ${whom} to no ${method}()${command ? ` running ${command}` : ""}`;
+    return `Release Watch connected ${whom} to no ${method}()${command ? ` running ${commandText(command)}` : ""}`;
   return command === null
     ? `Release Watch connected ${whom} to ${method}() ${ranWords(old, method)}; REA did not resolve the command here`
-    : `Release Watch connected ${whom} to no ${method}() running ${command}, but to ${method}() at a site whose command REA did not resolve`;
+    : `Release Watch connected ${whom} to no ${method}() running ${commandText(command)}, but to ${method}() at a site whose command REA did not resolve`;
 };
 
 /** What the old side's handlers reached, for a kept API and the site cited. */

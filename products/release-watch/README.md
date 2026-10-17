@@ -401,11 +401,12 @@ passed.
   first argument). REA reports the length of a literal argv array (none for
   `exec` or a computed array), not the argument values or options such as
   `shell: true`, so a changed argument list or a shell newly enabled at the
-  same site is not reported. A changed key's finding names each command
-  REA resolved, masked as a source line is (a Bearer or Basic value,
-  curl's `-u user:password`, credential formats, URL user info, a value
-  after a credential-like name such as `API_KEY=…`; another tool's password
-  option, such as `sshpass -p`, is not). A command is called new only when
+  same site is not reported. A changed key's finding, like RW-E01's claims
+  on what a kept API's old handler ran, names each command REA resolved,
+  masked as a source line is (a Bearer or Basic value, curl's
+  `-u user:password`, credential formats, URL user info, a value after a
+  credential-like name such as `API_KEY=…`; another tool's password option,
+  such as `sshpass -p`, is not). A command is called new only when
   REA resolved every command the old side ran at that module and method;
   where REA did not resolve a command on either side (`spawn("/bin/bash")`
   becoming `spawn(shell)`), the finding stays high and says which commands
