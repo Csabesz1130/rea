@@ -1,11 +1,14 @@
 // How a range of code (an IPC handler, an MCP tool registration) reaches
 // process-execution sites. From the range, Release Watch follows REA's
 // resolved same-module calls, every binding read (reach-resolve.mjs says
-// where each leads) and member reads on a receiver REA does not resolve
-// (`this.run()`, reach-this.mjs), breadth first, once per place. Every
-// path is Release Watch's correlation of REA facts, so callers label it
+// where each leads), member reads on a receiver REA does not resolve
+// (`this.run()`, reach-this.mjs) and member calls on a `new` expression REA
+// resolved (`new Svc().run()`), breadth first, once per place. A class runs
+// as it is constructed: its code outside its methods, the constructor's
+// included; another method runs only when something calls it. Every path
+// is Release Watch's correlation of REA facts, so callers label it
 // heuristic (reach-text.mjs words it).
-import { within } from "../ranges.mjs";
+import { firstStarting, sameRange, sameStart, within } from "../ranges.mjs";
 import {
   callRole,
   constructedRead,
@@ -16,7 +19,13 @@ import {
   runningCall,
 } from "./reach-calls.mjs";
 import { entryPath } from "./reach-builtins.mjs";
-import { WHOLE_MODULE, indexOf, inside } from "./reach-index.mjs";
+import {
+  WHOLE_MODULE,
+  childFunctions,
+  enclosingFunction,
+  indexOf,
+  inside,
+} from "./reach-index.mjs";
 import { followRead, producedBy } from "./reach-resolve.mjs";
 import { isGuess } from "./reach-text.mjs";
 import { followBareMember } from "./reach-this.mjs";
@@ -26,7 +35,73 @@ import { outermostIn, outsideOf } from "./reach-value.mjs";
 // function once, so this only cuts pathological chains.
 const MAX_DEPTH = 32;
 
-const callStep = (fn) => ({ kind: "call", name: fn.name, location: null });
+const callStep = (fn) => ({
+  kind: "call",
+  name: fn.name,
+  location: null,
+  constructs: fn.kind === "class",
+});
+
+// A class's methods, which constructing it does not run.
+const methodsOf = (index, fn) =>
+  childFunctions(index, fn.module, fn.id).filter(
+    (child) => child.kind === "method" && child.name !== "constructor",
+  );
+
+// The methods of a class a `new` expression constructs and passes straight
+// to a call (`server.addTool(new GitTool())`), which may run any of them:
+// each, as a guess.
+const passedMethods = (index, module, call, fn) => {
+  if (fn.kind !== "class") return [];
+  const args = index.arguments.get(module) ?? [];
+  let next = firstStarting(args, call.range);
+  while (next < args.length && !sameRange(args[next].range, call.range)) {
+    if (!sameStart(args[next].range, call.range)) return [];
+    next += 1;
+  }
+  if (next >= args.length) return [];
+  return methodsOf(index, fn).map((method) => ({
+    fn: method,
+    step: {
+      kind: "passed",
+      name: method.name,
+      owner: fn.name,
+      how: "guess",
+      location: null,
+    },
+  }));
+};
+
+// The methods a member call on a `new` expression REA resolved to a class
+// names (`new Svc().run()`), each with its step.
+const instanceMethods = (index, module, member) => {
+  const at = member.receiver.range;
+  const calls = index.calls.get(module) ?? [];
+  const classes = [];
+  for (
+    let next = firstStarting(calls, at);
+    next < calls.length && sameStart(calls[next].range, at);
+    next += 1
+  )
+    if (sameRange(calls[next].range, at))
+      for (const id of calls[next].callees) {
+        const fn = index.byId.get(id);
+        if (fn?.kind === "class") classes.push(fn);
+      }
+  return classes.flatMap((owner) =>
+    methodsOf(index, owner)
+      .filter((fn) => fn.name === member.path[0])
+      .map((fn) => ({
+        fn,
+        step: {
+          kind: "constructed",
+          name: fn.name,
+          owner: owner.name,
+          location: member.location,
+        },
+      })),
+  );
+};
 
 const keyOf = (target) => {
   if (target.fn) return target.fn.id;
@@ -44,20 +119,33 @@ const keyOf = (target) => {
 // `this` (reach-this.mjs).
 const exploreCode = ({ state, record, visit }, entry) => {
   const { index } = state;
-  const { module: current, range: where, steps } = entry;
-  for (const { exec } of inside(index.execs.get(current), where))
-    record(exec, steps);
-  for (const call of inside(index.calls.get(current), where))
-    for (const fn of call.callees.map((id) => index.byId.get(id)))
-      if (fn) visit({ fn }, [...steps, callStep(fn)]);
-  for (const item of inside(index.reads.get(current), where))
+  const { module: current, range: where, steps, except = [] } = entry;
+  const runs = (list) =>
+    inside(list, where).filter(
+      (item) => !except.some((range) => within(item.range, range)),
+    );
+  for (const { exec } of runs(index.execs.get(current))) record(exec, steps);
+  for (const call of runs(index.calls.get(current)))
+    for (const fn of call.callees.map((id) => index.byId.get(id))) {
+      if (!fn) continue;
+      visit({ fn }, [...steps, callStep(fn)]);
+      for (const target of passedMethods(index, current, call, fn))
+        visit(target, [...steps, target.step]);
+    }
+  for (const item of runs(index.reads.get(current)))
     if (!isOwnReceiver(index, current, item))
       for (const target of followRead(state, item))
         visit(target, [...steps, target.step]);
-  for (const member of inside(index.members.get(current), where))
-    if (member.receiver === null || member.receiver.range === null)
+  for (const member of runs(index.members.get(current))) {
+    const { receiver } = member;
+    // REA's nodes may leave `this` out of the receiver (`(x || this).run`).
+    if (receiver === null || receiver.range === null || receiver.room)
       for (const target of followBareMember(state, member))
         visit(target, [...steps, ...target.steps]);
+    if (receiver?.range)
+      for (const target of instanceMethods(index, current, member))
+        visit(target, [...steps, target.step]);
+  }
 };
 
 // Steps through a part of a value that may belong to a statement after it
@@ -83,6 +171,7 @@ const pairsCall = (role, level, item) =>
 const levelRead = ({ state, visit }, entry, item, level) => {
   const { index } = state;
   const { module, steps, path, uncertain = [], element = false } = entry;
+  const { local } = level;
   if (isOwnReceiver(index, module, item)) return;
   const open = uncertain.some((range) => within(item.range, range));
   const go = (target, more) => visit(target, [...steps, ...marked(more, open)]);
@@ -107,7 +196,11 @@ const levelRead = ({ state, visit }, entry, item, level) => {
     return;
   }
   for (const target of followRead(state, item))
-    for (const made of producedBy(index, target, role.call, { path, element }))
+    for (const made of producedBy(index, target, role.call, {
+      path,
+      element,
+      local,
+    }))
       go(made, [target.step, made.step]);
 };
 
@@ -121,6 +214,9 @@ const exploreValue = (context, entry) => {
   const { module, parts, steps, path, uncertain = [], element } = entry;
   const defined = outermostIn(index, module, parts);
   const level = outsideOf(defined);
+  // A value in a function is given when that function runs.
+  const local =
+    parts.length > 0 && enclosingFunction(index, module, parts[0]) !== null;
   const constructs = new Map();
   const keys = [];
   const entries = [];
@@ -137,7 +233,11 @@ const exploreValue = (context, entry) => {
     const call = runningCall(index, fn);
     const open = uncertain.some((range) => within(fn.range, range));
     if (call)
-      for (const made of producedBy(index, { fn }, call, { path, element }))
+      for (const made of producedBy(index, { fn }, call, {
+        path,
+        element,
+        local,
+      }))
         context.visit(made, [
           ...steps,
           ...marked([{ ...made.step, kind: "runs" }], open),
@@ -146,12 +246,23 @@ const exploreValue = (context, entry) => {
   for (const part of parts)
     for (const item of inside(index.reads.get(module), part))
       if (level(item.range) && !keys.some((range) => within(item.range, range)))
-        levelRead(context, entry, item, { constructs, entries });
+        levelRead(context, entry, item, { constructs, entries, local });
 };
 
-const placeOf = (target, steps) => {
-  if (target.fn)
-    return { module: target.fn.module, range: target.fn.range, steps };
+// Where a target's code runs: a function's range, without a class's
+// methods (`methodsOf`); a value's region; or a whole module.
+const placeOf = (index, target, steps) => {
+  const { fn } = target;
+  if (fn)
+    return {
+      module: fn.module,
+      range: fn.range,
+      steps,
+      except:
+        fn.kind === "class"
+          ? methodsOf(index, fn).map((method) => method.range)
+          : [],
+    };
   if (target.region) return { ...target.region, steps, value: true };
   return { module: target.whole, range: WHOLE_MODULE, steps };
 };
@@ -172,7 +283,7 @@ const search = (app, index, { module, range }) => {
     if (seen.has(key) && guessed) return;
     seen.set(key, guessed ? "guessed" : "settled");
     queues[guessed ? "guessed" : "settled"].push({
-      ...placeOf(target, steps),
+      ...placeOf(index, target, steps),
       key,
     });
   };

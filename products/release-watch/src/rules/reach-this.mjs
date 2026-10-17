@@ -4,7 +4,8 @@
 // else to that member of the bindings the class reads outside its methods,
 // such as the class it extends (`class OpsServer extends Base`). Release
 // Watch matches by name; reach-text.mjs says so. A member read on nodes REA
-// reports that do not form one expression (`(a || b).run`) may be on
+// reports that do not form one expression (`(a || b).run`), or on one that
+// may share its parentheses with `this` (`(x || this).run`), may be on
 // `this` or not: it is followed the same way, as a guess.
 import { startsBefore, within } from "../ranges.mjs";
 import {
@@ -76,12 +77,20 @@ const inherited = (state, member, owner) => {
     );
 };
 
+// How REA's nodes place the receiver: on nothing ("none", `this.run`), on
+// one expression that may share its parentheses with `this` ("room",
+// `(x || this).run`), or on no one expression ("unsettled").
+const receiverWas = ({ receiver }) => {
+  if (receiver === null) return "none";
+  return receiver.room ? "room" : "unsettled";
+};
+
 const thisStep = (member, owner, extra) => ({
   kind: "this-member",
   name: member.path.join("."),
   owner: owner?.name ?? null,
   location: member.location,
-  receiver: member.receiver === null ? "none" : "unsettled",
+  receiver: receiverWas(member),
   ...extra,
 });
 
@@ -90,8 +99,7 @@ const thisStep = (member, owner, extra) => ({
  * each with the steps that explain it: a method or class field of that
  * name the enclosing class or object defines, else that member of a
  * binding the class reads outside its methods. The first step's `receiver`
- * is "none" when REA reports nothing before the member (`this.run`), and
- * "unsettled" when REA's nodes there do not show what it is read on.
+ * says how REA's nodes place the receiver (`receiverWas`).
  */
 export const followBareMember = (state, member) => {
   const { index } = state;

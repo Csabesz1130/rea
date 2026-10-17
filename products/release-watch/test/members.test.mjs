@@ -38,7 +38,7 @@ describe("facts: the expression a member read is read on", () => {
         node("expression", "runGit", at(6, 130, 136)),
         node("expression", "argument 0", at(6, 137, 149)),
       ]),
-      { range: call, global: null },
+      { range: call, global: null, room: false },
     );
   });
 
@@ -52,7 +52,7 @@ describe("facts: the expression a member read is read on", () => {
         node("call-site", "call", at(14, 79, 88)),
         node("expression", "connect", at(14, 79, 86)),
       ]),
-      { range: awaited, global: null },
+      { range: awaited, global: null, room: false },
     );
   });
 
@@ -64,7 +64,7 @@ describe("facts: the expression a member read is read on", () => {
         read("run", at(3, 0, 23)),
         node("task", "awaited expression", spaced),
       ]),
-      { range: spaced, global: null },
+      { range: spaced, global: null, room: false },
     );
     // (\n  await connect()\n).run
     const broken = at(4, 2, 17);
@@ -74,7 +74,7 @@ describe("facts: the expression a member read is read on", () => {
         node("task", "awaited expression", broken),
         node("call-site", "call", at(4, 8, 17)),
       ]),
-      { range: broken, global: null },
+      { range: broken, global: null, room: false },
     );
   });
 
@@ -85,12 +85,42 @@ describe("facts: the expression a member read is read on", () => {
         [read("keys", at(2, 0, 11)), object],
         [{ node: object, name: "Object" }],
       ),
-      { range: object.identity.source_range, global: "Object" },
+      { range: object.identity.source_range, global: "Object", room: false },
+    );
+  });
+
+  it("says when the one expression in the parentheses may share them with this", () => {
+    // (replica || this).run: REA reports no node for this.
+    const replica = at(16, 73, 80);
+    assert.deepEqual(
+      receiver([
+        read("run", at(16, 72, 93)),
+        node("expression", "replica", replica),
+      ]),
+      { range: replica, global: null, room: true },
+    );
+    // (this || replica).run
+    const later = at(2, 9, 16);
+    assert.deepEqual(
+      receiver([
+        read("run", at(2, 0, 21)),
+        node("expression", "replica", later),
+      ]),
+      { range: later, global: null, room: true },
+    );
+    // (\n  replica || this).run: a line break before the node, none after it.
+    const broken = at(4, 2, 9);
+    assert.deepEqual(
+      receiver([
+        read("run", at(3, 0, 22, 4)),
+        node("expression", "replica", broken),
+      ]),
+      { range: broken, global: null, room: true },
     );
   });
 
   it("gives no receiver range when REA's nodes there form no one expression", () => {
-    const unsettled = { range: null, global: null };
+    const unsettled = { range: null, global: null, room: false };
     // (a || b).run
     assert.deepEqual(
       receiver([

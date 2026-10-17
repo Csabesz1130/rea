@@ -1,8 +1,9 @@
 // Runs the public CLI on small releases each test writes, for what REA's
 // nodes say a member read is read on: a parenthesized expression, in any
-// layout, is not `this`, a member of a call's result is not a member of the
-// function, and a member read REA's nodes place on no one expression is
-// matched to `this` only as a guess.
+// layout, is not `this`, unless the space REA's one node leaves in the
+// parentheses may hold `this` (`(x || this).run`), a member of a call's
+// result is not a member of the function, and a member read REA's nodes
+// place on no one expression is matched to `this` only as a guess.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
@@ -49,6 +50,23 @@ describe("compare: the expression a member call is made on", { skip }, () => {
       const result = dispatch(query);
       assert.equal(result.result.status, 0, result.result.stderr);
       assert.deepEqual(graded(result), []);
+    });
+
+  for (const receiver of ["(replica || this)", "(replica.primary ?? this)"])
+    it(`follows ${receiver}.run() to this.run() as a guess, since REA reports no node for this`, () => {
+      const result = dispatch(`${receiver}.run(request.params.arguments.sql)`);
+      assert.equal(result.result.status, 2, result.result.stderr);
+      assert.deepEqual(graded(result), [["RW-M01", "critical"]]);
+      const found = finding(result, "RW-M01");
+      assert.match(found.summary, /handler may reach execFile\(\)/);
+      assert.match(
+        claims(found),
+        /reads \.run on parentheses holding one expression REA reports and room for another it reports no node for, which may be this, which Release Watch took for run, a function DbServer defines/,
+      );
+      assert.ok(
+        unknownMatching(found, /REA reports no node for this/),
+        JSON.stringify(found.unknowns),
+      );
     });
 
   it("follows a member call REA's nodes place on no one expression to this only as a guess", () => {

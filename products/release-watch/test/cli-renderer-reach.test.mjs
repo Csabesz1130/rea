@@ -83,7 +83,7 @@ describe("compare: renderer APIs a release keeps", { skip }, () => {
     );
     assert.match(
       claims(desktop[0]),
-      /Release Watch connected the v1\.0\.0 handler for "notes:sync" to no execFile\(\) running \/usr\/bin\/git/,
+      /Release Watch connected the v1\.0\.0 handler for "notes:sync" to no execFile\(\) running "\/usr\/bin\/git"/,
     );
   });
 
@@ -228,7 +228,7 @@ describe(
       );
       assert.match(
         found.evidence.map((item) => item.claim).join("\n"),
-        /Of the 2 v1\.0\.0 main-process handlers whose channel REA did not resolve, Release Watch connected 1 to execFile\(\) running \/usr\/bin\/git, 1 to no such site/,
+        /Of the 2 v1\.0\.0 main-process handlers whose channel REA did not resolve, Release Watch connected 1 to execFile\(\) running "\/usr\/bin\/git", 1 to no such site/,
       );
     });
   },

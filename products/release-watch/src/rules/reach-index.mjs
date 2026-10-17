@@ -154,6 +154,13 @@ const buildIndex = (app) => {
       (assignment) => assignment.module,
     ),
     bindings: groupByModule(app.bindings, (binding) => binding.module),
+    // Functions REA reports a name of their own for (`class e {…}` in an
+    // expression, `function run() {}` assigned to another name).
+    ownNamed: new Set(
+      (app.bindings ?? [])
+        .filter((binding) => binding.ownName)
+        .map((binding) => binding.owner),
+    ),
     patterns: groupByModule(
       (app.bindings ?? []).flatMap((binding) =>
         binding.destructured

@@ -19,7 +19,7 @@ import {
 import { iterationsOf } from "./reach-calls.mjs";
 import { bindingAt, childFunctions, memberOn } from "./reach-index.mjs";
 import { declaredFunction, valueRegion } from "./reach-region.mjs";
-import { valueOf } from "./reach-value.mjs";
+import { couldBe, valueOf } from "./reach-value.mjs";
 
 const topFunction = (index, module, name) =>
   childFunctions(index, module, null).find((fn) => fn.name === name) ?? null;
@@ -425,14 +425,18 @@ const readTargets = (state, item, from, { path, element }) => {
 const producedStep = (kind, extra) => ({ kind, location: null, ...extra });
 
 /**
- * What a call an initializer makes when the module loads gives the value
- * read with `read.path` (below each element of it with `read.element`):
- * for `new`, the instance's methods (the one a member read names, else
- * each, as a guess when one is named); otherwise what the called function
- * returns. Code the call runs is not reached by reading the value.
+ * What a call an initializer makes (when the module loads, or with `local`
+ * when the function the value is in runs) gives the value read with
+ * `read.path` (below each element of it with `read.element`): for `new`,
+ * the instance's methods, the one a member read names, else as a guess
+ * each that could be that member (`couldBe`: not a method named after
+ * another), or each method for a read that names none (`whole`: code calls
+ * a method only through a member read, and what it does with a whole
+ * instance REA does not say); otherwise what the called function returns.
+ * Code the call runs is not reached by reading the value.
  */
 export const producedBy = (index, target, call, read = {}) => {
-  const { path = null, element = false } = read;
+  const { path = null, element = false, local = false } = read;
   const member = path?.[0] ?? null;
   if (target.fn && call.construct) {
     const methods = childFunctions(
@@ -441,10 +445,21 @@ export const producedBy = (index, target, call, read = {}) => {
       target.fn.id,
     ).filter((fn) => fn.name !== "constructor");
     const named = methods.filter((fn) => fn.name === member);
-    const how = member === null ? "all" : named.length > 0 ? "named" : "guess";
-    return (named.length > 0 ? named : methods).map((fn) => ({
+    const how =
+      member === null ? "whole" : named.length > 0 ? "named" : "guess";
+    const selected = {
+      whole: methods,
+      named,
+      guess: methods.filter(couldBe(member)),
+    }[how];
+    return selected.map((fn) => ({
       fn,
-      step: producedStep("instance", { target: fn.name, selects: member, how }),
+      step: producedStep("instance", {
+        target: fn.name,
+        selects: member,
+        how,
+        local,
+      }),
     }));
   }
   if (target.fn) {
@@ -462,6 +477,7 @@ export const producedBy = (index, target, call, read = {}) => {
         target: fn?.name ?? null,
         selects: member,
         how: found.how,
+        local,
       }),
     );
   }
@@ -472,8 +488,12 @@ export const producedBy = (index, target, call, read = {}) => {
           ...target.region,
           ...(path ? { path, element } : {}),
         },
-        step: producedStep("returns", { selects: member, how: "forward" }),
+        step: producedStep("returns", {
+          selects: member,
+          how: "forward",
+          local,
+        }),
       },
     ];
-  return [{ ...target, step: producedStep("returns", { how: "all" }) }];
+  return [{ ...target, step: producedStep("returns", { how: "all", local }) }];
 };

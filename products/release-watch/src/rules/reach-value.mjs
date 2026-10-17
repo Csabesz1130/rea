@@ -113,9 +113,11 @@ const holdsConstant = (slots, facts, member) => {
   );
 };
 
-// A method REA reports is the member its name gives (a class or object
-// method, named by its key); any other function could be any member's.
-const couldBe = (member) => (fn) =>
+/**
+ * A method REA reports is the member its name gives (a class or object
+ * method, named by its key); any other function could be any member's.
+ */
+export const couldBe = (member) => (fn) =>
   fn.name === member || fn.kind !== "method" || fn.name === null;
 
 // The values the parts hold at their own level, outside the functions they

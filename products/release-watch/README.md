@@ -190,7 +190,19 @@ or not and in any layout, is that expression's: `(await connect()).run()`
 and `( await connect() ).run()` are not `this.run()`, and
 `runGit(args).pid` reads the call's result, not a member of `runGit`. One
 they place on no single expression (`(a || b).run()`) is matched to `this`
-only as a guess. A read of a value (a handler map, a tool list, an instance, a
+only as a guess, and so, as well as to that expression's member, is one
+whose single expression leaves uneven space in the parentheses: REA
+reports no node for `this`, so `(replica || this).run()` and
+`(this || replica).run()` may be on it, while the same space on both sides
+(`( x )`, or line breaks around it) is layout. A class runs as it is
+constructed: a call or read of it runs its code outside its methods, the
+constructor's included, and a method runs only through a member read,
+`new Svc().run()` included; an instance read whole or passed straight to a
+call (`server.addTool(new Tool())`) may have any method run, as a guess. A
+binding's function is the one it declares, one REA names after it, or a
+class or function expression with a name of its own assigned to it
+(`const Svc = class e {…}`), so `Svc.create` reads that class's static
+method. A read of a value (a handler map, a tool list, an instance, a
 default-exported object) leads to what REA reports giving it a value: its
 initializer, later assignments, property writes (`handlers.git = …`, and
 `handlers[name] = …` for any member) and, by Release Watch's reading of the
@@ -209,9 +221,11 @@ pattern (`= TOOL`). Of the `[key, value]` pairs `entries()` and
 `at()` gives) holds a key (no function) and the element, and an index into
 them (`Object.entries(H)[0]`) selects a pair. A binding REA says holds a
 call's result gets that call's value; a
-call made when the module loads gives the value only what it returns (the
-class's methods for `new`, what a function written in place returns for
-`(() => …)()`), not the code it runs. By the same reading, a built-in method
+call made when the module loads, or when the function holding the binding
+runs, gives the value only what it returns (the class's methods for `new`:
+the one a member read names, else, as a guess, each that is not a method of
+another name; what a function written in place returns for `(() => …)()`),
+not the code it runs. By the same reading, a built-in method
 called on a value (`find`, `filter`, `slice`, `concat`, `get`, `values` and
 the like) gives that value's elements, `keys()` and `Object.keys()` give no
 function, and a callback whose result such a method does not keep (`find`,

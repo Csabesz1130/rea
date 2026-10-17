@@ -48,13 +48,29 @@ const declaration = (index, binding) => {
     : null;
 };
 
+// A named class or function expression a binding is assigned (`const Svc
+// = class e {…}`): REA names it by its own name, so it is the function
+// starting first after the binding whose own name REA reports, when no call
+// starts between them (`= wrap(class e {…})` assigns what the call gives).
+const ownNamedAfter = (index, module, binding, assigned) => {
+  const after = { start: binding.range.end };
+  const list = index.functions.get(module) ?? [];
+  const fn = list[firstStarting(list, after)];
+  if (!fn || !index.ownNamed.has(fn.id) || !assigned(fn)) return null;
+  const calls = index.callSites.get(module) ?? [];
+  const call = calls[firstStarting(calls, after)];
+  return call && startsBefore(call.range, fn.range) < 0 ? null : fn;
+};
+
 /**
  * The function a binding's declaration or initializer is: a declaration,
  * or a function assigned to it, which starts just after the binding in the
- * binding's scope. A binding REA reports later assignments or property
- * writes to is a value, since each can give it another function, and so is
- * one REA reports destructured, whose default value (`{ handler = function
- * handler() {} }`) it holds only when what it destructures lacks one.
+ * binding's scope: one REA names after the binding, or a class or function
+ * expression with a name of its own (`ownNamedAfter`). A binding REA
+ * reports later assignments or property writes to is a value, since each
+ * can give it another function, and so is one REA reports destructured,
+ * whose default value (`{ handler = function handler() {} }`) it holds only
+ * when what it destructures lacks one.
  */
 export const declaredFunction = (index, module, binding) => {
   const declared = declaration(index, binding);
@@ -69,18 +85,20 @@ export const declaredFunction = (index, module, binding) => {
   // Another binding between the two: the function is assigned to that one.
   const between = (fn) =>
     following !== undefined && startsBefore(following.range, fn.range) < 0;
+  const assigned = (fn) => {
+    const { end } = binding.range;
+    const { start } = fn.range;
+    return (
+      scopeOf(index, fn) === (binding.owner ?? null) &&
+      startsBefore(binding.range, fn.range) <= 0 &&
+      ((start.line === end.line && start.column - end.column <= MAX_GAP) ||
+        (start.line === end.line + 1 && start.column <= MAX_GAP)) &&
+      !between(fn)
+    );
+  };
   return (
-    namedFunctions(index, module, binding.name).find((fn) => {
-      const { end } = binding.range;
-      const { start } = fn.range;
-      return (
-        scopeOf(index, fn) === (binding.owner ?? null) &&
-        startsBefore(binding.range, fn.range) <= 0 &&
-        ((start.line === end.line && start.column - end.column <= MAX_GAP) ||
-          (start.line === end.line + 1 && start.column <= MAX_GAP)) &&
-        !between(fn)
-      );
-    }) ?? null
+    namedFunctions(index, module, binding.name).find(assigned) ??
+    ownNamedAfter(index, module, binding, assigned)
   );
 };
 

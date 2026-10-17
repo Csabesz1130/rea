@@ -13,13 +13,15 @@ const GUESSES = new Set(["guess", "whole", "candidate"]);
  * True for a step that followed every candidate: of a member read, of
  * what a callback parameter holds, of a call that may not be part of the
  * value it was read in (`open`), or of a member read REA's nodes do not
- * place on one expression, taken for one on `this`.
+ * place on one expression, or place on one that may share its parentheses
+ * with `this`, taken for one on `this`.
  */
 export const isGuess = (step) =>
   GUESSES.has(step.how) ||
   step.open === true ||
   step.cut === true ||
-  step.receiver === "unsettled";
+  step.receiver === "unsettled" ||
+  step.receiver === "room";
 
 // The read a step names: with its member, unless the member was carried
 // over from another value's read (`for (const tool of TOOLS)`, a spread).
@@ -136,19 +138,25 @@ const initializerText = (step) => {
 };
 
 const producedText = (step) => {
+  const when = step.local
+    ? "when the function it is in runs"
+    : "when the module loads";
   if (step.kind === "runs")
     return step.target
-      ? `runs a function it defines when the module loads, and what that returns defines ${step.target}`
-      : "runs a function it defines when the module loads, and what that returns reads further bindings";
-  if (step.kind === "instance")
+      ? `runs a function it defines ${when}, and what that returns defines ${step.target}`
+      : `runs a function it defines ${when}, and what that returns reads further bindings`;
+  if (step.kind === "instance") {
+    if (step.how === "whole")
+      return `is constructed ${when}, and the read names no method of the instance, so Release Watch followed each method`;
     return step.how === "guess"
-      ? `is constructed when the module loads; Release Watch found no method ${step.selects}, so it followed each method`
-      : `is constructed when the module loads, and ${step.target} is a method of the instance`;
+      ? `is constructed ${when}; Release Watch found no method ${step.selects}, so it followed each method`
+      : `is constructed ${when}, and ${step.target} is a method of the instance`;
+  }
   if (step.how === "guess")
-    return `is called when the module loads; REA names no function ${step.selects} in what it returns, so Release Watch followed each function and binding it holds that could be ${step.selects}`;
+    return `is called ${when}; REA names no function ${step.selects} in what it returns, so Release Watch followed each function and binding it holds that could be ${step.selects}`;
   return step.target
-    ? `is called when the module loads, and what it returns defines ${step.target}`
-    : "is called when the module loads, and what it returns reads further bindings";
+    ? `is called ${when}, and what it returns defines ${step.target}`
+    : `is called ${when}, and what it returns reads further bindings`;
 };
 
 const elementText = (step) => {
@@ -158,11 +166,17 @@ const elementText = (step) => {
     : parameter;
 };
 
+const RECEIVER_TEXT = {
+  none: (name) =>
+    `reads .${name} on a receiver REA does not resolve (such as this)`,
+  unsettled: (name) =>
+    `reads .${name} on an expression REA reports no single receiver for, which may be this`,
+  room: (name) =>
+    `reads .${name} on parentheses holding one expression REA reports and room for another it reports no node for, which may be this`,
+};
+
 const thisText = (step) => {
-  const read =
-    step.receiver === "unsettled"
-      ? `reads .${step.name} on an expression REA reports no single receiver for, which may be this`
-      : `reads .${step.name} on a receiver REA does not resolve (such as this)`;
+  const read = RECEIVER_TEXT[step.receiver](step.name);
   if (step.via)
     return `${read}, which ${step.owner} does not define; Release Watch looked ${step.target} up in ${step.via}, a binding ${step.owner} reads outside its methods (such as the class it extends)`;
   if (step.field)
@@ -174,7 +188,11 @@ const thisText = (step) => {
 
 const STEP_TEXT = {
   call: (step) =>
-    `calls ${step.name ?? "a function"} through a call REA resolved`,
+    step.constructs
+      ? `constructs ${step.name ?? "a class"} through a call REA resolved, which runs its constructor`
+      : `calls ${step.name ?? "a function"} through a call REA resolved`,
+  constructed: (step) =>
+    `calls ${step.name} on the ${step.owner ?? "class"} instance a new expression REA resolved constructs, a method ${step.owner ?? "the class"} defines`,
   local: localText,
   value: valueText,
   initializer: initializerText,
@@ -183,6 +201,8 @@ const STEP_TEXT = {
   runs: producedText,
   element: elementText,
   "this-member": thisText,
+  passed: (step) =>
+    `passes a new ${step.owner} to a call, which may run any method of it, such as ${step.name}`,
   import: importText,
   "unresolved-import": (step) =>
     `reads ${importedName(step)}, imported from ${step.module}, which Release Watch could not resolve to one of its functions, so it followed the whole module`,
@@ -193,10 +213,16 @@ const STEP_TEXT = {
 const OPEN =
   " (a call Release Watch read as part of that value gives it this; REA does not report where the value ends, and the call may be a statement after it)";
 
+// A step that followed each method of an instance whose method calls REA
+// does not show: one read whole, or passed straight to a call.
+const instanceGuess = (step) =>
+  step.kind === "passed" || (step.kind === "instance" && step.how === "whole");
+
 // A step that followed every candidate of a member read.
 const memberGuess = (step) =>
   GUESSES.has(step.how) &&
   step.kind !== "element" &&
+  !instanceGuess(step) &&
   step.destructured?.path !== null;
 
 // A step whose member chain Release Watch cut at MAX_PATH members.
@@ -213,6 +239,10 @@ export const reachUnknowns = (paths) => {
   if (steps.some(memberGuess))
     unknowns.push(
       "REA's facts do not say which function a member read selects, so Release Watch followed every function and binding the value holds that could be that member; the handler may not reach this process site.",
+    );
+  if (steps.some(instanceGuess))
+    unknowns.push(
+      "Code runs an instance's methods only through member reads, and REA does not show which methods a call given the instance, or code reading it whole, runs; Release Watch followed each method of its class, and the handler may not reach this process site.",
     );
   if (steps.some((step) => step.destructured?.path === null))
     unknowns.push(
@@ -237,6 +267,10 @@ export const reachUnknowns = (paths) => {
   if (steps.some((step) => step.receiver === "unsettled"))
     unknowns.push(
       "REA's nodes do not show which expression a member call such as (a || b).run() is made on; Release Watch took it for one on this, and the handler may not reach this process site.",
+    );
+  if (steps.some((step) => step.receiver === "room"))
+    unknowns.push(
+      "REA reports no node for this, and the one expression it reports inside the parentheses of a member call such as (x || this).run() leaves room for another operand; Release Watch took the call for one on this as well, and the handler may not reach this process site.",
     );
   return unknowns;
 };
