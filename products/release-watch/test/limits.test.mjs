@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { diffApplications } from "../src/diff.mjs";
+import { examinedInPart, unreachedModules } from "../src/facts/coverage.mjs";
 import { coverageOf } from "../src/report/coverage.mjs";
 import {
   DEPTHS,
@@ -375,5 +376,30 @@ describe("imports of an old file REA reported none for", () => {
       ).imports.map((item) => [item.key, item.status]),
     );
     assert.deepEqual(back, { immutable: "not-compared" });
+  });
+});
+
+describe("declaration files under REA's global node limit", () => {
+  // desktop-commander: half the files left without semantic facts were
+  // .d.ts files, which run nothing.
+  const assets = ["dist/a.js", "dist/a.d.ts", "dist/b.js", "dist/types.d.mts"];
+  const semantic = {
+    coverage: { truncated: true },
+    nodes: [{ identity: { module_path: "dist/a.js" } }],
+  };
+
+  it("lists no declaration file as unreached or examined in part", () => {
+    assert.deepEqual(
+      unreachedModules(
+        semantic,
+        assets.map((key) => ({ key })),
+      ),
+      ["dist/b.js"],
+    );
+    const limited = app({
+      assets: assets.map((key) => fact(key, {})),
+      coverage: { ...app().coverage, semantic_global_limit_reached: true },
+    });
+    assert.deepEqual(examinedInPart(limited), ["dist/a.js", "dist/b.js"]);
   });
 });

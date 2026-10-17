@@ -1,7 +1,13 @@
 // REA's coverage of an application analysis as Release Watch reports it:
 // truncation, node ceilings and the files they left partly or wholly
 // unexamined. Derived from REA's own limits and retained nodes.
-import { isScriptPath } from "./modules.mjs";
+import { isDeclarationPath, isScriptPath } from "./modules.mjs";
+
+// Script files whose semantic facts Release Watch reads: a TypeScript
+// declaration file runs nothing, so no rule reads semantic facts of it and
+// none it lacks is unexamined code.
+const runsCode = (modulePath) =>
+  isScriptPath(modulePath) && !isDeclarationPath(modulePath);
 
 // Modules whose semantic node count reached REA's per-file ceiling: where a
 // truncated graph dropped facts. Derived from REA's own limit and nodes.
@@ -52,7 +58,8 @@ export const coverageOf = (graph, semantic) => ({
 });
 
 // Script files with no semantic node at all when REA truncated the semantic
-// graph: the global ceiling left them unexamined.
+// graph: the global ceiling left them unexamined. Declaration files are not
+// listed (runsCode).
 export const unreachedModules = (semantic, assets) => {
   if (!semantic?.coverage?.truncated) return [];
   const reached = new Set(
@@ -60,7 +67,7 @@ export const unreachedModules = (semantic, assets) => {
   );
   return assets
     .map((asset) => asset.key)
-    .filter((key) => isScriptPath(key) && !reached.has(key))
+    .filter((key) => runsCode(key) && !reached.has(key))
     .sort();
 };
 
@@ -129,16 +136,15 @@ export const importsUnknown = (app) => {
 
 /**
  * The files of one analyzed app REA examined only in part or not at all:
- * each file unexaminedIn names, then every script file once REA reached its
- * global node limit, since REA does not say which files it cut short.
+ * each file unexaminedIn names, then every script file but a declaration
+ * file (runsCode) once REA reached its global node limit, since REA does not
+ * say which files it cut short.
  */
 export const examinedInPart = (app) => {
   const { files, anyFile } = unexaminedIn(app);
   return [
     ...files.keys(),
-    ...(anyFile
-      ? app.assets.map((asset) => asset.key).filter(isScriptPath)
-      : []),
+    ...(anyFile ? app.assets.map((asset) => asset.key).filter(runsCode) : []),
   ];
 };
 

@@ -637,7 +637,8 @@ as sensitive.
 REA's JavaScript analysis keeps a bounded number of semantic nodes (the
 functions, calls, bindings, requests and literals the rules read) per file and
 per side, with a bounded analyzer heap. Code a limit cuts short is reported as
-RW-C01, never passed, and RW-C01 names the depth or option that would raise
+RW-C01 (a TypeScript declaration file runs nothing and is not counted),
+never passed, and RW-C01 names the depth or option that would raise
 the limit REA reached, with the limits that re-run would use: an option you
 gave keeps its value at any depth, so RW-C01 names it when it is the limit
 that binds. RW-N02 gives the same advice when a limit left the old count of
@@ -675,12 +676,12 @@ in one file and 1024 MiB.
   2.5 GiB for `@vitest/ui`.
 - **Releases of many bundles** gain little from `deep`.
   desktop-commander and `flowise-ui` reached the deep global limit with the
-  same files unreached as at `standard` (145 and 323), and `@nuxt/devtools`
-  left 38 instead of 78. On such releases `standard` can leave more files
+  same files unreached as at `standard` (73 and 323), and `@nuxt/devtools`
+  left 22 instead of 62. On such releases `standard` can leave more files
   without any semantic facts than REA's defaults did, since one bundle can
   take more of the global limit: desktop-commander 0.2.52 had 2 files at
-  the file limit and 40 unreached at the defaults, and none at the file
-  limit but 128 unreached (64 of them `.js`) at `standard`. Every finding
+  the file limit and 20 unreached at the defaults, and none at the file
+  limit but 64 unreached at `standard`. Every finding
   about the new release then says what it reports may have been there
   before, naming some of those old files. REA also admits analysis results
   only up to about half its CLI process's heap limit, which Node.js sets
@@ -740,55 +741,57 @@ standard runs of stagehand and `flowise-ui`, and one each of
 desktop-commander, `@nuxt/devtools` and `swagger-ui-dist`, ran the release
 before this change with the standard limits given as options, which passes
 REA the same limits. "Not examined" is what RW-C01 reports for the new
-release, and the verdict lists the rules that found something high or
-critical. The table leaves out six pairs whose coverage and findings did not
+release; its file counts leave out TypeScript declaration files, which run
+nothing and are not listed as unexamined, and were taken without them from
+the saved reports of these runs rather than re-measured. The verdict lists
+the rules that found something high or critical. The table leaves out six pairs whose coverage and findings did not
 change with the limits (the Acme Notes Electron app, `ai-renamer`,
 `@codacy/codacy-mcp`, `mcp-server-kubernetes`, `opencommit` and `rapidoc`)
 and `aicommit2`, whose 31 600-node bundle the standard depth examined in
 full, like `aicommits`'.
 
-| Release pair                                                   | Limits                 | Wall         | CPU          | Peak (GiB) | Not examined in the new release                                                                 | Verdict                             |
-| -------------------------------------------------------------- | ---------------------- | ------------ | ------------ | ---------- | ----------------------------------------------------------------------------------------------- | ----------------------------------- |
-| Acme Notes Cloud (2 components, HAR)                           | REA defaults, standard | 11–29 s      | 23–25 s      | 1.1–1.3    | —                                                                                               | block, the same findings            |
-| Acme Notes Electron distribution                               | REA defaults, standard | 17–46 s      | 29–34 s      | 1.4–1.5    | —                                                                                               | block, the same findings            |
-| `@modelcontextprotocol/server-everything` 2026.1.26 → 2026.7.4 | REA defaults, standard | 20–40 s      | 27–32 s      | 0.8–0.9    | —                                                                                               | review, the same findings           |
-| `firecrawl-mcp` 3.30.1 → 3.30.2                                | REA defaults           | 42–58 s      | 72–80 s      | 1.3–1.4    | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
-|                                                                | standard               | 40–85 s      | 75–97 s      | 1.2–1.4    | —                                                                                               | pass                                |
-| `aicommits` 4.1.0 → 4.1.1                                      | REA defaults           | 39 s         | 81 s         | 1.3        | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
-|                                                                | standard               | 2.1–4.4 min  | 4.5–4.8 min  | 2.4–2.9    | unclassified `child_process` uses                                                               | block (RW-P01 high, RW-C01 high)    |
-|                                                                | standard, `--jobs 1`   | 3.8 min      | 4.7 min      | 1.5        | unclassified `child_process` uses                                                               | block (RW-P01 high, RW-C01 high)    |
-| `@notionhq/notion-mcp-server` 2.4.1 → 2.5.0                    | REA defaults           | 66 s         | 2.2 min      | 1.5        | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
-|                                                                | standard               | 2.4–2.9 min  | 4.6–5.3 min  | 2.6–2.8    | 1 file at the file limit                                                                        | block (RW-C01 high)                 |
-|                                                                | deep                   | 5.5–8.6 min  | 6.1–6.9 min  | 1.9–2.5    | —                                                                                               | pass                                |
-| `@vitest/ui` 5.0.4 → 5.0.5                                     | REA defaults           | 49 s         | 103 s        | 1.5        | 1 file at the file limit, inline scripts                                                        | review                              |
-|                                                                | standard               | 2.9 min      | 4.3 min      | 2.5        | 1 file at the file limit, inline scripts                                                        | review                              |
-|                                                                | deep                   | 6.9 min      | 7.8 min      | 2.4        | inline scripts                                                                                  | review                              |
-| `deep-chat` 2.4.1 → 2.4.2                                      | REA defaults           | 2.5 min      | 2.8 min      | 1.8        | 2 files at the file limit                                                                       | block (RW-C01 high)                 |
-|                                                                | standard               | 3.9 min      | 5.2 min      | 3.1        | 329 files unreached (all `.d.ts`), global limit                                                 | block (RW-C01 high)                 |
-|                                                                | deep                   | 7.2 min      | 6.6 min      | 2.2        | —                                                                                               | review                              |
-| `task-master-ai` 0.43.0 → 0.43.1                               | REA defaults           | 5.0 min      | 3.8 min      | 2.0        | 2 files at the file limit, unclassified `child_process` uses                                    | block (RW-C01 high)                 |
-|                                                                | standard               | 2.9 min      | 4.4 min      | 3.6        | unclassified `child_process` uses                                                               | block (RW-C01 high)                 |
-| `@browserbasehq/stagehand` 4.1.0 → 4.2.0                       | REA defaults           | 4.1 min      | 3.3 min      | 1.7        | 2 files at the file limit, unclassified `child_process` uses                                    | block (RW-C01 high)                 |
-|                                                                | standard               | 4.3 min      | 5.3 min      | 3.1        | 1 file at the file limit, global limit                                                          | block (RW-C01 high)                 |
-|                                                                | deep                   | 7.4 min      | 7.1 min      | 2.9        | global limit                                                                                    | block (RW-C01 high)                 |
-| `@wonderwhy-er/desktop-commander` 0.2.52 → 0.3.0               | REA defaults           | 7.0 min      | 6.0 min      | 2.3        | 2 files at the file limit, 108 files unreached, global limit, unclassified `child_process` uses | block (RW-P01 high ×2, RW-C01 high) |
-|                                                                | standard               | 3.7–5.3 min  | 6.8–8.4 min  | 3.7        | 145 files unreached, global limit, unclassified `child_process` uses                            | block (RW-P01 high ×2, RW-C01 high) |
-|                                                                | deep                   | 9.8 min      | 8.6 min      | 3.2        | 145 files unreached, global limit, unclassified `child_process` uses                            | block (RW-P01 high ×2, RW-C01 high) |
-| `@nuxt/devtools` 3.4.2 → 3.4.3                                 | REA defaults           | 7.7 min      | 7.3 min      | 2.6        | 2 files at the file limit, 106 files unreached, global limit, inline scripts                    | block (RW-C01 high, RW-C06 high)    |
-|                                                                | standard               | 4.7–5.5 min  | 8.0–11.8 min | 3.7        | 78 files unreached, global limit, inline scripts                                                | block (RW-C01 high, RW-C06 high)    |
-|                                                                | standard, `--jobs 1`   | 9.4 min      | 11.3 min     | 2.1        | 78 files unreached, global limit, inline scripts                                                | block (RW-C01 high, RW-C06 high)    |
-|                                                                | 200 000 nodes, 2 sides | 8.1 min      | 10.9 min     | 4.8        | 41 files unreached, global limit, inline scripts                                                | block, the same findings            |
-|                                                                | deep                   | 10.0 min     | 11.8 min     | 3.5        | 38 files unreached, global limit, 2 files failed, inline scripts                                | block (RW-C01 high, RW-C06 high)    |
-| `swagger-ui-dist` 5.32.15 → 5.33.1                             | REA defaults           | 8.7 min      | 9.4 min      | 3.6        | 4 files at the file limit, global limit                                                         | block (RW-C01 high)                 |
-|                                                                | standard               | 4.1–8.2 min  | 8.2–11.3 min | 3.2–3.8    | 1 file at the file limit, 3 files unreached, global limit                                       | block (RW-C01 high)                 |
-|                                                                | standard, `--jobs 1`   | 12.4 min     | 9.9 min      | 2.1        | 1 file at the file limit, 3 files unreached, global limit                                       | block (RW-C01 high)                 |
-|                                                                | deep                   | 7.9–10.9 min | 9.0–13.3 min | 3.4–3.5    | 1 file at the file limit, 4 files failed                                                        | block (RW-C01 high)                 |
-| `flowise-ui` 3.1.3 → 3.1.4                                     | REA defaults           | 9.6 min      | 10.5 min     | 3.7        | 2 files at the file limit, 236 files unreached, global limit, 1 file failed, inline scripts     | block (RW-C01 high)                 |
-|                                                                | standard               | 10.7 min     | 11.5 min     | 3.8        | 323 files unreached, global limit, 1 file failed, inline scripts                                | block (RW-C01 high)                 |
-|                                                                | deep                   | 18.6 min     | 16.8 min     | 3.0        | 323 files unreached, global limit, 1 file failed, inline scripts                                | block (RW-C01 high)                 |
-| `llm-cli` 0.0.11 → 0.0.12                                      | REA defaults           | 61 s         | 2.0 min      | 2.8        | 1 file failed                                                                                   | block (RW-C01 high)                 |
-|                                                                | standard               | 115 s        | 119 s        | 2.8        | 1 file failed                                                                                   | block (RW-C01 high)                 |
-|                                                                | deep                   | 107 s        | 2.5 min      | 1.4        | 1 file failed                                                                                   | block (RW-C01 high)                 |
+| Release pair                                                   | Limits                 | Wall         | CPU          | Peak (GiB) | Not examined in the new release                                                                | Verdict                             |
+| -------------------------------------------------------------- | ---------------------- | ------------ | ------------ | ---------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Acme Notes Cloud (2 components, HAR)                           | REA defaults, standard | 11–29 s      | 23–25 s      | 1.1–1.3    | —                                                                                              | block, the same findings            |
+| Acme Notes Electron distribution                               | REA defaults, standard | 17–46 s      | 29–34 s      | 1.4–1.5    | —                                                                                              | block, the same findings            |
+| `@modelcontextprotocol/server-everything` 2026.1.26 → 2026.7.4 | REA defaults, standard | 20–40 s      | 27–32 s      | 0.8–0.9    | —                                                                                              | review, the same findings           |
+| `firecrawl-mcp` 3.30.1 → 3.30.2                                | REA defaults           | 42–58 s      | 72–80 s      | 1.3–1.4    | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
+|                                                                | standard               | 40–85 s      | 75–97 s      | 1.2–1.4    | —                                                                                              | pass                                |
+| `aicommits` 4.1.0 → 4.1.1                                      | REA defaults           | 39 s         | 81 s         | 1.3        | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
+|                                                                | standard               | 2.1–4.4 min  | 4.5–4.8 min  | 2.4–2.9    | unclassified `child_process` uses                                                              | block (RW-P01 high, RW-C01 high)    |
+|                                                                | standard, `--jobs 1`   | 3.8 min      | 4.7 min      | 1.5        | unclassified `child_process` uses                                                              | block (RW-P01 high, RW-C01 high)    |
+| `@notionhq/notion-mcp-server` 2.4.1 → 2.5.0                    | REA defaults           | 66 s         | 2.2 min      | 1.5        | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
+|                                                                | standard               | 2.4–2.9 min  | 4.6–5.3 min  | 2.6–2.8    | 1 file at the file limit                                                                       | block (RW-C01 high)                 |
+|                                                                | deep                   | 5.5–8.6 min  | 6.1–6.9 min  | 1.9–2.5    | —                                                                                              | pass                                |
+| `@vitest/ui` 5.0.4 → 5.0.5                                     | REA defaults           | 49 s         | 103 s        | 1.5        | 1 file at the file limit, inline scripts                                                       | review                              |
+|                                                                | standard               | 2.9 min      | 4.3 min      | 2.5        | 1 file at the file limit, inline scripts                                                       | review                              |
+|                                                                | deep                   | 6.9 min      | 7.8 min      | 2.4        | inline scripts                                                                                 | review                              |
+| `deep-chat` 2.4.1 → 2.4.2                                      | REA defaults           | 2.5 min      | 2.8 min      | 1.8        | 2 files at the file limit                                                                      | block (RW-C01 high)                 |
+|                                                                | standard               | 3.9 min      | 5.2 min      | 3.1        | global limit                                                                                   | block (RW-C01 high)                 |
+|                                                                | deep                   | 7.2 min      | 6.6 min      | 2.2        | —                                                                                              | review                              |
+| `task-master-ai` 0.43.0 → 0.43.1                               | REA defaults           | 5.0 min      | 3.8 min      | 2.0        | 2 files at the file limit, unclassified `child_process` uses                                   | block (RW-C01 high)                 |
+|                                                                | standard               | 2.9 min      | 4.4 min      | 3.6        | unclassified `child_process` uses                                                              | block (RW-C01 high)                 |
+| `@browserbasehq/stagehand` 4.1.0 → 4.2.0                       | REA defaults           | 4.1 min      | 3.3 min      | 1.7        | 2 files at the file limit, unclassified `child_process` uses                                   | block (RW-C01 high)                 |
+|                                                                | standard               | 4.3 min      | 5.3 min      | 3.1        | 1 file at the file limit, global limit                                                         | block (RW-C01 high)                 |
+|                                                                | deep                   | 7.4 min      | 7.1 min      | 2.9        | global limit                                                                                   | block (RW-C01 high)                 |
+| `@wonderwhy-er/desktop-commander` 0.2.52 → 0.3.0               | REA defaults           | 7.0 min      | 6.0 min      | 2.3        | 2 files at the file limit, 54 files unreached, global limit, unclassified `child_process` uses | block (RW-P01 high ×2, RW-C01 high) |
+|                                                                | standard               | 3.7–5.3 min  | 6.8–8.4 min  | 3.7        | 73 files unreached, global limit, unclassified `child_process` uses                            | block (RW-P01 high ×2, RW-C01 high) |
+|                                                                | deep                   | 9.8 min      | 8.6 min      | 3.2        | 73 files unreached, global limit, unclassified `child_process` uses                            | block (RW-P01 high ×2, RW-C01 high) |
+| `@nuxt/devtools` 3.4.2 → 3.4.3                                 | REA defaults           | 7.7 min      | 7.3 min      | 2.6        | 2 files at the file limit, 90 files unreached, global limit, inline scripts                    | block (RW-C01 high, RW-C06 high)    |
+|                                                                | standard               | 4.7–5.5 min  | 8.0–11.8 min | 3.7        | 62 files unreached, global limit, inline scripts                                               | block (RW-C01 high, RW-C06 high)    |
+|                                                                | standard, `--jobs 1`   | 9.4 min      | 11.3 min     | 2.1        | 62 files unreached, global limit, inline scripts                                               | block (RW-C01 high, RW-C06 high)    |
+|                                                                | 200 000 nodes, 2 sides | 8.1 min      | 10.9 min     | 4.8        | 25 files unreached, global limit, inline scripts                                               | block, the same findings            |
+|                                                                | deep                   | 10.0 min     | 11.8 min     | 3.5        | 22 files unreached, global limit, 2 files failed, inline scripts                               | block (RW-C01 high, RW-C06 high)    |
+| `swagger-ui-dist` 5.32.15 → 5.33.1                             | REA defaults           | 8.7 min      | 9.4 min      | 3.6        | 4 files at the file limit, global limit                                                        | block (RW-C01 high)                 |
+|                                                                | standard               | 4.1–8.2 min  | 8.2–11.3 min | 3.2–3.8    | 1 file at the file limit, 3 files unreached, global limit                                      | block (RW-C01 high)                 |
+|                                                                | standard, `--jobs 1`   | 12.4 min     | 9.9 min      | 2.1        | 1 file at the file limit, 3 files unreached, global limit                                      | block (RW-C01 high)                 |
+|                                                                | deep                   | 7.9–10.9 min | 9.0–13.3 min | 3.4–3.5    | 1 file at the file limit, 4 files failed                                                       | block (RW-C01 high)                 |
+| `flowise-ui` 3.1.3 → 3.1.4                                     | REA defaults           | 9.6 min      | 10.5 min     | 3.7        | 2 files at the file limit, 236 files unreached, global limit, 1 file failed, inline scripts    | block (RW-C01 high)                 |
+|                                                                | standard               | 10.7 min     | 11.5 min     | 3.8        | 323 files unreached, global limit, 1 file failed, inline scripts                               | block (RW-C01 high)                 |
+|                                                                | deep                   | 18.6 min     | 16.8 min     | 3.0        | 323 files unreached, global limit, 1 file failed, inline scripts                               | block (RW-C01 high)                 |
+| `llm-cli` 0.0.11 → 0.0.12                                      | REA defaults           | 61 s         | 2.0 min      | 2.8        | 1 file failed                                                                                  | block (RW-C01 high)                 |
+|                                                                | standard               | 115 s        | 119 s        | 2.8        | 1 file failed                                                                                  | block (RW-C01 high)                 |
+|                                                                | deep                   | 107 s        | 2.5 min      | 1.4        | 1 file failed                                                                                  | block (RW-C01 high)                 |
 
 Higher limits cost CPU that grows with the nodes they add, and they
 change findings: `firecrawl-mcp` 3.30.2 passes at the standard depth (its
@@ -799,7 +802,7 @@ name changed (the finding notes the same call in the old bundle).
 desktop-commander's verdict does not change: at either depth RW-P01
 reports the `exec()` and the `execFile()` in the new
 `diagnostics/report.js` high, saying they may have been there before since
-old files had no semantic facts (128 at the standard depth). Saved Evidence is 1.7–2.2 KiB per retained node and side (620 MB
+old files had no semantic facts (64 at the standard depth). Saved Evidence is 1.7–2.2 KiB per retained node and side (620 MB
 for a standard `swagger-ui-dist` review, 900 MB at the deep depth), and
 neither side's Evidence is reused between runs yet. No model is called, so
 no tokens are used.
