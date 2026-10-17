@@ -92,17 +92,9 @@ describe("compare: each exposure of a renderer API", { skip }, () => {
   });
 
   it("takes a handler whose channel REA did not resolve for one that may serve an API", () => {
-    const app = (handler) => ({
-      "main.js": `const { app, BrowserWindow, ipcMain } = require("electron");\nconst path = require("node:path");\nconst { run } = require("./lib/run.js");\nconst { CHANNELS } = require("./channels.js");\nipcMain.handle("app:list", () => []);\n${handler}app.whenReady().then(() => {\n  run(["gc"]);\n  ${window("preload.js")}});\n`,
-      "preload.js": preload(
-        `  list: () => ipcRenderer.invoke("app:list"),\n${handler ? '  sync: (a) => ipcRenderer.invoke("app:sync", a),\n' : ""}`,
-      ),
-      "channels.js": 'exports.CHANNELS = { SYNC: "app:sync" };\n',
-      "lib/run.js": RUN,
-    });
     const result = compare(
-      app(""),
-      app("ipcMain.handle(CHANNELS.SYNC, (_e, a) => run(a));\n"),
+      computed(""),
+      computed("ipcMain.handle(CHANNELS.SYNC, (_e, a) => run(a));\n"),
       ELECTRON,
     );
     assert.equal(result.result.status, 2, result.result.stderr);
@@ -124,6 +116,40 @@ describe("compare: each exposure of a renderer API", { skip }, () => {
       JSON.stringify(found.unknowns),
     );
   });
+
+  it("reports no kept API whose old and new handlers REA did not resolve the channels of, when they are unchanged", () => {
+    // Two handlers compute their channels; only the one for app:sync runs
+    // git, so Release Watch cannot tell which old one served app:sync.
+    const handlers =
+      "ipcMain.handle(CHANNELS.SYNC, (_e, a) => run(a));\nipcMain.handle(CHANNELS.GC, (_e, a) => a);\n";
+    const result = compare(
+      computed(handlers, { gc: true }),
+      computed(`${handlers}ipcMain.handle("app:about", () => "1.1.0");\n`, {
+        gc: true,
+        about: true,
+      }),
+      ELECTRON,
+    );
+    assert.equal(result.result.status, 0, result.result.stderr);
+    assert.deepEqual(
+      graded(result).filter(([rule]) => rule === "RW-E01"),
+      [],
+    );
+  });
+});
+
+// An app whose preload exposes app.list and, with `handler`, app.sync (and
+// app.gc and app.about when asked), and whose main process registers
+// `handler`, which may compute channels from channels.js; lib/run.js runs
+// git at startup.
+const computed = (handler, { gc = false, about = false } = {}) => ({
+  "main.js": `const { app, BrowserWindow, ipcMain } = require("electron");\nconst path = require("node:path");\nconst { run } = require("./lib/run.js");\nconst { CHANNELS } = require("./channels.js");\nipcMain.handle("app:list", () => []);\n${handler}app.whenReady().then(() => {\n  run(["gc"]);\n  ${window("preload.js")}});\n`,
+  "preload.js": preload(
+    `  list: () => ipcRenderer.invoke("app:list"),\n${handler ? '  sync: (a) => ipcRenderer.invoke("app:sync", a),\n' : ""}${gc ? '  gc: (a) => ipcRenderer.invoke("app:gc", a),\n' : ""}${about ? '  about: () => ipcRenderer.invoke("app:about"),\n' : ""}`,
+  ),
+  "channels.js":
+    'exports.CHANNELS = { SYNC: ["app", "sync"].join(":"), GC: ["app", "gc"].join(":") };\n',
+  "lib/run.js": RUN,
 });
 
 describe("compare: one RW-E01 per group of process sites", { skip }, () => {

@@ -147,8 +147,12 @@ const rank = ({ path, compared: how, unsure }) =>
 // The site of a group an exposure's handler reaches that is not one its
 // old handlers reached, with its path and how it compares (`compared`,
 // "new" for a new exposure): one a settled path reaches when there is one,
-// and a new one before one Release Watch is unsure of; null for none.
-const reachedSite = (app, api, scope, group) =>
+// and a new one before one Release Watch is unsure of; null for none. A
+// handler that only may serve the API (`unsure`) counts only for a site
+// none of the API's old handlers reached: with both sides' handlers
+// guessed, a site some of them reached would be reported for every
+// unchanged handler of a release that computes its channels.
+const reachedSite = (app, { api, scope, unsure }, group) =>
   group.facts
     .map((exec) => ({ exec, path: reachOf(app, scope, exec) }))
     .filter(({ path }) => path)
@@ -158,7 +162,9 @@ const reachedSite = (app, api, scope, group) =>
         : { how: "new", outcomes: [] };
       return { ...site, compared: found.how, outcomes: found.outcomes };
     })
-    .filter((site) => site.compared !== "same")
+    .filter((site) =>
+      unsure ? site.compared === "new" : site.compared !== "same",
+    )
     .sort((a, b) => rank(a) - rank(b))[0] ?? null;
 
 // A use is a guess when its path is, or when the handler is only one that
@@ -201,7 +207,8 @@ const WHY =
 // The finding's title, summary and why: the firmest use's, and how many
 // other channels or exposures reach the group.
 const findingWords = (context, uses) => {
-  const words = uses.map((use) => useWords(context, use));
+  const exposures = exposuresOf(uses);
+  const words = exposures.map((use) => useWords(context, use));
   const [lead] = words;
   const may = words.every((use) => use.may);
   const now = words.every((use) => use.now) ? "now " : "";
@@ -210,10 +217,12 @@ const findingWords = (context, uses) => {
   const more =
     others > 0
       ? ` and ${others} other channel${others === 1 ? "" : "s"}`
-      : uses.length > 1
-        ? ` from ${uses.length} renderer APIs`
+      : exposures.length > 1
+        ? ` from ${exposures.length} renderer APIs`
         : "";
-  const names = uses.slice(1).map(({ api }) => `${api.member.data.member}()`);
+  const names = exposures
+    .slice(1)
+    .map(({ api }) => `${api.member.data.member}()`);
   const reach = othersReach(words.slice(1));
   const rest =
     names.length === 0
@@ -272,12 +281,18 @@ const useEvidence = (context, use, once) => {
 };
 
 // The exposures past MAX_CITED, named in one line.
-const uncitedLine = (uses) =>
+const uncitedLine = (exposures) =>
   reported(
-    `${uses.length} more exposures of renderer APIs reach these sites through their handlers: ${uses.map(({ api }) => `${api.member.data.member} ("${api.member.data.channel}")`).join(", ")}`,
+    `${exposures.length} more exposures of renderer APIs reach these sites through their handlers: ${exposures.map(({ api }) => `${api.member.data.member} ("${api.member.data.channel}")`).join(", ")}`,
     "derived",
     APP_SOURCE,
   );
+
+// Each exposure once, with its firmest use (uses come sorted by `rank`):
+// an exposure several handlers may serve is one exposure.
+const exposuresOf = (uses) => [
+  ...new Map(uses.map((use) => [use.api.member.node_id, use])).values(),
+];
 
 // What a use's handler leaves unknown when it is only one that may serve
 // the API's channel.
@@ -303,6 +318,18 @@ const groupUnknowns = (context, group, uses, execHeld) => [
     : siteUnknowns(context, group, execHeld)),
 ];
 
+// The exposures of uses past MAX_CITED that no cited use names, in one
+// line.
+const uncited = (uses) => {
+  const cited = new Set(
+    uses.slice(0, MAX_CITED).map((use) => use.api.member.node_id),
+  );
+  const rest = exposuresOf(uses.slice(MAX_CITED)).filter(
+    (use) => !cited.has(use.api.member.node_id),
+  );
+  return rest.length > 0 ? [uncitedLine(rest)] : [];
+};
+
 const reachFinding = (context, group, uses) => {
   const once = onceEach();
   const execHeld = execAbsence(context, group);
@@ -310,7 +337,7 @@ const reachFinding = (context, group, uses) => {
     ...uses
       .slice(0, MAX_CITED)
       .flatMap((use) => useEvidence(context, use, once)),
-    ...(uses.length > MAX_CITED ? [uncitedLine(uses.slice(MAX_CITED))] : []),
+    ...uncited(uses),
     ...execEvidence(group, execHeld),
   ];
   if (context.right.app.summary?.sender_validation_observations === 0)
@@ -360,8 +387,9 @@ export const rendererProcessExecution = (context) => {
     .filter(({ scope }) => scope.module !== null && scope.range !== null);
   for (const group of execGroups(context.diff)) {
     const uses = served
-      .flatMap(({ api, handler, unsure, scope }) => {
-        const site = reachedSite(app, api, scope, group);
+      .flatMap((serving) => {
+        const site = reachedSite(app, serving, group);
+        const { api, handler, unsure } = serving;
         return site ? [{ ...site, api, handler, unsure, group }] : [];
       })
       .sort((a, b) => rank(a) - rank(b));

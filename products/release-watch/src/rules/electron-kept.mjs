@@ -81,6 +81,14 @@ const reachedBy = (app, handler) => {
   return reached;
 };
 
+// What each of `candidates` reaches (`reachedBy`), computed once, when
+// first asked.
+const reaching = (app, candidates) => {
+  let reached = null;
+  return () =>
+    (reached ??= candidates.map((candidate) => reachedBy(app, candidate)));
+};
+
 // The old handlers one old exposure may have been served by: the one for
 // its channel, else each whose channel REA did not resolve, or every one
 // when REA did not resolve the exposure's own channel.
@@ -105,14 +113,12 @@ export const keptOld = (app, handlers, members) => {
   const candidates = handler
     ? [handler]
     : [...new Set(members.flatMap((old) => oldCandidates(handlers, old)))];
-  let reached = null;
   return {
     member,
     members,
     handler,
     candidates,
-    reached: () =>
-      (reached ??= candidates.map((candidate) => reachedBy(app, candidate))),
+    reached: reaching(app, candidates),
   };
 };
 

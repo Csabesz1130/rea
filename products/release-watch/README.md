@@ -419,10 +419,11 @@ passed.
   An exposure no handler REA resolved serves may be served by a handler
   whose channel REA did not resolve (`ipcMain.handle(CHANNELS.SYNC, …)`),
   or, when REA did not resolve the exposure's own channel, by one whose
-  channel no exposure invokes; the finding then says "may". One finding
-  covers a module and method of process sites: it names every exposure that
-  reaches them, cites the first 25 with their handlers and paths, lists the
-  rest by name and channel, and cites each site once.
+  channel no exposure invokes; the finding then says "may", and such a
+  handler counts only for a site none of the API's old handlers reached.
+  One finding covers a module and method of process sites: it names every
+  exposure that reaches them, cites the first 25 with their handlers and
+  paths, lists the rest by name and channel, and cites each site once.
 - A process site whose command REA did not resolve is never taken as moved:
   a refactor that relocates one is reported high, with a note that it may be
   the same call. When an MCP tool or a renderer API reaches a new site,
