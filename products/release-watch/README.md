@@ -169,10 +169,13 @@ old site whose file content now ships under another path pairs only with a
 site in that copy. An old site the new facts lack is lost only when its
 file is gone from its component or changed there and REA examined it in
 full: one in a file the new side still ships unchanged was not removed,
-and one in a file REA examined there only in part (or not at all) is
-unknown, so a new site with its command stays high and the finding says
-it may be that call, moved. Requests without a known destination follow
-the same rule: such a new request is reported (RW-N02) with the same note.
+and one in a file REA examined there only in part (or not at all), or in
+a component whose new side REA has no facts for (it failed, or the side is
+a capture only or holds nothing REA can analyze), is unknown, so a new
+site with its command stays high and the finding says it may be that
+call, moved, and which of these REA could not see. Requests without a
+known destination follow the same rule: such a new request is reported
+(RW-N02) with the same note.
 
 Reachability (RW-E01, RW-M01) follows REA's semantic graph: the functions
 REA reports, the calls it resolved, the binding reads each function owns,

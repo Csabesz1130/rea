@@ -4,7 +4,7 @@ import { connectionTotals } from "./rules/mcp.mjs";
 import { registrationTotals } from "./rules/mcp-registrations.mjs";
 import { releaseWindowPairing } from "./rules/window-pairing.mjs";
 import { releaseMovesOf } from "./policy.mjs";
-import { appKnown } from "./sides.mjs";
+import { appKnown, unseenState } from "./sides.mjs";
 
 /**
  * The manifest names of the components each side has no application facts
@@ -61,7 +61,7 @@ export const releaseContext = (prepared) => {
         // The moves name each site's component by its identity.
         name: component.id,
         diff: component.diff,
-        comparable: appKnown(component.right),
+        unseen: unseenState(component.right),
         left: component.left,
         right: component.right,
       })),

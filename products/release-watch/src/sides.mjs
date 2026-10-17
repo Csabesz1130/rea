@@ -27,6 +27,24 @@ export const appKnown = (side) => {
 };
 
 /**
+ * Why REA's application facts do not describe a side (`appKnown`): its
+ * state ("failed", "capture" or "none"), else null.
+ */
+export const unseenState = (side) =>
+  appKnown(side) ? null : applicationState(side);
+
+/**
+ * How a claim says side `release` of component `name` has no application
+ * facts, for state "failed", "capture" or "none".
+ */
+export const unseenWords = (state, release, name) =>
+  ({
+    failed: `REA could not analyze component ${name} of ${release}`,
+    capture: `${release} gives only a capture for component ${name}`,
+    none: `${release} holds nothing REA can analyze for component ${name}`,
+  })[state];
+
+/**
  * True when the side's application was to be analyzed and was not: REA
  * failed on it, or it holds nothing REA can analyze. Its analysis error
  * decides the verdict, so a component whose old side is unanalyzed is

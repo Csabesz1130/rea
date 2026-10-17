@@ -42,13 +42,17 @@ export const sameContent =
   };
 
 // What became of one old site the new facts lack (see the top of this
-// file): "kept", "unknown" or "lost".
+// file): `{ fate }`, "kept", "unknown" or "lost", and for an unknown one
+// `why`: "partial" (its file REA examined only in part on the new side) or
+// why REA has no facts for the component's new side (`unseen`, sides.mjs
+// unseenState).
 const fateOf = (component, fact) => {
-  const { digests, partial, comparable } = component;
+  const { digests, partial, unseen = null } = component;
   const module = fact.data.module;
-  if (sameContent(digests)(module)) return "kept";
-  if (!comparable || partial?.(module)) return "unknown";
-  return "lost";
+  if (sameContent(digests)(module)) return { fate: "kept" };
+  if (unseen !== null) return { fate: "unknown", why: unseen };
+  if (partial?.(module)) return { fate: "unknown", why: "partial" };
+  return { fate: "lost" };
 };
 
 // The contents the new release ships at a path where its component's old
@@ -80,12 +84,13 @@ const changedSites = (components, field) => {
           digest: digests?.right.get(fact.data.module) ?? null,
         });
       for (const fact of unmatched(left, right, field)) {
-        const fate = fateOf(component, fact);
+        const { fate, why } = fateOf(component, fact);
         if (fate === "kept") continue;
         sites[fate].push({
           component: name,
           fact,
           digest: digests?.left.get(fact.data.module) ?? null,
+          ...(why ? { why } : {}),
         });
       }
     }
@@ -96,14 +101,16 @@ const changedSites = (components, field) => {
  * `{ gained, pairs, lost, unknown, counterparts }` for one family: the
  * node ids of every gained site, a Map from each gained site paired with a
  * lost one to `{ component, fact }`, every lost site, the old sites that
- * are unknown now (`{ component, fact }`, in a file REA could not fully
- * examine on the new side or a component whose new side it could not
- * analyze), and a Map from each unpaired gained site to the unknown sites
- * it may be (unknownCounterparts).
- * `components` is `[{ name, items, comparable, digests, partial, keep }]`,
- * with `items` the keyed diff of the family, `digests` `{ left, right }`
- * maps of module to SHA-256, `partial` a test for the new side's files REA
- * examined only in part, and `keep` optional `{ left, right }` tests that
+ * are unknown now (`{ component, fact, why }`, in a file REA could not
+ * fully examine on the new side, why "partial", or a component whose new
+ * side REA has no facts for, why its state), and a Map from each unpaired
+ * gained site to the unknown sites it may be (unknownCounterparts).
+ * `components` is `[{ name, items, unseen, digests, partial, keep }]`,
+ * with `items` the keyed diff of the family, `unseen` why REA has no facts
+ * for the component's new side (sides.mjs unseenState; null when it has),
+ * `digests` `{ left, right }` maps of module to SHA-256, `partial` a test
+ * for the new side's files REA examined only in part, and `keep` optional
+ * `{ left, right }` tests that
  * select the facts of each side that take part (requests without a known
  * destination). `unresolvedPairs` lets two sites with no value pair (such
  * requests), which process sites never do. `sameFile` says when two sites

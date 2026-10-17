@@ -6,7 +6,12 @@ import path from "node:path";
 import { SECURITY_HEADERS, packageNameOf } from "../catalog.mjs";
 import { captureUnread } from "../facts/capture.mjs";
 import { isDeclarationPath } from "../facts/modules.mjs";
-import { appOneSided, applicationState, unanalyzed } from "../sides.mjs";
+import {
+  appOneSided,
+  applicationState,
+  unanalyzed,
+  unseenWords,
+} from "../sides.mjs";
 import { unknownElsewhere } from "./component-absence.mjs";
 import { clientImports, clientModules } from "./destinations.mjs";
 import { displayPath } from "../urls.mjs";
@@ -87,12 +92,6 @@ const captureLines = ({ left, right, labels }) => {
   ];
 };
 
-// What one side of a component gives instead of application code.
-const NO_CODE = {
-  capture: "gives only a capture for",
-  none: "holds nothing REA can analyze for",
-};
-
 // Application code one side of a component has and the other does not,
 // whose side gives a capture only or nothing REA can analyze: what REA saw
 // on one side was not compared with the other.
@@ -100,10 +99,10 @@ const appLines = ({ left, right, labels, name }) => {
   if (!appOneSided(left, right)) return [];
   if (left.target.app !== null)
     return [
-      `${labels.right} ${NO_CODE[applicationState(right)]} component ${name}, so ${labels.left}'s application code in it was compared with nothing; what that code did is unknown now, not gone.`,
+      `${unseenWords(applicationState(right), labels.right, name)}, so ${labels.left}'s application code in it was compared with nothing; what that code did is unknown now, not gone.`,
     ];
   return [
-    `${labels.left} ${NO_CODE[applicationState(left)]} component ${name}, so ${labels.right}'s application code in it was compared with nothing${unanalyzed(left) ? " and only coverage was graded" : "; what it has is reported as not observed before"}.`,
+    `${unseenWords(applicationState(left), labels.left, name)}, so ${labels.right}'s application code in it was compared with nothing${unanalyzed(left) ? " and only coverage was graded" : "; what it has is reported as not observed before"}.`,
   ];
 };
 

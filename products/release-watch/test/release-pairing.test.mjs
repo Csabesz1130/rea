@@ -18,12 +18,14 @@ const exec = (module, command) =>
     at(module, 2),
   );
 
-// Grades `name` of a release given as { name: [oldApp, newApp] }, with the
-// release-wide moves and baseline the compare command gives each component.
-const graded = (
+// The findings of `name` in a release given as { name: [oldApp, newApp] },
+// with the release-wide moves and baseline the compare command gives each
+// component; `unseen(component)` says why REA has no facts for a
+// component's new side (null when it has).
+const findingsOf = (
   components,
   name,
-  { comparable = () => true, surfaces = [] } = {},
+  { unseen = () => null, surfaces = [] } = {},
 ) => {
   const prepared = Object.entries(components).map(
     ([component, [old, now]]) => ({
@@ -31,7 +33,7 @@ const graded = (
       left: side("v1", old),
       right: side("v2", now),
       diff: { app: diffApplications(old, now) },
-      comparable: comparable(component),
+      unseen: unseen(component),
     }),
   );
   const release = { moves: releaseMovesOf(prepared) };
@@ -42,8 +44,11 @@ const graded = (
     baseline,
     name,
     surfaces,
-  }).map((finding) => [finding.rule, finding.severity]);
+  });
 };
+
+const graded = (...args) =>
+  findingsOf(...args).map((finding) => [finding.rule, finding.severity]);
 
 describe("sites moved between components", () => {
   const release = {
@@ -73,7 +78,7 @@ describe("sites moved between components", () => {
       left: side("v1", old),
       right: side("v2", now),
       diff: { app: diffApplications(old, now) },
-      comparable: true,
+      unseen: null,
     }));
     const [finding] = evaluate(
       side("v1", components.worker[0]),
@@ -93,11 +98,26 @@ describe("sites moved between components", () => {
     );
   });
 
-  it("takes nothing from a component whose new side REA could not analyze", () => {
-    assert.deepEqual(
-      graded(release, "worker", { comparable: (name) => name !== "core" }),
-      [["RW-P01", "high"]],
-    );
+  it("takes nothing from a component whose new side REA has no facts for, and says why", () => {
+    for (const [state, words] of [
+      ["failed", "REA could not analyze component core of v2"],
+      ["capture", "v2 gives only a capture for component core"],
+      ["none", "v2 holds nothing REA can analyze for component core"],
+    ]) {
+      const [finding, ...rest] = findingsOf(release, "worker", {
+        unseen: (name) => (name === "core" ? state : null),
+      });
+      assert.deepEqual(
+        [finding.rule, finding.severity, rest.length],
+        ["RW-P01", "high", 0],
+      );
+      assert.ok(
+        finding.unknowns.includes(
+          `v1, component core ran execFile() with the same command in a.js; ${words}, so this may be the same call, moved.`,
+        ),
+        finding.unknowns.join("\n"),
+      );
+    }
   });
 });
 
@@ -122,7 +142,7 @@ describe("old process sites the new facts lack", () => {
         left: side("v1", old),
         right: side("v2", now),
         diff: { app: diffApplications(old, now) },
-        comparable: true,
+        unseen: null,
       },
     ]).childProcesses;
   };
@@ -220,7 +240,7 @@ describe("unresolved requests across components", () => {
       left: side("v1", old),
       right: side("v2", now),
       diff: { app: diffApplications(old, now) },
-      comparable: true,
+      unseen: null,
     }));
 
   it("pairs only when the file moved unchanged", () => {
