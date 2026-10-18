@@ -107,6 +107,25 @@ const settingText = (name, setting) =>
         ? `${name} = dynamic value ${setting.value ?? ""}`.trim()
         : `${name} may be set by ${setting.value}, which REA did not resolve`;
 
+/**
+ * Each safeguard of one window as Release Watch reads it: `{ name, label,
+ * state, text, without }`, the state "safe", "unsafe", "dynamic" (a value
+ * REA did not resolve, or one REA did not resolve that may set it) or
+ * "default" (omitted, so Electron 20 and later use the safe value); `text`
+ * says what the window sets and `without` names the safeguard turned off.
+ */
+export const windowSafeguards = (window) =>
+  Object.entries(WEB_PREFERENCES).map(([name, rule]) => {
+    const setting = settingOf(window, name);
+    return {
+      name,
+      label: rule.label,
+      state: stateOf(setting, rule),
+      text: settingText(name, setting),
+      without: rule.newWindow,
+    };
+  });
+
 // How one preference of one paired or new window regressed: "unsafe",
 // "dynamic" (an explicit value REA did not resolve), "unresolved" (a value
 // REA did not resolve that may set it), or null.

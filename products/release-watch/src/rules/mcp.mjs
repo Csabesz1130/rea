@@ -44,8 +44,12 @@ import {
 const capabilityOf = (call, exec) =>
   `${registrationApi(call)}|${exec.data.method}|${exec.data.command ?? "unresolved"}`;
 
-/** Every tool-registration-to-exec connection one side has. */
-const connections = (app) =>
+/**
+ * Every tool-registration-to-exec connection one app has: `[{ key, call,
+ * exec, path }]`, the registration call, the process site it reaches and
+ * how (reach.mjs; `path.guess` when a step followed every candidate).
+ */
+export const toolConnections = (app) =>
   toolRegistrations(app).flatMap((call) => {
     const scope = { module: call.data.module, range: call.data.range };
     return [...reachedFrom(app, scope).values()].map(({ exec }) => ({
@@ -118,7 +122,10 @@ const partlyAnalyzedBefore = (context) => {
  * so it counts on neither, as a "kept" key does not for RW-P01 and RW-M02.
  */
 const countedConnections = ({ left, right, aliases, diff }) => {
-  const all = { old: connections(left?.app), now: connections(right?.app) };
+  const all = {
+    old: toolConnections(left?.app),
+    now: toolConnections(right?.app),
+  };
   if (!left?.app || !right?.app) return { all, ...all };
   const unchanged = unchangedFiles(left.app, right.app, aliases);
   const changed = new Set(

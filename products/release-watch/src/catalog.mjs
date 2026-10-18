@@ -32,6 +32,8 @@ const AI_PROVIDERS = [
   { host: "api.together.xyz", provider: "Together AI" },
   { host: "api.fireworks.ai", provider: "Fireworks AI" },
   { host: "openrouter.ai", provider: "OpenRouter" },
+  { host: "models.github.ai", provider: "GitHub Models" },
+  { host: "models.inference.ai.azure.com", provider: "GitHub Models" },
   { host: "api.deepseek.com", provider: "DeepSeek" },
   { host: "api.perplexity.ai", provider: "Perplexity" },
   { host: "api.x.ai", provider: "xAI" },
