@@ -1,8 +1,8 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, browser, and connected Android targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, investigate device tasks, decompile code, or guide improvements and reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "42"
+  version: "43"
 ---
 
 # REA
@@ -92,6 +92,11 @@ explicit path or endpoint and do not need it.
 - Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX or DMG):
   `open_binary` with the supplied local path; use `inspect_artifact` when its
   graph and findings help answer the question.
+- Connected Android phone, emulator, or Android TV task:
+  use the advertised ADB tools with the exact selected serial. Read the
+  [device workflow](references/android-applications.md#connected-device-tasks)
+  before acquiring an app or performing a requested launch. APK inspection
+  does not inspect or control a live device.
 - Android APK code, classes, methods, or incoming references:
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
@@ -325,7 +330,7 @@ as complete while required questions remain open.
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
 - ASARs, extracted JavaScript, feature tracing, and version comparison:
   [references/javascript-applications.md](references/javascript-applications.md)
-- Android APK declarations, classes, methods, and static references:
+- Android device tasks, APK declarations, classes, methods, and static references:
   [references/android-applications.md](references/android-applications.md)
 - Browser/Electron observation (passive and scenario) and static/runtime
   reconciliation:
@@ -337,5 +342,12 @@ as complete while required questions remain open.
 
 Explain findings in plain language and tie them to returned evidence. When the
 user asks to build something, use normal coding tools and separate observed
-behavior from design choices. Close an opened native session with
+behavior from design choices. Define what success would look like for the
+user, then report each requested outcome as verified, partial, or unverified.
+For improvement work, prioritize concrete changes by expected user benefit,
+supporting Evidence, effort, and uncertainty; label unmeasured benefit as an
+estimate. Carry the selected change through implementation and a relevant
+acceptance check when ordinary coding tools and the requested scope allow it.
+A successful tool call alone does not establish that the user's goal was met.
+Close an opened native session with
 `close_binary` when the investigation is complete.

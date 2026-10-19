@@ -1,5 +1,55 @@
 # Android application artifacts
 
+## Connected device tasks
+
+Use the advertised ADB family for a connected phone, emulator, or Android TV.
+Supply the existing platform-tools client through `REA_ADB_PATH` (absolute)
+or `PATH`; REA does not install it or pair/connect devices. Static APK
+inspection below has separate JADX/Java prerequisites.
+
+1. Establish the user's goal and the exact device serial. Use
+   `inspect_adb_client` for a missing-client question, and `list_adb_devices`
+   to resolve a device selection. Listing may start the local ADB server.
+   Select only a device in state `device`; do not guess the first row or try
+   to bypass an offline/unauthorized state.
+2. Inspect only state relevant to the goal: `inspect_adb_device` for build
+   identity, `inspect_adb_window` for focus, `inspect_adb_display` for display
+   size/density, or `resolve_adb_packages` for package candidates. Package
+   substring matches are candidates, not permission to choose an app. Use
+   the exact package with `inspect_adb_package` when its version matters.
+3. For a requested app launch, call `start_adb_app` once with the selected
+   serial and package. For a requested deep link, `start_adb_activity` accepts
+   an action, data URI, and explicit component. Resolve the intended component
+   from supplied or observed facts; an implicit intent can open a chooser or
+   another app. These operations change device state. Existing authorization
+   for the requested action suffices; inspection alone does not authorize it.
+4. Verify the outcome with fresh `inspect_adb_window` Evidence and, when
+   useful, `capture_adb_screen` in a caller-selected new capture directory.
+   Match the exact package/component in the observed focus declaration,
+   never a substring. Null, conflicting, or unparseable declarations leave
+   focus unresolved. Retry a relevant observation within a finite deadline;
+   do not repeat a launch whose side effects may already have happened.
+5. Report what the observations actually establish. A launch wait report
+   shows the activity manager's verdict. Focus shows an app was foreground
+   at read time. Neither establishes that a supplied URL loaded, a particular
+   video played, ads disappeared, or the UI became faster. For those goals,
+   retain the unmet acceptance condition and the next specific observation
+   needed. Use `read_adb_logcat` only for a relevant bounded diagnostic.
+
+For static follow-up, `pull_adb_package` writes a digest-identified base and
+split APK set to the selected host output directory. Device paths are not
+host paths. Feed the returned local APK paths into the static tools below;
+retain split coverage rather than assuming the base contains everything.
+Do not install, uninstall, push files, or force-stop an app merely to inspect
+it. Stopping a process does not roll back the app's data or network effects.
+
+For example, "open YouTube on my TV" can be checked by an exact package
+focus observation. "Play this video" still needs content/playback evidence
+after the launch. Unsupported key presses or text input remain unsupported;
+do not invent an ADB tool or fall back to unrestricted shell commands.
+
+## Static APK analysis
+
 Use the connected server's advertised Android tools. Repository main and npm
 4.1.0 include this family. A skill installation alone cannot add it to an
 older server.

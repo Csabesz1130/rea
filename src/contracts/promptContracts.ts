@@ -1,3 +1,4 @@
+import { TASK_PROMPT_CONTRACTS } from "./taskPromptContracts.js";
 import type { TOOL_CONTRACTS } from "./toolContracts.js";
 
 type ToolName = (typeof TOOL_CONTRACTS)[number]["name"];
@@ -92,6 +93,7 @@ ${discipline}`;
 
 /** Complete guided workflow inventory advertised through MCP prompts. */
 export const PROMPT_CONTRACTS = [
+  ...TASK_PROMPT_CONTRACTS,
   {
     name: "investigate_feature",
     title: "Investigate a feature",

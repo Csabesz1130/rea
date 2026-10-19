@@ -1,19 +1,21 @@
 # Guided MCP prompts and completion
 
-REA exposes six provider-neutral investigation workflows through the MCP
+REA exposes eight provider-neutral investigation workflows through the MCP
 `prompts` capability. They complement the generated tool catalog; they do not add, remove, or
 invoke tools by themselves.
 
 ## Prompt inventory
 
-| Prompt                            | Purpose                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------ |
-| `investigate_feature`             | Trace a feature from discovery into relevant function evidence.                      |
-| `compare_application_versions`    | Compare two shipped artifacts, with optional static and runtime follow-up.           |
-| `verify_reconstruction`           | Evaluate a finite reconstruction specification against retained comparison Evidence. |
-| `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.   |
-| `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.              |
-| `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                     |
+| Prompt                            | Purpose                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------------------- |
+| `improve_application`             | Turn a concrete task and acceptance criteria into ranked changes and a coding handoff. |
+| `investigate_device_task`         | Investigate one connected Android or TV task and verify outcomes on the exact device.  |
+| `investigate_feature`             | Trace a feature from discovery into relevant function evidence.                        |
+| `compare_application_versions`    | Compare two shipped artifacts, with optional static and runtime follow-up.             |
+| `verify_reconstruction`           | Evaluate a finite reconstruction specification against retained comparison Evidence.   |
+| `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.     |
+| `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.                |
+| `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                       |
 
 Every rendered prompt provides optional starting points using current REA tool
 names. Agents can call tools directly, skip irrelevant suggestions, and inspect
@@ -38,6 +40,31 @@ For target paths in `compare_application_versions`, the prompt suggests
 opening each target before calling `inspect_artifact`; inspection operates on
 the active target and returns the graph and findings together inline.
 
+`improve_application` requires `task_goal` and `acceptance_criteria`. It starts
+with a finite checklist, routes the supplied artifact or runtime to existing
+tools, and reuses retained Evidence. The requested deliverable ranks practical
+changes by user impact, evidence strength, effort, and risk, then supplies a
+concrete coding handoff and verification for each criterion. Ordinary source
+changes use the agent's normal coding tools. Proposed changes, estimated
+benefits, and proposed checks remain distinct from performed work and measured
+outcomes.
+
+`investigate_device_task` requires an exact `serial`, `task_goal`, and
+`acceptance_criteria`. An optional `package_name` or `component` selects the app;
+it does not authorize a launch. The workflow inspects existing device, package,
+window, and process facts before using an existing start tool only when the
+user's session request includes that action. Explicit components must belong
+to the selected package. Launch verification uses fresh exact-package focus
+and, when requested, screenshots and bounded logs; command success alone does
+not establish task completion. Focus and screenshots do not establish playback,
+speed improvements, ad blocking, or successful deep-link content. Those claims
+need their own observations. The workflow adds no pairing, network discovery,
+installation, settings changes, or device-control capabilities.
+
+For both task workflows, finish with each acceptance criterion answered,
+partially answered, or unresolved, citing Evidence and the smallest useful
+next probe for gaps. Prompt rendering performs no analysis or device action.
+
 Use standard MCP discovery and retrieval:
 
 ```json
@@ -52,6 +79,22 @@ Use standard MCP discovery and retrieval:
     "arguments": {
       "feature": "offline search",
       "document": "Notes"
+    }
+  }
+}
+```
+
+For an outcome-driven investigation:
+
+```json
+{
+  "method": "prompts/get",
+  "params": {
+    "name": "improve_application",
+    "arguments": {
+      "task_goal": "Make saved notes searchable offline",
+      "acceptance_criteria": "Find a previously saved note while the network is unavailable",
+      "target_path": "/absolute/path/to/notes-app"
     }
   }
 }
