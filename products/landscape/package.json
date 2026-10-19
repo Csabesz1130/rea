@@ -1,0 +1,17 @@
+{
+  "name": "landscape",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Map what the products in a category do from their shipped code, find the openings none of them covers, and hand builders a clean-room brief, using REA Evidence through Release Watch's facts.",
+  "type": "module",
+  "bin": {
+    "landscape": "bin/landscape.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "demo": "bash demo/run-demo.sh"
+  }
+}

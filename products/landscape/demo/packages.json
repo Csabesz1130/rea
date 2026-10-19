@@ -1,0 +1,81 @@
+{
+  "comment": "Public npm packages the demo maps, pinned to exact versions and the integrity npm's registry publishes for each. fetch.mjs refuses a tarball whose sha512 differs.",
+  "sets": {
+    "mcp": {
+      "category": "Terminal MCP servers",
+      "packages": [
+        {
+          "name": "shell-mcp-server",
+          "version": "1.0.3",
+          "license": "MIT",
+          "integrity": "sha512-N/rk4F7m8+YkVRlOWKAd0pfoFPKXLWHkMXQBiFnEksxu0rPWeacxvDMdne9MrJ7yF67OrZyWNlLfTjE9OJp8bw=="
+        },
+        {
+          "name": "mcp-shell",
+          "version": "0.1.3",
+          "license": "MIT",
+          "integrity": "sha512-sc8NueLh3msKxNNJJpY8obV7fpNWu01nrJO6T4kTKtcXcXc+pzSLkzE6qc2KYrfoShCkNH7PeVKv92AYHJzqtA=="
+        },
+        {
+          "name": "super-shell-mcp",
+          "version": "2.0.15",
+          "license": "MIT",
+          "integrity": "sha512-lD1fsHYuEHQUbIAnnJov6ftnBo2BAFlKVSRC6BIyxhfQ00zURQOkGG2/87oIOJCZLJpLUV8gIUN40lOQCxMK4A=="
+        },
+        {
+          "name": "@mako10k/mcp-shell-server",
+          "version": "2.8.1",
+          "license": "MIT",
+          "integrity": "sha512-aiZOsf/CNJGksF31NFg5mqYE3QITWLkKNx+UxzmHSGNMlxz5GLu2/PwJjU86Jlgg28btpvQ4GabLNXiOsrbgfA=="
+        },
+        {
+          "name": "@wonderwhy-er/desktop-commander",
+          "version": "0.3.0",
+          "license": "MIT",
+          "integrity": "sha512-2EXNxuztSIW3fQw6OEGMek39M8yQlKinXooMYtNR4wRLhtA+f3b0cbxBggAfDeKemMWltm1qWQy/t2Av9VmYLw=="
+        }
+      ]
+    },
+    "history": {
+      "category": "ai-renamer",
+      "packages": [
+        {
+          "name": "ai-renamer",
+          "version": "1.0.17",
+          "license": "GPL-3.0",
+          "integrity": "sha512-CaY7nhSrd2Cud4rtxG9uPL8Xp04XoHzz+KN2knRhV+wgtDp5iWONfIi/JDVH7T+WlJnr9B079IvTSHi2RsmoNg=="
+        },
+        {
+          "name": "ai-renamer",
+          "version": "1.0.18",
+          "license": "GPL-3.0",
+          "integrity": "sha512-djefdSeVzAKrXvVk2+jCosvXIruYA0cArvScWIdUKcxt15IXmnA4G+Sh/pOg9mu7w3jtIIB99udqc3nuu7DE5w=="
+        },
+        {
+          "name": "ai-renamer",
+          "version": "1.0.19",
+          "license": "GPL-3.0",
+          "integrity": "sha512-C3F6u5ALr7OzJs77n9HdAgPt2lS3HW+LqYzmUEWlSIeU2NsLW6s7MwplgwzZfhI+V80DIRmKibNx5VGKKDN0dw=="
+        },
+        {
+          "name": "ai-renamer",
+          "version": "1.0.22",
+          "license": "GPL-3.0",
+          "integrity": "sha512-U8ut8qJzuN1MTb5hV5nF71ThA+qWSPV3U8Kdpou6t/SWzMO32YA54u+grygNgJ25mv6a2ZLfc/cvauuweqhMlA=="
+        },
+        {
+          "name": "ai-renamer",
+          "version": "1.0.23",
+          "license": "GPL-3.0",
+          "integrity": "sha512-9OAy8jqW7xbGnO4Rsol16e+jjvRa9LuZSycMOVibktPZPJpjUWjFyv4u8tw2CiDSHAIxKc4zT/uGlkkMc84YrQ=="
+        },
+        {
+          "name": "ai-renamer",
+          "version": "1.0.24",
+          "license": "GPL-3.0",
+          "integrity": "sha512-5dRoKkOo5BuU+2QMVKycKnJ1B+7dCnB101DUt1Vh5cqv7lLI1dp3e/oq8TFWe2+GI4yxd4bCOnMDkHDGoZxyzQ=="
+        }
+      ]
+    }
+  }
+}

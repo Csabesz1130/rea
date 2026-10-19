@@ -1,0 +1,9 @@
+{
+  "name": "reach-forms",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.25.0"
+  }
+}
