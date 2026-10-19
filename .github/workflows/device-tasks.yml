@@ -1,0 +1,44 @@
+name: Device task prototype
+
+on:
+  pull_request:
+    paths:
+      - "products/device-tasks/**"
+      - "src/adb/**"
+      - "src/application/adb/**"
+      - "src/domain/adb/**"
+      - "src/domain/evidence.ts"
+      - "src/cli/adbCommands.ts"
+      - "src/cli/cliResultOutput.ts"
+      - "src/process/**"
+      - "scripts/rea.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+      - ".github/workflows/device-tasks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-tasks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulated-device:
+    name: REA CLI with simulated ADB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      HUSKY: "0"
+      REA_DEVICE_TASK_REQUIRE_BOUNDARY: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - run: npm run build:cached
+      # The adapter fixture is simulated. Passing this does not verify a TV.
+      - run: npm --prefix products/device-tasks test
