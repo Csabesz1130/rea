@@ -5,11 +5,13 @@
 # yours. mcp downloads five public terminal MCP servers from npm and maps
 # them (about two and a half minutes; the largest takes most of it).
 # history downloads six ai-renamer releases and shows how its traits
-# changed. index maps the 40 most-downloaded MCP servers on npm (the MCP
-# Trust Index; tens of minutes). gemini follows Google's Gemini CLI core
-# from its first public release to 0.64.0, each release split into one
-# component per source directory (tens of minutes). all runs fixtures, mcp
-# and history. All need a built REA checkout (npm run build:cached); every
+# changed. index maps the 40 most-downloaded MCP servers on npm, the MCP
+# Trust Index: about half an hour and 5.5 GB of Evidence; run it with
+# NODE_OPTIONS=--max-old-space-size=8192, since with Node's default heap
+# REA keeps fewer results of the largest servers. gemini follows Google's
+# Gemini CLI core from its first public release to 0.64.0, each release
+# split into one component per source directory (about five minutes). all
+# runs fixtures, mcp and history. All need a built REA checkout (npm run build:cached); every
 # set but fixtures also needs npm and tar.
 set -euo pipefail
 

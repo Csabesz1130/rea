@@ -56,13 +56,16 @@ You need what Release Watch needs: Node.js 22.19 or later on the 22 line,
 Linux x64. Every demo but `fixtures` downloads public packages with npm,
 checks each tarball against the sha512 integrity pinned in
 `demo/packages.json`, and unpacks it with `tar`; nothing downloaded is run.
+The index demo takes about half an hour and 5.5 GB of disk for REA's
+Evidence, and needs the larger Node heap shown (see Limits and cost).
 
 ```bash
 npm ci && npm run build:cached                       # build REA (repository root)
 bash products/landscape/demo/run-demo.sh fixtures    # offline, a few seconds
 bash products/landscape/demo/run-demo.sh mcp         # five real terminal MCP servers
 bash products/landscape/demo/run-demo.sh history     # six releases of ai-renamer
-bash products/landscape/demo/run-demo.sh index       # the 40 most-downloaded MCP servers
+NODE_OPTIONS=--max-old-space-size=8192 \
+  bash products/landscape/demo/run-demo.sh index     # the 40 most-downloaded MCP servers
 bash products/landscape/demo/run-demo.sh gemini      # Gemini CLI core, launch to 0.64.0
 cd products/landscape
 node bin/landscape.mjs map A B C --ours MINE --category "AI note apps" --out map
@@ -199,6 +202,63 @@ tool calls its models through axios, which REA does not model, so its AI
 traits become unknown rather than absent; 1.0.23 starts running commands
 through a shell (`exec()` in its frame extraction).
 
+**MCP Trust Index** (`run-demo.sh index`): the 40 most-downloaded MCP
+servers on npm that ship a command, use an MCP SDK and declare an
+open-source license, as npm ranked them on 20 October 2026, with 3.6
+million downloads a week between them. `demo/packages.json` holds the rule
+and the list.
+
+- REA examined 24 in full and 15 in part. For @next-ai-drawio/mcp-server
+  it reached its five-minute limit, so every trait of that server is
+  unknown.
+- 36 serve MCP tools, three of them only likely: the Google Cloud servers
+  bundle the MCP SDK into their code, and Landscape reads them from the
+  tool-call dispatcher the bundle keeps.
+- 17 start processes (6 only likely). Three have a tool whose code reaches
+  process execution: desktop-commander (its terminal tools), @netlify/mcp
+  (a helper that runs Netlify CLI commands through a shell) and @drawio/mcp
+  (it opens the diagram in a browser). For 24 more, REA's facts cannot
+  tell.
+- Four run commands through a shell: desktop-commander, @netlify/mcp and
+  Hostinger's two packages, which open their sign-in page with `exec()`.
+- Four send telemetry or error reports: figma-developer-mcp (PostHog) and
+  xcodebuildmcp (Sentry), and likely desktop-commander and
+  next-devtools-mcp. Read by hand, not by Landscape: an environment
+  variable turns it off in figma-developer-mcp (`FRAMELINK_TELEMETRY=off`
+  or `DO_NOT_TRACK`), xcodebuildmcp (`XCODEBUILDMCP_SENTRY_DISABLED`) and
+  desktop-commander (`DESKTOP_COMMANDER_DISABLE_TELEMETRY`).
+- Two marks come from shipped files that do not run when the server runs:
+  @ui5/mcp-server's "loads scripts from other hosts" is a project template
+  it copies into new apps, and n8n-mcp's OpenAI calls are reached only
+  from a maintenance script (`dist/scripts/fetch-templates.js`).
+- Openings: no telemetry, commands without a shell and narrow agent tools.
+  The other three Landscape suggests (local-first AI, only your own
+  scripts, works offline) rest on one or two servers each.
+
+**Gemini CLI core** (`run-demo.sh gemini`, Apache-2.0): the engine of
+Google's open-source coding agent, from its first release, 0.1.2 (25 June
+2025), to 0.64.0 (13 October 2026), each split into one component per
+source directory: 8 directories and 68 files at first, 31 and 472 in
+0.64.0, which also ships 428 test files and helpers. REA examined every
+directory of every release in full.
+
+- From the first release it calls the Gemini API, reads `GEMINI_API_KEY`
+  and `GOOGLE_API_KEY`, connects to MCP servers and starts processes.
+- 0.10.0 starts sending usage statistics to Google's Clearcut service
+  (`play.googleapis.com/log`) and holds the Code Assist API's address
+  (`cloudcode-pa.googleapis.com`). Read by hand: the statistics are on
+  unless the `privacy.usageStatisticsEnabled` setting turns them off.
+- 0.64.0 holds Vertex AI's regional endpoints
+  (`aiplatform.us.rep.googleapis.com`, `aiplatform.eu.rep.googleapis.com`).
+  The Code Assist and Vertex AI marks are likely: the code holds the
+  addresses, but REA ties no request to them.
+- A shell is seen only in 0.1.2 (`exec("git --version")`). Later releases
+  use child_process in ways REA does not classify, and 0.64.0 adds execa,
+  so the shell is unknown there, not absent.
+- 0.64.0 reads its API key after a helper that returns `process.env[key]`,
+  so REA cannot settle that a later `process.env` read is the variable's;
+  Landscape marks the key read likely rather than gone.
+
 ## Limits and cost
 
 - Landscape reads shipped code statically; it does not run the products. A
@@ -211,18 +271,38 @@ through a shell (`exec()` in its frame extraction).
   options). A large product may be examined only in part; its absent traits
   are then unknown.
 
-Measured on this container (4 CPUs), one run each, standard depth, two
-products at a time:
+Measured on this container (4 CPUs, 16 GB of memory), one run each,
+standard depth, two products at a time. Every run but the Gemini history
+had `NODE_OPTIONS=--max-old-space-size=8192`, as this container sets it:
 
-| Run                              | Wall      | CPU   | Peak memory (process family) |
-| -------------------------------- | --------- | ----- | ---------------------------- |
-| fixtures map, 4 small products   | 4.7–5.0 s | 12 s  | 0.75 GB                      |
-| terminal MCP servers, 5 packages | 141 s     | 219 s | 2.1 GB                       |
-| ai-renamer history, 6 releases   | 12.7 s    | 33 s  | 0.84 GB                      |
+| Run                                           | Wall      | CPU      | Peak memory (process family) |
+| --------------------------------------------- | --------- | -------- | ---------------------------- |
+| fixtures map, 4 small products                | 4.7–5.0 s | 12 s     | 0.75 GB                      |
+| terminal MCP servers, 5 packages              | 141 s     | 219 s    | 2.1 GB                       |
+| ai-renamer history, 6 releases                | 12.7 s    | 33 s     | 0.84 GB                      |
+| top 40 MCP servers, map                       | 27 min    | 65 min   | 5.2 GB                       |
+| Gemini CLI core, 4 releases in 84 directories | 5.3 min   | 10.3 min | 1.3 GB                       |
 
 Most of the MCP map's time and memory is desktop-commander (266 files):
 about 137 s of REA analysis, and Evidence of about 300 MB that Landscape
 reads whole. Agent tokens were not measured; Landscape makes no model calls.
+
+What the large runs showed:
+
+- REA's own process keeps fewer results of a large package when Node's
+  heap is small. With the default heap (about 2 GB here), the two largest
+  servers of the index returned about a third of their Evidence (137 and
+  124 MiB instead of 362 and 339) and no longer showed their MCP SDK
+  imports; REA reports the result budget it hit, and Landscape marks them
+  examined in part. Give large maps the heap shown in Quick start. The
+  Gemini history, split into directories, ran with the default heap.
+- The 40 servers' Evidence takes 5.5 GB of disk, Gemini's 743 MB.
+- Landscape counts every shipped file except tests, so templates a product
+  copies into new projects and maintenance scripts shipped beside it count
+  too (the ui5 and n8n-mcp marks above). It does not yet tell what a
+  product's entry points reach.
+- A server whose bundle splits the MCP SDK across chunks (@shopify/dev-mcp)
+  still reads as not an MCP server.
 
 ## Use it responsibly
 
