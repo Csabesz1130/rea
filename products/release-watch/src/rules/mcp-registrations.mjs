@@ -7,7 +7,9 @@
 // when its own first argument reads CallToolRequestSchema, under whatever
 // name the module imports it; and a bundled framework's
 // `addTool` only where a module that imports a server SDK defines that
-// method, as FastMCP bundled into firecrawl-mcp does.
+// method, as FastMCP bundled into firecrawl-mcp does. An app with no such
+// import whose code dispatches tool calls (bundledToolDispatchers) has an
+// SDK bundled into it, and which of its calls register tools is unknown.
 import {
   BUNDLED_REGISTRARS,
   MCP_DISPATCHER,
@@ -144,6 +146,20 @@ const registrationsOf = (app) => {
   }
   return registered.get(app);
 };
+
+/**
+ * The dispatcher calls whose first argument reads CallToolRequestSchema in
+ * an app REA reports no MCP server SDK import for, as an MCP server SDK
+ * bundled into the code makes them; a client does not handle tool calls.
+ */
+export const bundledToolDispatchers = (app) =>
+  app && registrarsOf(app) === null
+    ? app.memberCalls.filter(
+        (call) =>
+          call.data.member === MCP_DISPATCHER &&
+          toolCallSchema(app, call) !== null,
+      )
+    : [];
 
 /** The calls that register MCP tools in one app. */
 export const toolRegistrations = (app) =>

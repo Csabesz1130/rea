@@ -36,6 +36,7 @@ export { shippedTokens } from "../../release-watch/src/rules/ai.mjs";
 export { browserSdkUses } from "../../release-watch/src/rules/ai-placement.mjs";
 export { toolConnections } from "../../release-watch/src/rules/mcp.mjs";
 export {
+  bundledToolDispatchers,
   registrationClaim,
   toolRegistrations,
 } from "../../release-watch/src/rules/mcp-registrations.mjs";

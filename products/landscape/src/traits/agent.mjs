@@ -5,6 +5,7 @@
 // sites, not tool names or schemas.
 import { factLine, readingLine } from "../evidence.mjs";
 import {
+  bundledToolDispatchers,
   isProcessLibrary,
   mcpServers,
   packageNameOf,
@@ -122,11 +123,38 @@ const toolUnknowns = (part, set) => {
     );
 };
 
+// A component that dispatches MCP tool calls with no MCP server SDK import:
+// the SDK is bundled into its code, so it likely serves MCP tools, and with
+// no import to tell which calls register tools, what they reach is unknown.
+const bundledServers = (part, set) => {
+  const dispatchers = bundledToolDispatchers(part.app).filter(inProduct);
+  if (dispatchers.length === 0) return;
+  set.add(TRAITS.mcpServer, {
+    strength: "likely",
+    evidence: dispatchers
+      .slice(0, MAX_LINES)
+      .map((call) =>
+        factLine(
+          part.name,
+          `setRequestHandler() call whose first argument reads CallToolRequestSchema, as an MCP server SDK bundled into the code dispatches tool calls; REA reports no import of one`,
+          call,
+        ),
+      ),
+  });
+  set.unknownBecause(
+    TRAITS.toolProcess,
+    "its MCP server SDK is bundled into its code, so Release Watch cannot tell which calls register tools",
+  );
+};
+
 /** Record one component's agent-tool traits. */
 export const readAgent = (part, set) => {
   if (!part.app) return;
   clients(part, set);
-  if (!servers(part, set)) return;
+  if (!servers(part, set)) {
+    bundledServers(part, set);
+    return;
+  }
   toolProcesses(part, set);
   toolUnknowns(part, set);
 };

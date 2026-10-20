@@ -222,6 +222,38 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
   });
 });
 
+describe("map: an MCP server SDK bundled into the code", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("reads a bundled tool-call dispatcher as likely, not a tool registry", () => {
+    // What a bundler leaves of an MCP server: the SDK's request schema and
+    // dispatcher inlined, with no import of the SDK.
+    const bundled = products.write("bundled-server", "1.0.0", {
+      "dist/bundle.js":
+        'import { spawn } from "node:child_process";\nvar CallToolRequestSchema = { method: "tools/call" };\nclass Server { setRequestHandler(schema, handler) { this.handler = handler; } }\nconst server = new Server();\nserver.setRequestHandler(CallToolRequestSchema, async () => spawn("gcloud", ["info"]));\n',
+    });
+    // An agent's own tool registry, as an MCP client keeps one.
+    const registry = products.write("agent-registry", "1.0.0", {
+      "index.js":
+        'import { spawn } from "node:child_process";\nclass ToolRegistry { registerTool(tool) { this.tool = tool; } }\nexport const tools = new ToolRegistry();\ntools.registerTool({ run: () => spawn("git", ["status"]) });\n',
+    });
+    const run = landscape("map", [bundled, registry]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(
+      cell(run.report, "agent.mcp-server", "bundled-server 1.0.0"),
+      "likely",
+    );
+    assert.equal(
+      cell(run.report, "agent.tool-process", "bundled-server 1.0.0"),
+      "unknown",
+    );
+    for (const row of ["agent.mcp-server", "agent.tool-process"])
+      assert.equal(cell(run.report, row, "agent-registry 1.0.0"), "no", row);
+  });
+});
+
 describe("map: AI keys read from the environment", { skip }, () => {
   const products = written();
   after(() => products.cleanup());
