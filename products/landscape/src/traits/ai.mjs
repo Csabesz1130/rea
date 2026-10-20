@@ -135,6 +135,21 @@ const environmentKeys = (part, set) => {
         ],
         values: [read.data.key],
       });
+  // A read REA could not settle as the variable's (Release Watch's
+  // envPropertyReads): most likely process.env, but not shown to be.
+  for (const read of productFacts(part.app.envPropertyReads))
+    if (isAiEnvironmentKey(read.data.key))
+      set.add(TRAITS.environmentKey, {
+        strength: "likely",
+        evidence: [
+          factLine(
+            part.name,
+            `${read.data.module} reads env.${read.data.key}; REA did not settle that the object is process.env`,
+            read,
+          ),
+        ],
+        values: [read.data.key],
+      });
 };
 
 const browserCalls = (part, set) => {

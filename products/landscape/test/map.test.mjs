@@ -222,6 +222,55 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
   });
 });
 
+describe("map: AI keys read from the environment", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("keeps a key read REA could not settle as likely, not absent", () => {
+    const direct = products.write("keys-direct", "1.0.0", {
+      "index.js": "export const key = () => process.env.GEMINI_API_KEY;\n",
+    });
+    // A helper that returns process.env[key] for a key it is given: REA
+    // then cannot settle that a later process.env read is the variable's.
+    const helper = products.write("keys-helper", "1.0.0", {
+      "index.js":
+        'export function mode() { if (process.env["GEMINI_API_KEY"]) return "key"; return "login"; }\nconst getEnv = (key) => process.env[key];\nexport const project = () => getEnv("GOOGLE_CLOUD_PROJECT");\n',
+    });
+    const run = landscape("map", [direct, helper]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(
+      cell(run.report, "ai.environment-key", "keys-direct 1.0.0"),
+      "yes",
+    );
+    assert.equal(
+      cell(run.report, "ai.environment-key", "keys-helper 1.0.0"),
+      "likely",
+    );
+  });
+});
+
+describe("map: browser storage", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("counts Web Storage and IndexedDB, not a database file", () => {
+    const page = products.write("notes-web", "1.0.0", {
+      "index.js":
+        'export const save = (text) => localStorage.setItem("draft", text);\n',
+    });
+    const server = products.write("todos-server", "1.0.0", {
+      "index.js":
+        'import Database from "better-sqlite3";\nexport const open = () => new Database("todos.db");\n',
+    });
+    const run = landscape("map", [page, server]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(cell(run.report, "web.storage", "notes-web 1.0.0"), "yes");
+    assert.equal(cell(run.report, "web.storage", "todos-server 1.0.0"), "no");
+  });
+});
+
 describe("map: only code that runs with the product", { skip }, () => {
   const products = written();
   after(() => products.cleanup());

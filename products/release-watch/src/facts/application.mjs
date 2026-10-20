@@ -26,6 +26,23 @@ import {
 // server SDKs and frameworks register tools through (catalog.mjs), by the
 // last name of REA's read path (`server.experimental.tasks.registerToolTask`).
 // Which of these calls register tools in an app is the MCP rules' call.
+// The key of a static read of an `env` property (`process.env.KEY`). REA
+// reports such a read, without a configuration source, when it cannot
+// settle that the value read is the variable's: code it saw earlier may have
+// changed process.env, as a helper returning process.env[key] can. The
+// path starts at the receiver REA resolved, so the receiver may also be
+// another object with an env property.
+const environmentKeyOf = (node) => {
+  const path = node.properties?.property_path;
+  return node.properties?.operation_kind === "read" &&
+    Array.isArray(path) &&
+    path.length === 2 &&
+    path[0] === "env" &&
+    typeof path[1] === "string"
+    ? path[1]
+    : null;
+};
+
 const trackedMember = (label) => {
   const member = /^read:\/(?:.+\/)?([^/]+)$/.exec(label)?.[1] ?? null;
   return MCP_REGISTRATION_MEMBERS.has(member) ? member : null;
@@ -339,6 +356,15 @@ const SEMANTIC_PROJECTIONS = {
         }),
       );
     if (trackedMember(label)) scope.trackedReads.push(node);
+    const key = environmentKeyOf(node);
+    if (key !== null)
+      scope.facts.envPropertyReads.push(
+        semanticFact(node, scope.contexts, `${modulePath}#env:${key}`, {
+          module: modulePath,
+          key,
+          range,
+        }),
+      );
   },
   "call-site": (node, scope) => {
     if (rangeOf(node) !== null) scope.callSites.push(node);
@@ -428,6 +454,7 @@ const semanticFacts = (semantic, modules) => {
     childProcesses: [],
     timers: [],
     configReads: [],
+    envPropertyReads: [],
     stringLiterals: [],
     urlLiterals: [],
     bindingReads: [],

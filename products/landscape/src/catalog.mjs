@@ -199,6 +199,20 @@ export const isUpdateHost = (host) => UPDATE_HOSTS.has(host);
 /** True when a package checks for or installs a newer version. */
 export const isUpdatePackage = (name) => UPDATE_PACKAGES.has(name);
 
+// Where each storage kind REA reports keeps its data: Web Storage, IndexedDB
+// and the Cache API in a browser; "sqlite" (a Database object, as
+// better-sqlite3 creates) in a database file the process opens.
+const STORAGE_PLACES = new Map([
+  ["local-storage", "browser"],
+  ["session-storage", "browser"],
+  ["indexed-db", "browser"],
+  ["cache-storage", "browser"],
+  ["sqlite", "file"],
+]);
+
+/** "browser" or "file" for a storage kind REA reports, null for one Landscape does not know. */
+export const storagePlace = (kind) => STORAGE_PLACES.get(kind) ?? null;
+
 // Files named as tests (a .test. or .spec. part in the name, as in
 // loggers.test.js or loggers.test.circular.js), and directories whose names
 // say they hold only tests, mocks or test helpers. Some packages ship them,

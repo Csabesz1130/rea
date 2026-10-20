@@ -52,6 +52,7 @@ export const app = (overrides = {}) => ({
   childProcesses: [],
   timers: [],
   configReads: [],
+  envPropertyReads: [],
   stringLiterals: [],
   urlLiterals: [],
   bindingReads: [],
