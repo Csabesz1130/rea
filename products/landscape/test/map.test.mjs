@@ -221,3 +221,41 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
     assert.equal(cell(run.report, "data.remote", empty.label), "unknown");
   });
 });
+
+describe("map: only code that runs with the product", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("leaves out tests, mocks and test helpers a package ships, not code in a test directory", () => {
+    const shipped = products.write("runner-d", "1.0.0", {
+      "index.js": "export const run = () => 1;\n",
+      "index.test.js":
+        'export const probe = () => fetch("https://api.openai.com/v1/models");\n',
+      "loggers.test.circular.js":
+        'export const probe = () => fetch("https://api.anthropic.com/v1/models");\n',
+      "__mocks__/shell.js":
+        'import { exec } from "node:child_process";\nexport const run = (command) => exec(command);\n',
+      "test-utils/server.js":
+        'export const ping = () => fetch("https://test-server.example/ping");\n',
+    });
+    const other = products.write("runner-e", "1.0.0", {
+      "index.js":
+        'import { exec } from "node:child_process";\nexport const run = (command) => exec(command);\n',
+    });
+    // The code that runs a project's tests is the product's own.
+    const tester = products.write("runner-f", "1.0.0", {
+      "utils/test/run.js":
+        'import { spawn } from "node:child_process";\nexport const test = (scheme) => spawn("xcodebuild", ["test", "-scheme", scheme]);\n',
+    });
+    const run = landscape("map", [shipped, other, tester]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    for (const row of ["system.process", "system.shell"])
+      assert.equal(cell(run.report, row, "runner-d 1.0.0"), "no", row);
+    assert.equal(cell(run.report, "system.process", "runner-f 1.0.0"), "yes");
+    assert.deepEqual(
+      run.report.rows.map((row) => row.id),
+      ["system.process", "system.shell"],
+    );
+  });
+});

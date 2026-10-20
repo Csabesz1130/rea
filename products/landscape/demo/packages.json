@@ -76,6 +76,323 @@
           "integrity": "sha512-5dRoKkOo5BuU+2QMVKycKnJ1B+7dCnB101DUt1Vh5cqv7lLI1dp3e/oq8TFWe2+GI4yxd4bCOnMDkHDGoZxyzQ=="
         }
       ]
+    },
+    "index": {
+      "category": "Top 40 MCP servers on npm",
+      "selected": "2026-10-20",
+      "rule": "npm search for keywords mcp, mcp-server, modelcontextprotocol, model-context-protocol and the text \"mcp server\", ranked by weekly downloads; kept when the latest version ships a command (bin), depends on an MCP SDK (@modelcontextprotocol/sdk or /server, fastmcp, mcp-framework, mcp-handler), names MCP in its name or description and declares an open-source license (MIT, Apache-2.0, ISC, BSD, MPL-2.0, GPL-3.0, AGPL-3.0, Unlicense); the 40 most downloaded.",
+      "packages": [
+        {
+          "name": "@upstash/context7-mcp",
+          "version": "4.4.4",
+          "license": "MIT",
+          "integrity": "sha512-T2DkjhweDnC2mRAclDiTrPG3KI1zYKhhjgY2SMKD9PVrbEaGD8x35VsIOqpwwDc2qiKBvfYCF/jqr+jQMu5PUA==",
+          "weekly_downloads": 482795
+        },
+        {
+          "name": "rea-agents",
+          "version": "6.7.0",
+          "license": "MIT",
+          "integrity": "sha512-yhIx2ioJYYT1C/tONfYeitC6LhnKmCh+ZwRUOgYuhSc733lGhkkt73zhug9WmLgxoMdKuqIYGCoBfD4fXkOhFw==",
+          "weekly_downloads": 415576
+        },
+        {
+          "name": "@modelcontextprotocol/server-pdf",
+          "version": "2.0.3",
+          "license": "MIT",
+          "integrity": "sha512-Eh8zRvFXpFGIK72gdaGUPKpoqbvZn07ad/VP4j1C0gRPeVp/LurAlg8WaJov3XxMamVkhE1jQLnL2UG02TGJ6g==",
+          "weekly_downloads": 366312
+        },
+        {
+          "name": "mcporter",
+          "version": "0.15.0",
+          "license": "MIT",
+          "integrity": "sha512-ts6g/7uhOFzUlKrLyt9yoCAgWyR3ns4kdDA8NkSHzlapc5EzjCNseJkWHplmptQf5zmiSeFr/kSM02LOY7E65w==",
+          "weekly_downloads": 268175
+        },
+        {
+          "name": "@lovable.dev/mcp-js",
+          "version": "3.1.1",
+          "license": "MIT",
+          "integrity": "sha512-3N3LujmCcHUXr8UgqNKe7el28NDRUwwtUtZWytq+BlOWhC0N1REZnW4JS3NWq94KBHWQl6WAs3dPdTWBBIWtNw==",
+          "weekly_downloads": 231949
+        },
+        {
+          "name": "@wonderwhy-er/desktop-commander",
+          "version": "0.3.0",
+          "license": "MIT",
+          "integrity": "sha512-2EXNxuztSIW3fQw6OEGMek39M8yQlKinXooMYtNR4wRLhtA+f3b0cbxBggAfDeKemMWltm1qWQy/t2Av9VmYLw==",
+          "weekly_downloads": 159845
+        },
+        {
+          "name": "@pandacss/mcp",
+          "version": "2.3.0",
+          "license": "MIT",
+          "integrity": "sha512-RT2ajCatLO7oe1EV7ldjBph0B6nrAs577xI+r91g/inezWVDx1/8t3j6+pO7/h94u7BFhazxrlLQb6aWFym9fg==",
+          "weekly_downloads": 118072
+        },
+        {
+          "name": "@zereight/mcp-gitlab",
+          "version": "2.3.5",
+          "license": "MIT",
+          "integrity": "sha512-RZb9vImvBRuiZJRlnyGZoArCi7/RO+uhiGzdBu7NxUFR1YuYiBkCZWTZXyuCVCEnPsCx2hasu9TG2txkVvWDuw==",
+          "weekly_downloads": 103930
+        },
+        {
+          "name": "firecrawl-mcp",
+          "version": "3.33.4",
+          "license": "MIT",
+          "integrity": "sha512-A6FF9n5Tqwr014svYil+dp1tHJEYZl5bUVhdIF6aTMnM/zjNzyHq9iP2IJbh9aosgBmD+Ti86bGawPjGgslOSQ==",
+          "weekly_downloads": 102401
+        },
+        {
+          "name": "hostinger-api-mcp",
+          "version": "3.4.0",
+          "license": "MIT",
+          "integrity": "sha512-FOrp9eTgIBx0gR3JkQAHM+OxcWLpiVCX5s9cUembCtcTA7t98nMOR+fFAxQ/IB5BZNkD4PWTj+kIEElH2XOTJA==",
+          "weekly_downloads": 85188
+        },
+        {
+          "name": "@swmansion/argent",
+          "version": "0.29.0",
+          "license": "Apache-2.0",
+          "integrity": "sha512-XXWlWZJlHKqnAvNx3RDhuiVFQOPqh5EDB76+mFAyqC2mutC6irzw03+M/6S/WQ+Dzz2IYOkEfOzQnOOdhrGgJg==",
+          "weekly_downloads": 85112
+        },
+        {
+          "name": "@notionhq/notion-mcp-server",
+          "version": "2.5.2",
+          "license": "MIT",
+          "integrity": "sha512-5nPSwHMnugSGAhSJS5vVIlMao+iTJO9HoWGpCnT8lJNrPy3rZMqs1V/CPiN4MuxF+5EBgRE/f/Tirl6Wfi75Mg==",
+          "weekly_downloads": 82467
+        },
+        {
+          "name": "@tanstack/ai-mcp",
+          "version": "0.9.1",
+          "license": "MIT",
+          "integrity": "sha512-XJQKe53XB0gyKKnBUCgws3KzqnEmWHGbdradfB1ljGYZL66I0OjtgWlmS/PrQmcufpjhuINKmYx2uF+drbo/iA==",
+          "weekly_downloads": 69961
+        },
+        {
+          "name": "next-devtools-mcp",
+          "version": "0.4.0",
+          "license": "MIT",
+          "integrity": "sha512-PTIoi+TihyztSTPkl+YIesL81wU3pRDo6QCg1wgjvLGfBlXv3yamvQyoI8j/I2t7gqDStXoa7jtn/YUdvcBQuw==",
+          "weekly_downloads": 67187
+        },
+        {
+          "name": "@azure-devops/mcp",
+          "version": "2.10.0",
+          "license": "MIT",
+          "integrity": "sha512-Wwd3kszlm+ag43X1fs7+kOt7ACLXF+hymNYQA8hzvbIFtrKsKmhrU6gnU1rsOqQEnueFR1rQLGNvjB3uA3AngA==",
+          "weekly_downloads": 66075
+        },
+        {
+          "name": "supergateway",
+          "version": "4.2.0",
+          "license": "MIT",
+          "integrity": "sha512-Tyl7LpOZd7Reeb+BBilVUxZ9mQfKbkIFwJtwavnV5/kAzwcsmamrnuB+c3VSJ8VTtxKSY+mENqrp23XRMhOIDg==",
+          "weekly_downloads": 64128
+        },
+        {
+          "name": "figma-developer-mcp",
+          "version": "0.13.2",
+          "license": "MIT",
+          "integrity": "sha512-7Flx0S/3gI7dIm+9G6BCogwne0o9LdYaCxtDLappiZZUZgqoNiXws/T1kn2R2tqr1iRzFPStqlwf+bPrcscQ0Q==",
+          "weekly_downloads": 55637
+        },
+        {
+          "name": "@hostinger/mcp",
+          "version": "3.4.0",
+          "license": "MIT",
+          "integrity": "sha512-jWxJH5ZnKkZwxgGWudw9QLRS54P0tBF+pEvRN9B1KD9SjmfiWrAPZ9Fe5i6Yh+rmG46cQDVXNhzsIeFsroGGyQ==",
+          "weekly_downloads": 49939
+        },
+        {
+          "name": "@ui5/mcp-server",
+          "version": "0.3.2",
+          "license": "Apache-2.0",
+          "integrity": "sha512-kQXn5X2vpzAjWpHr4R61EqEvWU0GtoTmL5aAjK0IzBKIVdFNXluoz6bKMJAHCqMXS+6vwdhYtVxNOYX/Vb7Zog==",
+          "weekly_downloads": 48054
+        },
+        {
+          "name": "@currents/mcp",
+          "version": "2.7.0",
+          "license": "Apache-2.0",
+          "integrity": "sha512-eApILiEkr3QaLs/XPddk/8UTAZiAa5eyLsJ0rKVoVygnpyQUZVwtHxxL87kuoG5uhn9HITF7NIxvZNGs/OsnlQ==",
+          "weekly_downloads": 44780
+        },
+        {
+          "name": "scryfall-mcp-server",
+          "version": "0.1.1",
+          "license": "MIT",
+          "integrity": "sha512-nnDI1UIv53pM8SL/j7MGn1Om04hODMEmzUISk5OUDvBcOsuZvlBBWzSJNoplJO0/0BeU0LrbszhGbAlDY1s5Sw==",
+          "weekly_downloads": 41705
+        },
+        {
+          "name": "xcodebuildmcp",
+          "version": "2.7.0",
+          "license": "MIT",
+          "integrity": "sha512-z/QISX3BBg5PluvkOlgSEpWQGOnDQ90jmEHyEFLYiqprSUC6x4b9WRN7DyRmp1OXqhLqv5+omy0LBZi8HzaBJQ==",
+          "weekly_downloads": 41265
+        },
+        {
+          "name": "@softeria/ms-365-mcp-server",
+          "version": "0.170.2",
+          "license": "MIT",
+          "integrity": "sha512-TuGDN7LlQDn5EPUSR3QX2QPF5sTiMi2F0DhrQQyvWgi3MssGrAEHSndjOUk6XJZAtHLfzN6g5aPI/MncoyH7qw==",
+          "weekly_downloads": 34286
+        },
+        {
+          "name": "@cap-js/mcp-server",
+          "version": "0.0.8",
+          "license": "Apache-2.0",
+          "integrity": "sha512-XXU4ndXj0f71i+FW5LKii1OUtqrR48MbE7iqJUxUg+/L78Oy0nOOjBmkBMZ2avn+BkeupFJmQDrYsVMmGC+9vg==",
+          "weekly_downloads": 33429
+        },
+        {
+          "name": "@google-cloud/gcloud-mcp",
+          "version": "0.5.3",
+          "license": "Apache-2.0",
+          "integrity": "sha512-kfTcqDklnOPEvM5bfqaNLmoFVLSmHHmtH7ZuVAOt+BFNCD+QsOtg2koIolAhZA6RpZbeuzbxW0lgy0y+rR3Jwg==",
+          "weekly_downloads": 33206
+        },
+        {
+          "name": "kordoc",
+          "version": "4.22.17",
+          "license": "MIT",
+          "integrity": "sha512-WPQSSxZV50bwFNeZlg7fpBlx4Na/2pv5S9LCUXF6gz8rGbFPZ2tm29zjybpeXAXY4AwDagOf1jhc20jae6Eh5w==",
+          "weekly_downloads": 33040
+        },
+        {
+          "name": "n8n-mcp",
+          "version": "2.94.3",
+          "license": "MIT",
+          "integrity": "sha512-VrCwq+MDTWk2Uq1iiZ9WU2lj+voPvUzOkvdTWom6iucLFTHJWKuYD9wYS8G0x7t23XM6EYV26VNTLQpuSIvB0Q==",
+          "weekly_downloads": 32861
+        },
+        {
+          "name": "@elgato/mcp-server",
+          "version": "0.1.8",
+          "license": "MIT",
+          "integrity": "sha512-DjWIDbaNNe/JypRY0UgsXIJ6hFTcnKSxebcBXonefXILXIOsg/EQxdRepQajImqvzw+DC+kJ70OleOOfDpD70g==",
+          "weekly_downloads": 32701
+        },
+        {
+          "name": "@google-cloud/observability-mcp",
+          "version": "0.2.3",
+          "license": "Apache-2.0",
+          "integrity": "sha512-Pn7JNA2PF168jUp196Jj9xwSdTtfcIu43Cqeaxh2O4oLMBAcjjK45K6zWvimWBOMuifJaUvtoSt+cLnZIdYpgw==",
+          "weekly_downloads": 32374
+        },
+        {
+          "name": "creem",
+          "version": "1.13.0",
+          "license": "MIT",
+          "integrity": "sha512-sme5XEtOoh/7iTIezhNL8ZHFiFwk8WPI2d68OEu4Y6xHpzcyNEpc4FN9mIF8jVT2+vEyMWi/fDlQyhach4AgPg==",
+          "weekly_downloads": 31116
+        },
+        {
+          "name": "mcp-evals",
+          "version": "2.0.1",
+          "license": "MIT",
+          "integrity": "sha512-2RZQ8oYqzClUHRp4AX6856KquX0Bn9/h3gGRqLROmUOdAeZOHxtqV6fuVmuc3Ilu6uYiJcJ5Wu0R3X40v8MvKw==",
+          "weekly_downloads": 31041
+        },
+        {
+          "name": "@shopify/dev-mcp",
+          "version": "1.17.0",
+          "license": "ISC",
+          "integrity": "sha512-DpjtJAbIyFFhesWpFFj6fGEIzMLKvz+sHuqes0eJPF42qsIXTkfFimVyOPvi6AsS+pjiy5+yO/GjFnXgZQAX3g==",
+          "weekly_downloads": 30572
+        },
+        {
+          "name": "mcp-hello-world",
+          "version": "1.1.2",
+          "license": "MIT",
+          "integrity": "sha512-g38YEyrda27qouiryVN3/fKOetGsaacXI58hIVLQlsJmp+L/T9vCG89eJiuxQZAqRlZ7amBjPgdgKmcZK7kY+w==",
+          "weekly_downloads": 30103
+        },
+        {
+          "name": "@letoribo/mcp-graphql-enhanced",
+          "version": "4.15.4",
+          "license": "MIT",
+          "integrity": "sha512-b/cPLSMuPO+VffGX1X5t2mnztfW+L/+VsCn+KGeT8gqvAvUF16Lg7nIlvtKm6U8YGBAWIqG89UPg7kv/NW7bhQ==",
+          "weekly_downloads": 29535
+        },
+        {
+          "name": "@launchdarkly/mcp-server",
+          "version": "0.7.0",
+          "license": "MIT",
+          "integrity": "sha512-Wz1DCdb9PzD5Ra5cOZS+T/2UXdkKyitc2CSM5tdrbOqqvK8PQoiXWjOW/og2FlBMJ0O17ySZR5dZ/wQ3KTN4Gg==",
+          "weekly_downloads": 27462
+        },
+        {
+          "name": "@next-ai-drawio/mcp-server",
+          "version": "0.4.6",
+          "license": "Apache-2.0",
+          "integrity": "sha512-IkkpdQJt1VC8Rla4P6SMWqyPEux8jCPu4BZQx0gyMTDEPxudEE9aM5dl0YRAdWOAdcKlQfXm7cJuqtVENgj1iQ==",
+          "weekly_downloads": 27370
+        },
+        {
+          "name": "@drawio/mcp",
+          "version": "1.10.0",
+          "license": "Apache-2.0",
+          "integrity": "sha512-WvMLOe/ELqJ58K3Rrv4Vp6NXfliOGXPDsMgcXN6d7qDqg0vmCTL306s4wnDQcM3I4n48Pl0B97eO0Dx+q/XzIQ==",
+          "weekly_downloads": 24628
+        },
+        {
+          "name": "@netlify/mcp",
+          "version": "1.19.0",
+          "license": "ISC",
+          "integrity": "sha512-+7yqq1QCozmtsPQs29I8k5XBGnyDw5ffF7VOpeWcyZ0s26oYTYNAOLLCNADTA/uDpT+FBHkQzUOQYwhCQu6lNw==",
+          "weekly_downloads": 24307
+        },
+        {
+          "name": "@hasna/todos",
+          "version": "0.17.4",
+          "license": "Apache-2.0",
+          "integrity": "sha512-ijc+HQQJD1rsDVm/hgY/KNainDpQ129No/pdkOAU/NQVt6ln8Eroz1D+WH1b0ryWhcVC+gzaDy+wKNkPR3VWig==",
+          "weekly_downloads": 23059
+        },
+        {
+          "name": "@google-cloud/storage-mcp",
+          "version": "0.6.0",
+          "license": "Apache-2.0",
+          "integrity": "sha512-txBCDxbMR4lXPoU3NJBh3fDA33OKdoGDg8PdDcEVxH+jOIYIwxELVD9Tdpf1W88REcELz4EZ+ewvdcLSaaCuIQ==",
+          "weekly_downloads": 22796
+        }
+      ]
+    },
+    "gemini": {
+      "category": "Gemini CLI core",
+      "root": "dist/src",
+      "packages": [
+        {
+          "name": "@google/gemini-cli-core",
+          "version": "0.1.2",
+          "license": "Apache-2.0",
+          "integrity": "sha512-5fF9BSnTa9L02MTauOWmSCbpk0oCA/1qsxKn5rtcfa2w9nvUaa5T3V5Pf1zu01bkaIom2ZGqaAshp9cYea3UTQ=="
+        },
+        {
+          "name": "@google/gemini-cli-core",
+          "version": "0.10.0",
+          "license": "Apache-2.0",
+          "integrity": "sha512-z0/hIuVWSPy7C+88KwTbC2ejo208mlbb7UzZHzBqIvUpeU0p2JWgC24qFmpmtnuIIQMIbFs55Hqvmh6U3CYtEg=="
+        },
+        {
+          "name": "@google/gemini-cli-core",
+          "version": "0.28.2",
+          "license": "Apache-2.0",
+          "integrity": "sha512-GiGVYxQQjATKVXrr8mMKWgvdiz9np5iFihitFdkDJDM1H8ltSZ5PYHXFSPjrVhvmfdHaxyQ+6fBvTp7c6zH/6g=="
+        },
+        {
+          "name": "@google/gemini-cli-core",
+          "version": "0.64.0",
+          "license": "Apache-2.0",
+          "integrity": "sha512-weixSZKBqgJwAuqJwTSiLLABTMenjxAxj1EzysBtWgQHytd/e4ORc+NSKgVG3ljxAHdEEJbPONEQ8qTwzz5EcQ=="
+        }
+      ]
     }
   }
 }

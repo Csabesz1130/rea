@@ -35,6 +35,13 @@ const TELEMETRY_HOSTS = [
   { suffix: "heap.io", service: "Heap", kind: "analytics" },
   { suffix: "heapanalytics.com", service: "Heap", kind: "analytics" },
   { suffix: "statsig.com", service: "Statsig", kind: "analytics" },
+  // Google's Clearcut logging (play.googleapis.com/log), as Gemini CLI's
+  // clearcut-logger sends usage statistics.
+  {
+    suffix: "play.googleapis.com",
+    service: "Google Clearcut",
+    kind: "usage statistics",
+  },
   { suffix: "sentry.io", service: "Sentry", kind: "error reports" },
   { suffix: "bugsnag.com", service: "Bugsnag", kind: "error reports" },
   { suffix: "rollbar.com", service: "Rollbar", kind: "error reports" },
@@ -191,3 +198,16 @@ export const isUpdateHost = (host) => UPDATE_HOSTS.has(host);
 
 /** True when a package checks for or installs a newer version. */
 export const isUpdatePackage = (name) => UPDATE_PACKAGES.has(name);
+
+// Files named as tests (a .test. or .spec. part in the name, as in
+// loggers.test.js or loggers.test.circular.js), and directories whose names
+// say they hold only tests, mocks or test helpers. Some packages ship them,
+// but they run only under a test runner. A plain test/ or mocks/ directory
+// is not enough: products keep running code in them, such as the code that
+// runs a project's tests (xcodebuildmcp's utils/test/) or serves mocks.
+const TEST_FILE = /\.(test|spec)\.([^/]*\.)?[cm]?[jt]sx?$/;
+const TEST_DIRECTORY = /(^|\/)(__tests__|__mocks__|__fixtures__|test-utils)\//;
+
+/** True for a module path named as a test, a mock or a test helper. */
+export const isTestPath = (modulePath) =>
+  TEST_FILE.test(modulePath) || TEST_DIRECTORY.test(modulePath);

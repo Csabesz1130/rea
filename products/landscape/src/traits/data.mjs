@@ -13,7 +13,7 @@ import { factLine, readingLine } from "../evidence.mjs";
 import { LOCAL, displayUrl, packageNameOf } from "../release-watch.mjs";
 import { TRAITS } from "./definitions.mjs";
 import { hostLines, isSure, strengthOf } from "./destinations.mjs";
-import { clientReason, runtimeImports } from "./imports.mjs";
+import { clientReason, runtimeImports } from "./runtime.mjs";
 
 const catalogLine = (part, text) =>
   readingLine(part.name, `${text} (Landscape's catalog)`);

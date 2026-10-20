@@ -53,14 +53,17 @@ product. Landscape is built around that difference:
 
 You need what Release Watch needs: Node.js 22.19 or later on the 22 line,
 24.11 or later, or 26 and later, with npm and git; Landscape is verified on
-Linux x64. The `mcp` and `history` demos download public packages with npm
-and unpack them with `tar`.
+Linux x64. Every demo but `fixtures` downloads public packages with npm,
+checks each tarball against the sha512 integrity pinned in
+`demo/packages.json`, and unpacks it with `tar`; nothing downloaded is run.
 
 ```bash
 npm ci && npm run build:cached                       # build REA (repository root)
 bash products/landscape/demo/run-demo.sh fixtures    # offline, a few seconds
 bash products/landscape/demo/run-demo.sh mcp         # five real terminal MCP servers
 bash products/landscape/demo/run-demo.sh history     # six releases of ai-renamer
+bash products/landscape/demo/run-demo.sh index       # the 40 most-downloaded MCP servers
+bash products/landscape/demo/run-demo.sh gemini      # Gemini CLI core, launch to 0.64.0
 cd products/landscape
 node bin/landscape.mjs map A B C --ours MINE --category "AI note apps" --out map
 node bin/landscape.mjs history V1 V2 V3 --category "Product X" --out trajectory
@@ -71,7 +74,25 @@ JavaScript app or npm package directory, a built web app, an `.asar` file, a
 HAR capture, or a directory with a `release-watch.json` manifest naming
 several components. `--ours` adds your own product beside the others without
 counting it, and reports where it stands. `history` takes releases of one
-product, oldest first.
+product, oldest first. A map of more than eight products lists products as
+rows and traits as columns.
+
+### Large products
+
+REA's node limits apply to one analysis, so a package of hundreds of source
+files is examined only in part when it is read whole. `demo/split.mjs` lays
+such a package out as one component per source directory, listed in a
+`release-watch.json` manifest, and Landscape reads the components as one
+product:
+
+```bash
+node demo/split.mjs path/to/package --root dist/src --out split
+node bin/landscape.mjs history split-v1 split-v2 --category "Product X"
+```
+
+Each directory is then examined in full, but imports between directories are
+not followed, so a trait that needs a path across them (an MCP tool that
+reaches process execution through another directory's helper) may not show.
 
 ## Who it is for
 
@@ -106,6 +127,15 @@ Each cell is one of:
   does not model (an HTTP client such as axios, a process library such as
   execa or node-pty) may do it unseen. Unknown cells are never counted as
   absent, and the reason is in the Evidence section.
+
+Only code that runs with the product counts. TypeScript declaration files
+and files named as tests (`*.test.js`, `*.spec.js`, `*.test.circular.js`,
+and files under `__tests__/`, `__mocks__/`, `__fixtures__/` or
+`test-utils/`) ship in some packages, but Landscape reads no trait from
+them; a test that names `https://test-server.example` is not a host the
+product contacts. A plain `test/` or `mocks/` directory still counts,
+because products keep running code there: xcodebuildmcp's `utils/test/`
+holds the code its tools use to run a project's tests.
 
 The building blocks (AI and MCP SDKs, and packages more than one product
 imports) are listed separately.

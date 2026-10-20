@@ -20,6 +20,13 @@ const AI_PROVIDERS = [
     pattern: /^([a-z0-9-]+-)?aiplatform\.googleapis\.com$/,
     provider: "Google Vertex AI",
   },
+  // Vertex AI's regional endpoints (aiplatform.us.rep.googleapis.com).
+  {
+    pattern: /^aiplatform\.[a-z0-9-]+\.rep\.googleapis\.com$/,
+    provider: "Google Vertex AI",
+  },
+  // The Code Assist API Gemini CLI calls models through for Google accounts.
+  { host: "cloudcode-pa.googleapis.com", provider: "Gemini Code Assist" },
   { suffix: ".openai.azure.com", provider: "Azure OpenAI" },
   {
     pattern: /^bedrock-runtime(-fips)?\.[a-z0-9-]+\.amazonaws\.com$/,

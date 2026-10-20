@@ -18,7 +18,13 @@ import {
 } from "../release-watch.mjs";
 import { TRAITS, isProviderTrait, providerTrait } from "./definitions.mjs";
 import { hostLines, strengthOf } from "./destinations.mjs";
-import { clientReason, isRuntimeImport, runtimeImports } from "./imports.mjs";
+import {
+  clientReason,
+  inProduct,
+  isRuntimeImport,
+  productFacts,
+  runtimeImports,
+} from "./runtime.mjs";
 
 const providerHosts = (part, set) => {
   for (const [host, sources] of part.destinations) {
@@ -64,7 +70,7 @@ const providerSdks = (part, set) => {
 // Provider and local model URLs the code holds that no destination ties to
 // a request: the code names them, which only suggests a call.
 const namedUrls = (part, set) => {
-  for (const literal of part.app.urlLiterals) {
+  for (const literal of productFacts(part.app.urlLiterals)) {
     const url = literal.data.url;
     const host = hostOf(url);
     const provider = aiProviderOf(host);
@@ -114,7 +120,7 @@ const localPackages = (part, set) => {
 };
 
 const environmentKeys = (part, set) => {
-  for (const read of part.app.configReads)
+  for (const read of productFacts(part.app.configReads))
     if (
       read.data.source_kind === "environment" &&
       isAiEnvironmentKey(read.data.key)
@@ -141,9 +147,11 @@ const browserCalls = (part, set) => {
         values: [provider],
       });
   }
-  for (const [name, use] of browserSdkUses(part.app))
+  for (const [name, use] of browserSdkUses(part.app)) {
+    const facts = productFacts(use.facts);
+    if (facts.length === 0) continue;
     set.add(TRAITS.browserModel, {
-      evidence: use.facts.map((fact) =>
+      evidence: facts.map((fact) =>
         factLine(
           part.name,
           `browser code ${fact.data.module} imports ${name}, which calls ${use.sdk.provider}'s API itself`,
@@ -152,6 +160,7 @@ const browserCalls = (part, set) => {
       ),
       values: [use.sdk.provider],
     });
+  }
 };
 
 // Credentials are cited by kind and place only; their values never leave
@@ -163,6 +172,8 @@ const shippedKeys = (part, set) => {
     const carrier = part.app.stringLiterals.find((literal) =>
       literal.data.value.includes(token),
     );
+    // A key only a test holds does not ship to the product's users.
+    if (carrier && !inProduct(carrier)) continue;
     set.add(TRAITS.shippedKey, {
       evidence: [
         carrier

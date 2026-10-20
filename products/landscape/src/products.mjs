@@ -10,11 +10,12 @@ import {
   discoverRelease,
   examinedInPart,
 } from "./release-watch.mjs";
+import { productReader } from "./traits/index.mjs";
 
 // A product is named by its manifest's product and version, else its first
 // component's package name and version, else its path's base name.
 const labelOf = (input, release, components) => {
-  const found = components.map(({ side }) => side.app?.package).find(Boolean);
+  const found = components.map(({ pkg }) => pkg).find(Boolean);
   const name =
     release?.product ?? found?.name ?? path.basename(path.resolve(input));
   const version = release?.version ?? found?.version ?? null;
@@ -23,7 +24,7 @@ const labelOf = (input, release, components) => {
 
 // How much of one component REA examined. A capture alone is runtime
 // traffic, not code.
-const componentCoverage = ({ name, side }) => {
+const componentCoverage = (name, side) => {
   const { app } = side;
   if (!app)
     return {
@@ -60,7 +61,7 @@ const componentCoverage = ({ name, side }) => {
  * did not look is unknown, not absent.
  */
 export const productCoverage = (components) => {
-  const parts = components.map(componentCoverage);
+  const parts = components.map(({ coverage }) => coverage);
   const status =
     parts.length > 0 && parts.every((part) => part.status === "complete")
       ? "complete"
@@ -84,9 +85,27 @@ const discover = (input, errors) => {
   }
 };
 
+// What a map keeps of one collected component once its traits are read:
+// coverage, the package it names and where its Evidence is, not its facts.
+const componentRecord = (name, kind, side) => ({
+  name,
+  kind,
+  coverage: componentCoverage(name, side),
+  pkg: side.app?.package ?? null,
+  evidence_file: side.appEvidence,
+  evidence_id: side.app?.evidence_id ?? null,
+  capture_file: side.capture?.file ?? null,
+});
+
+/**
+ * Collect one product, reading each component's traits as soon as REA's
+ * facts for it are projected, so a product of many components and a map
+ * of many products hold one component's facts at a time per job.
+ */
 const collectProduct = async ({ rea, request, id, outDir, analysis }) => {
   const errors = [];
   const release = discover(request.input, errors);
+  const reader = productReader();
   const components = [];
   for (const component of release?.components ?? []) {
     const side = await collectSide({
@@ -99,13 +118,13 @@ const collectProduct = async ({ rea, request, id, outDir, analysis }) => {
       errors,
       analysis,
     });
-    components.push({
-      name: component.name,
-      kind: component.target.kind,
-      side,
-    });
+    reader.read({ name: component.name, side });
+    components.push(
+      componentRecord(component.name, component.target.kind, side),
+    );
   }
   return {
+    ...reader.finish(),
     id,
     role: request.role,
     input: request.input,

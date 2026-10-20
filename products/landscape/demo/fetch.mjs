@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // fetch.mjs <set> --work <dir>: download one set of demo packages from npm
 // (packages.json), check each tarball against its pinned sha512 integrity,
-// and unpack it into its own directory under <dir>/packages. Prints one
-// unpacked package directory per line. npm fetches the tarball and runs none
+// and unpack it into its own directory under <dir>/packages, named for the
+// package and version so that a report names a product REA could not read.
+// Prints one unpacked package directory per line. npm fetches the tarball and runs none
 // of the package's scripts; nothing it downloads is executed.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -13,6 +14,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,8 +54,7 @@ const directoryName = ({ name, version }) =>
 
 const fetchPackage = (pkg, root) => {
   const target = path.join(root, directoryName(pkg));
-  if (existsSync(path.join(target, "package", "package.json")))
-    return path.join(target, "package");
+  if (existsSync(path.join(target, "package.json"))) return target;
   const download = path.join(root, `${directoryName(pkg)}.download`);
   rmSync(download, { recursive: true, force: true });
   mkdirSync(download, { recursive: true });
@@ -81,10 +82,20 @@ const fetchPackage = (pkg, root) => {
   const unpacked = path.join(download, "unpacked");
   mkdirSync(unpacked);
   run("tar", ["-xzf", file, "-C", unpacked], download);
+  // An npm tarball holds one top-level directory, usually package/.
+  const [top, ...others] = readdirSync(unpacked);
+  if (
+    top === undefined ||
+    others.length > 0 ||
+    !statSync(path.join(unpacked, top)).isDirectory()
+  )
+    throw new Error(
+      `${pkg.name}@${pkg.version}: the tarball does not hold one top-level directory`,
+    );
   rmSync(target, { recursive: true, force: true });
-  renameSync(unpacked, target);
+  renameSync(path.join(unpacked, top), target);
   rmSync(download, { recursive: true, force: true });
-  return path.join(target, "package");
+  return target;
 };
 
 const root = path.join(path.resolve(values.work), "packages");

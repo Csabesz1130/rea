@@ -13,7 +13,6 @@ import {
   localText,
   scrubDeep,
 } from "./release-watch.mjs";
-import { productStack, productTraits } from "./traits/index.mjs";
 
 const MAX_FILES = 20;
 
@@ -45,13 +44,15 @@ const productRecord = (product) => ({
   version: product.version,
   input: localPath(product.input),
   coverage: localText(coverageRecord(product.coverage)),
-  components: product.components.map(({ name, kind, side }) => ({
-    name,
-    kind,
-    evidence_file: localPath(side.appEvidence),
-    evidence_id: side.app?.evidence_id ?? null,
-    capture_file: localPath(side.capture?.file ?? null),
-  })),
+  components: product.components.map(
+    ({ name, kind, evidence_file, evidence_id, capture_file }) => ({
+      name,
+      kind,
+      evidence_file: localPath(evidence_file),
+      evidence_id,
+      capture_file: localPath(capture_file),
+    }),
+  ),
   stack: product.stack,
 });
 
@@ -111,16 +112,12 @@ const stackRecord = (compared) => {
 };
 
 /**
- * The report model. `products` are collected products (products.mjs) with
- * roles "competitor" and at most one "ours" for a map, "release" for a
- * history; `run` holds `{ mode, category, settings, reaCalls, startedAt,
+ * The report model. `products` are collected products (products.mjs), with
+ * their traits and building blocks read, in roles "competitor" and at most
+ * one "ours" for a map, "release" for a history; `run` holds `{ mode, category, settings, reaCalls, startedAt,
  * elapsedMs }`.
  */
-export const buildModel = (collected, run) => {
-  const products = collected.map((product) => {
-    const withTraits = { ...product, traits: productTraits(product) };
-    return { ...withTraits, stack: productStack(withTraits) };
-  });
+export const buildModel = (products, run) => {
   const compared = products.filter((product) => product.role !== "ours");
   const ours = products.find((product) => product.role === "ours") ?? null;
   const rows = mapRows(products, compared);

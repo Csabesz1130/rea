@@ -14,7 +14,12 @@ import {
   toolRegistrations,
 } from "../release-watch.mjs";
 import { TRAITS } from "./definitions.mjs";
-import { isRuntimeImport, runtimeImports } from "./imports.mjs";
+import {
+  inProduct,
+  isRuntimeImport,
+  productFacts,
+  runtimeImports,
+} from "./runtime.mjs";
 
 const MAX_LINES = 6;
 
@@ -71,7 +76,9 @@ const clients = (part, set) => {
 };
 
 const toolProcesses = (part, set) => {
-  const connections = toolConnections(part.app);
+  const connections = toolConnections(part.app).filter(({ call }) =>
+    inProduct(call),
+  );
   if (connections.length === 0) return;
   const settled = connections.filter((connection) => !connection.path?.guess);
   const cited = (settled.length > 0 ? settled : connections).slice(
@@ -108,7 +115,7 @@ const toolUnknowns = (part, set) => {
       TRAITS.toolProcess,
       `it imports ${libraries.join(", ")}, which ${libraries.length === 1 ? "starts" : "start"} processes REA does not model`,
     );
-  if (part.app.processUnknowns.length > 0)
+  if (productFacts(part.app.processUnknowns).length > 0)
     set.unknownBecause(
       TRAITS.toolProcess,
       "it uses child_process in ways REA did not classify as process calls",

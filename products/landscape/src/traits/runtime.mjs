@@ -1,21 +1,41 @@
-// The imports a component's running code makes: REA's import facts outside
-// TypeScript declaration files, which hold types and run nothing. Every
-// trait that rests on an import reads them here.
+// What runs when a product runs: REA's facts outside TypeScript declaration
+// files, which hold types, and outside files named as tests, which some
+// packages ship but only a test runner runs (Landscape's catalog). Every
+// trait reads its facts through these tests.
+import { isTestPath } from "../catalog.mjs";
 import {
   clientImports,
   isDeclarationPath,
   packageNameOf,
+  sourceModule,
 } from "../release-watch.mjs";
+
+/** True for a module whose code runs with the product; a fact with no module is kept. */
+export const runsWithProduct = (modulePath) =>
+  typeof modulePath !== "string" ||
+  (!isDeclarationPath(modulePath) && !isTestPath(modulePath));
+
+/** True for a fact REA reports in code that runs with the product. */
+export const inProduct = (fact) =>
+  runsWithProduct(fact?.data?.module ?? fact?.location?.file ?? null);
+
+/** The facts of a list REA reports in code that runs with the product. */
+export const productFacts = (facts) => facts.filter(inProduct);
+
+/** A destination's sources in code that runs with the product; a capture or a build setting always counts. */
+export const productSources = (sources) =>
+  sources.filter(
+    (source) =>
+      source.kind === "capture" ||
+      source.kind === "build-setting" ||
+      runsWithProduct(sourceModule(source)),
+  );
 
 const runtime = new WeakMap();
 
 /** The import facts of one app's running code. */
 export const runtimeImports = (app) => {
-  if (!runtime.has(app))
-    runtime.set(
-      app,
-      app.imports.filter((fact) => !isDeclarationPath(fact.data.module)),
-    );
+  if (!runtime.has(app)) runtime.set(app, productFacts(app.imports));
   return runtime.get(app);
 };
 

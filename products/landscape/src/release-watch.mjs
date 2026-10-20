@@ -29,6 +29,7 @@ export {
   contactSchemes,
   destinationsOf,
   isGuessSource,
+  sourceModule,
 } from "../../release-watch/src/rules/destinations.mjs";
 export { packagesOf } from "../../release-watch/src/rules/dependencies.mjs";
 export { shippedTokens } from "../../release-watch/src/rules/ai.mjs";

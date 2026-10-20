@@ -10,7 +10,7 @@ import {
   packageNameOf,
 } from "../release-watch.mjs";
 import { TRAITS } from "./definitions.mjs";
-import { runtimeImports } from "./imports.mjs";
+import { productFacts, runtimeImports } from "./runtime.mjs";
 
 // child_process functions that always run their command in a shell
 // (Node.js documentation); spawn() and execFile() do only when their
@@ -21,7 +21,7 @@ const siteClaim = (site) =>
   `${site.data.method}() child-process creation${site.data.command === null ? " with a command REA did not resolve" : ` running ${commandText(site.data.command)}`}`;
 
 const sites = (part, set) => {
-  const found = part.app.childProcesses;
+  const found = productFacts(part.app.childProcesses);
   if (found.length === 0) return;
   set.add(TRAITS.process, {
     evidence: found.map((site) => factLine(part.name, siteClaim(site), site)),
@@ -80,7 +80,7 @@ const libraries = (part, set) => {
 };
 
 const unclassified = (part, set) => {
-  const uses = part.app.processUnknowns;
+  const uses = productFacts(part.app.processUnknowns);
   if (uses.length === 0) return;
   set.add(TRAITS.process, {
     strength: "likely",
@@ -100,7 +100,7 @@ const unclassified = (part, set) => {
 };
 
 const runtimeCode = (part, set) => {
-  for (const fact of part.app.dynamicEvaluation)
+  for (const fact of productFacts(part.app.dynamicEvaluation))
     set.add(TRAITS.runtimeCode, {
       evidence: [
         factLine(
