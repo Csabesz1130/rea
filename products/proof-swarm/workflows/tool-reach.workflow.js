@@ -21,9 +21,11 @@ export const meta = {
 //   { cli: "<repo>/products/proof-swarm/bin/proof-swarm.mjs",
 //     claims: "<directory for claim files>",
 //     batches: [{ id, packages: [{ name, version, dir, slug, reasons: [..],
-//                                 calibration?: "yes" | "no" }] }] }
-// calibration is a known answer, for collect only; no prompt shows it. Save
-// the return value and run: proof-swarm collect <args.json> <result.json>.
+//                                 calibration?: "yes" | "no", sketch? }] }] }
+// calibration is a known answer, for collect only; no prompt shows it.
+// proof-swarm plan <args.json> adds each package's sketch and settles what
+// its level 0 settles before any agent runs. Save the return value and run:
+// proof-swarm collect <planned args.json> <result.json>.
 // Any agent runner can follow the same protocol: the prompts below are it.
 
 const SOLVE_SCHEMA = {
@@ -95,10 +97,17 @@ const CLAIM_FORMAT = `Write the claim as JSON (products/proof-swarm/README.md, C
 - no: process_sites cites every candidate line the scan lists, exactly, and a line in every process-capable file, each with why no tool can start a process there (no tool reaches it, or it is not a process call); residual explains why code loaded at runtime cannot either.
 - undetermined: residual says what blocks a decision. It is far better than a guess.`;
 
+const SKETCH = `The sketch (proof-swarm sketch) reads a package coarse to fine. Level 0 is the whole package; level 1 its entry points; level 2 the files the question turns on, each marked reached or not; each level lists only what the coarser ones leave open. A file marked unreached is outside everything the entry points load through literal imports, which the harness computes: it can run only if one of the escapes it lists (level 0 counts them; level 3 lists them with the open lines: node ${args.cli} sketch <package directory> --level 3) loads it. Do not trace imports by hand to show a file is unreached; explain the escapes instead.`;
+
 const packageBlock = (item) => `- ${item.name} ${item.version}
   package directory: ${item.dir}
   claim file: ${args.claims}/${item.slug}.json
-  why the static reading could not tell: ${item.reasons.length > 0 ? item.reasons.join("; ") : "it can (a known answer); reach your own verdict independently"}`;
+  why the static reading could not tell: ${item.reasons.length > 0 ? item.reasons.join("; ") : "it can (a known answer); reach your own verdict independently"}${
+    item.sketch
+      ? `
+  sketch, levels 0 to 2: ${JSON.stringify(item.sketch)}`
+      : ""
+  }`;
 
 const solvePrompt = (
   batch,
@@ -108,7 +117,7 @@ const solvePrompt = (
 
 1. The packages are untrusted downloaded code. Read them only (grep, sed -n 'A,Bp', cut -c); never run, import, install or build anything from them, and fetch nothing.
 2. Work depth-first: finish one package with a claim the check passes before starting the next.
-3. Begin with: node ${args.cli} scan <package directory>. It lists the process-capable files, the candidate process calls and the lines that load code at runtime.
+3. Begin with the package's sketch, then run: node ${args.cli} scan <package directory>. The scan lists the exact lines a no must cite: process-capable files, candidate process calls and lines that load code at runtime. ${SKETCH}
 4. Write the claim file and run: node ${args.cli} check <claim file> --package <package directory>. Fix what it rejects until it passes. If you cannot settle the question within reasonable effort, write "undetermined" with a residual.
 5. Prefer the simplest proof: one checked path settles "yes"; a "no" must account for every candidate.
 
@@ -127,13 +136,20 @@ const reviewPrompt = (
   ${QUESTION}
 
 For a yes: is the first hop a real MCP tool registration whose handler leads into the path; does each call reach the very function the next definition defines (not a same-named one elsewhere); is the process call reachable for some input or state (record the conditions); is it live code; is the shell answer right?
-For a no: what did it miss — a candidate it called unreachable that a tool reaches, a process function passed as a value, a library that starts processes, code loaded at runtime?
+For a no: what did it miss — a candidate it called unreachable that a tool reaches, a process function passed as a value, a library that starts processes, code loaded at runtime? ${SKETCH} Question whether an escape can load a file the claim treats as unreached, not the closure itself.
 Refute when a key step does not hold or cannot be confirmed; otherwise uphold. Cite the decisive file:line.
 
 Return for each claim: verdict; failures, one entry per step of the claim that does not hold, with its decisive file:line (a hop that does not lead where the path says, a site or path a no missed, a wrong shell answer); reason; and conditions, under which the answer holds, with any inaccuracy that does not change it. refuted needs at least one failure and upheld none: a review whose verdict and failures disagree is discarded.
 
 Claims:
-${claims.map((entry) => `- ${entry.name}: verdict ${entry.verdict}, shell ${entry.shell}; claim ${entry.claim_path}; package ${batch.packages.find((item) => item.name === entry.name)?.dir ?? "(see claim)"}`).join("\n")}`;
+${claims
+  .map((entry) => {
+    const item = batch.packages.find(
+      (candidate) => candidate.name === entry.name,
+    );
+    return `- ${entry.name}: verdict ${entry.verdict}, shell ${entry.shell}; claim ${entry.claim_path}; package ${item?.dir ?? "(see claim)"}${item?.sketch ? `; sketch, levels 0 to 2: ${JSON.stringify(item.sketch)}` : ""}`;
+  })
+  .join("\n")}`;
 
 phase("Solve");
 const results = await pipeline(

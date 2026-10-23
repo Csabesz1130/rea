@@ -12,6 +12,7 @@ import path from "node:path";
 import {
   CHILD_PROCESS_RECEIVER,
   PROCESS_CALL,
+  REGISTRATION,
   linesOf,
   runningFiles,
   scan,
@@ -23,9 +24,6 @@ const MAX_QUOTE = 400;
 const MIN_REASON = 10;
 const MAX_LISTED = 40;
 const SHELL_WINDOW = 5;
-
-const REGISTRATION =
-  /registerTools?\s*\(|\.tool\s*\(|setRequestHandler\s*\(|addTools?\s*\(|CallToolRequestSchema|extends\s+MCPTool/;
 
 // exec and execSync always run their command in a shell; spawn and execFile
 // only with a shell option that is not false (Node.js documentation). An

@@ -6,10 +6,12 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { checkClaim } from "./check.mjs";
+import { sketch } from "./sketch.mjs";
 
 export const OUTCOMES = [
   "reviewed yes",
   "reviewed no",
+  "settled by the scan",
   "undetermined",
   "refuted",
   "review inconsistent",
@@ -27,10 +29,11 @@ const consistent = (reviews) => {
 };
 
 /**
- * The outcome of one package: `check` is null when the solver wrote no
- * claim file, and `reviews` are every review that names the package. Only
- * "reviewed yes", "reviewed no" and "undetermined" (a residual the check
- * accepted) are answers.
+ * The outcome of one package an agent worked on: `check` is null when the
+ * solver wrote no claim file, and `reviews` are every review that names the
+ * package. Only "reviewed yes", "reviewed no" and "undetermined" (a
+ * residual the check accepted) are answers; "settled by the scan" is
+ * collect's for a package the plan settled before the run.
  */
 export const outcomeOf = (claim, check, reviews) => {
   if (check === null) return "no claim";
@@ -70,11 +73,32 @@ const byName = (entries) => {
   return map;
 };
 
+// A package plan settled before the run, sketched again: its outcome is
+// "settled by the scan" only while level 0 still says no.
+const settledRecord = (item) => {
+  const [head] = sketch(item.dir).levels[0].positions;
+  return {
+    name: item.name,
+    version: item.version,
+    batch: null,
+    calibration: item.calibration ?? null,
+    reasons: item.reasons ?? [],
+    claim_file: null,
+    claim: null,
+    check: null,
+    reviews: [],
+    solver: null,
+    sketch: head,
+    outcome: head.verdict === "no" ? "settled by the scan" : "no claim",
+  };
+};
+
 /**
  * `{ outcomes, records }` for one run: `args` is the workflow's input
- * (`{ claims, batches: [{ id, packages }] }`) and `result` its return value
- * (`{ results: [{ batch, solve, review }] }`). Each record keeps the claim,
- * the check, the reviews and the solver's own report beside the outcome.
+ * (`{ claims, batches: [{ id, packages }], settled }`, as plan writes it)
+ * and `result` its return value (`{ results: [{ batch, solve, review }] }`).
+ * Each record keeps the claim, the check, the reviews and the solver's own
+ * report beside the outcome; a package plan settled is sketched again.
  */
 export const collect = (args, result) => {
   const runs = Array.isArray(result?.results) ? result.results : [];
@@ -100,6 +124,7 @@ export const collect = (args, result) => {
       };
     }),
   );
+  records.push(...(args?.settled ?? []).map(settledRecord));
   const outcomes = Object.fromEntries(
     OUTCOMES.map((outcome) => [
       outcome,

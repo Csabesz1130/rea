@@ -15,8 +15,18 @@ import {
 } from "../../release-watch/src/catalog.mjs";
 
 const SCRIPT = /\.[cm]?js$/;
-const SPECIFIER =
-  /(?:\brequire\s*\(\s*|\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(["'`])([^"'`\n]+)\1/g;
+
+/**
+ * A literal module specifier on a line: require("…"), import("…"), import …
+ * from "…", export … from "…", import "…", and getBuiltinModule("…"), which
+ * loads a built-in such as child_process without an import.
+ */
+export const SPECIFIER =
+  /(?:\brequire\s*\(\s*|\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bgetBuiltinModule\s*\(\s*)(["'`])([^"'`\n]+)\1/g;
+
+/** A line that registers an MCP tool, in the SDKs' and common frameworks' forms. */
+export const REGISTRATION =
+  /registerTools?\s*\(|\.tool\s*\(|setRequestHandler\s*\(|addTools?\s*\(|CallToolRequestSchema|extends\s+MCPTool/;
 
 // What compilers and bundlers name a child_process binding: child_process_1
 // (TypeScript), import_child_process (esbuild),
@@ -31,9 +41,10 @@ const EXECA_FUNCTIONS =
  * A line that may call a process function: child_process's functions
  * called bare or on any receiver; execa's; exec on a receiver named like
  * child_process or shelljs (exec on other receivers is usually
- * RegExp.prototype.exec and is left out); and any of them called through
- * the wrapper TypeScript and bundlers emit for an imported function,
- * (0, child_process_1.spawnSync)(…).
+ * RegExp.prototype.exec and is left out); any of them called through the
+ * wrapper TypeScript and bundlers emit for an imported function,
+ * (0, child_process_1.spawnSync)(…); and Node's internal spawn bindings,
+ * which start processes without child_process.
  */
 export const PROCESS_CALL = new RegExp(
   [
@@ -42,6 +53,7 @@ export const PROCESS_CALL = new RegExp(
     String.raw`(?:^|[^.\w$])exec\s*\(`,
     String.raw`(?:${CHILD_PROCESS_RECEIVER}|\b(?:cp|proc|shell|shelljs|sh))\.exec\s*\(`,
     String.raw`\.(?:${PROCESS_FUNCTIONS}|exec|${EXECA_FUNCTIONS})\s*\)\s*\(`,
+    String.raw`\b(?:process\.binding|internalBinding)\s*\(\s*["'\`](?:spawn_sync|process_wrap)["'\`]`,
   ].join("|"),
 );
 
@@ -50,8 +62,11 @@ export const PROCESS_CALL = new RegExp(
 const HANDED_ON =
   /[(,=:{]\s*(?:spawn|spawnSync|execFile|execFileSync|execSync|exec|fork)\s*[,)}]/;
 
+// A line that loads or evaluates code the specifiers do not name: require or
+// import() of an expression, require made by createRequire and called at
+// once, new Function and eval.
 const RUNTIME_CODE =
-  /\brequire\s*\(\s*[^"'`\s)]|\bimport\s*\(\s*[^"'`\s)]|\bnew\s+Function\s*\(|(?:^|[^.\w$])eval\s*\(/;
+  /\brequire\s*\(\s*[^"'`\s)]|\bimport\s*\(\s*[^"'`\s)]|\bcreateRequire\s*\([^)]*\)\s*\(|\bnew\s+Function\s*\(|(?:^|[^.\w$])eval\s*\(/;
 
 /** The lines of one file of a package, read once per process. */
 export const linesOf = (() => {

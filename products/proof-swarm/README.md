@@ -30,28 +30,72 @@ meaning. "Undetermined" is an accepted answer; a guess is not.
 1. **Question.** One per package: can code that runs when an MCP client
    calls one of the server's tools start an operating-system process, and
    through a shell?
-2. **Solve.** One agent per batch of packages works depth-first: it runs
-   `proof-swarm scan`, reads the code the scan points to, writes a claim,
-   runs `proof-swarm check`, and fixes what the check rejects until it
-   passes.
-3. **Check.** `proof-swarm check` accepts a claim only when every cited
+2. **Plan.** `proof-swarm plan` sketches every package coarse to fine
+   (below). A package whose coarsest level already settles the question
+   needs no agent; every other package goes to the agents with its sketch.
+3. **Solve.** One agent per batch of packages works depth-first: it starts
+   from the sketch, runs `proof-swarm scan` for the exact lines a claim must
+   cite, reads the code they point to, writes a claim, runs
+   `proof-swarm check`, and fixes what the check rejects until it passes.
+4. **Check.** `proof-swarm check` accepts a claim only when every cited
    line is in a running file of the package and holds the quoted text; a
    "yes" path starts at a tool registration, links each call to a
    definition of the name it calls, and ends at a process call; a "no" cites
    every candidate process call and every process-capable file the scan
    finds, each with a reason, and says why code loaded at runtime cannot
    reach one either.
-4. **Review.** An independent agent reads the code behind every checked
+5. **Review.** An independent agent reads the code behind every checked
    "yes" or "no" and tries to refute it: is the registration a real tool,
    does each call reach the very function the path names, is the process
    call reachable and live, did a "no" miss a path?
-5. **Accept.** `proof-swarm collect` checks every claim file again, so a
-   solver's report of its own check counts for nothing. A claim the check
-   passes and a consistent review upholds is a reviewed answer. A review
-   names each failure it finds; one that refutes without naming a failure,
-   or upholds while naming one, settles nothing. An answer's evidence is
-   the cited path or account, its basis is "reviewed", and REA's own marks
-   never change.
+6. **Accept.** `proof-swarm collect` checks every claim file again, so a
+   solver's report of its own check counts for nothing, and sketches every
+   package the plan settled again. A claim the check passes and a
+   consistent review upholds is a reviewed answer. A review names each
+   failure it finds; one that refutes without naming a failure, or upholds
+   while naming one, settles nothing. An answer's evidence is the cited path
+   or account, its basis is "reviewed" (or "settled by the scan"), and
+   REA's own marks never change.
+
+## Coarse to fine
+
+Next-concept modeling (Kumbong et al., "Next-Concept Modeling: Fast,
+Parallel Coarse-to-Fine Text Generation", arXiv:2610.14162) generates text
+as a hierarchy: a multiscale residual quantizer turns a sequence into
+levels of growing length (1, 2, 4 … 89 positions for a Sudoku board), each
+coding only what the coarser levels leave unexplained, and a transformer
+predicts every position of a level at once, conditioned on the sketch so
+far. Generation takes one step per level instead of one per token, which
+is where its 9 to 31 times speedups over diffusion language models come
+from (the mechanism as its released code shows it; the numbers are the
+authors').
+
+Proof Swarm runs no model, so the architecture does not transfer; its
+shape does. `proof-swarm sketch` describes a package in four levels, each
+listing only what the coarser ones leave open:
+
+| Level | Positions                                                                               | Settles                                                      |
+| ----- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 0     | the package: counts and a verdict                                                       | "no" when nothing that can run starts a process              |
+| 1     | its entry points: bin, main, module, every exports target                               | where code starts                                            |
+| 2     | files that load a process module or library, call a process function or register a tool | which of them the entry points reach through literal imports |
+| 3     | lines: every escape, and candidate calls and tool registrations in reached files        | what an agent must still read                                |
+
+A file the entry points do not reach can run only through an escape: an
+import the sketch cannot resolve, a native addon, a script the scan leaves
+out, code loaded or evaluated at runtime, or a worker started from a path.
+Level 0 says "no" when the scan finds nothing to account for, or when
+every process-capable file and candidate call is unreached and nothing
+escapes. Agents receive levels 0 to 2 in their prompt and read level 3 on
+demand, so they explain the few escapes instead of re-tracing imports by
+hand, as n8n-mcp's round-2 solver and reviewer each did across about 180
+files.
+
+On the 26 packages of the first run, level 0 settles one,
+@upstash/context7-mcp, and agrees with its reviewed "no"; it leaves all 15
+reviewed "yes" packages open. Sketching all 26 took 13.8 s and 14.5 s of
+CPU in one process, with a peak of 412 MB, most of it the cache of every
+package's text.
 
 ## Claims
 
@@ -136,16 +180,22 @@ A claim is a JSON file:
 
 ```bash
 node bin/proof-swarm.mjs scan <package-dir>
+node bin/proof-swarm.mjs sketch <package-dir> [--level <0-3>]
 node bin/proof-swarm.mjs check <claim.json> --package <package-dir>
+node bin/proof-swarm.mjs plan <workflow-args.json>
 node bin/proof-swarm.mjs collect <workflow-args.json> <workflow-result.json>
 ```
 
-`scan` lists what a claim must account for. `check` prints `{ status,
-errors, warnings, scan }` and exits 0 when the claim passes, 1 when it
-fails. `collect` prints `{ outcomes, records }` for a swarm run: each
+`scan` lists what a claim must account for. `sketch` prints `{ levels }`
+up to `--level` (default 3). `check` prints `{ status, errors, warnings,
+scan }` and exits 0 when the claim passes, 1 when it fails. `plan` prints
+the workflow's args again, with packages level 0 settles under `settled`
+and every other package carrying its sketch's levels 0 to 2. `collect`
+prints `{ outcomes, records }` for a swarm run: each
 package's claim, its check, its reviews, the solver's own report and the
-outcome (`reviewed yes`, `reviewed no`, `undetermined`, `refuted`,
-`review inconsistent`, `not reviewed`, `failed the check` or `no claim`).
+outcome (`reviewed yes`, `reviewed no`, `settled by the scan`,
+`undetermined`, `refuted`, `review inconsistent`, `not reviewed`,
+`failed the check` or `no claim`).
 No command runs, imports or installs anything from a package, and none
 calls a model.
 
@@ -165,8 +215,9 @@ each line it lists.
 script for the Workflow tool. It takes `{ cli, claims, batches }`: the path
 of `bin/proof-swarm.mjs`, a directory for claim files, and batches of
 `{ name, version, dir, slug, reasons }`, with `calibration` (`yes` or `no`)
-for a package whose answer is known; only `collect` reads it. Save the
-run's return value as JSON and pass it to `collect` with the same args. The
+for a package whose answer is known; only `collect` reads it. Run `plan` on
+those args first and give the workflow what it prints; save the run's
+return value as JSON and pass it to `collect` with the planned args. The
 prompts are the protocol, so any agent runner can follow them with the same
 commands.
 
@@ -268,6 +319,14 @@ locally, and nothing in `src/` calls a model.
   package loads but does not ship is outside what anyone examined.
 - Hint sequences are the solvers' own account of what settled a question,
   so they measure difficulty roughly.
+- A "no" settled by the scan holds for what the scan's patterns and the
+  sketch's literal imports can see. Code that builds a module name or a
+  call from pieces at runtime is listed as an escape when the scan sees a
+  dynamic load, and missed when it does not; deliberately disguised code
+  is out of reach of a text scan.
+- The sketch's closure follows literal imports between the package's own
+  files. It does not decide which functions in a reached file run, so a
+  large bundle is reached whole and stays open.
 
 ## Tests
 
@@ -280,6 +339,11 @@ shifted line, a missing definition, invented code, a cited test file, a
 path outside the package, a shell "yes" on `shell: false`, a false "no", a
 process function handed to a file that never loads child_process, an
 honest "no" with code loaded at runtime, an undetermined answer without a
-reason, a file that loads the MCP SDK's stdio client transport, and a
-collection in which only a passing claim with a consistent, upholding
-review is an answer.
+reason, a file that loads the MCP SDK's stdio client transport, process
+calls as compilers and bundlers emit them, child_process reached without
+an import, and a collection in which only a passing claim with a
+consistent, upholding review is an answer. The sketch's tests cover a
+package level 0 settles because nothing can start a process, one it
+settles because no entry point loads the process code, the same package
+kept open by code loaded at runtime, every kind of escape, and a plan whose
+settled package collect reports as settled by the scan.
