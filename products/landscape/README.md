@@ -214,11 +214,12 @@ and the list.
 - 36 serve MCP tools, three of them only likely: the Google Cloud servers
   bundle the MCP SDK into their code, and Landscape reads them from the
   tool-call dispatcher the bundle keeps.
-- 17 start processes (6 only likely). Three have a tool whose code reaches
-  process execution: desktop-commander (its terminal tools), @netlify/mcp
-  (a helper that runs Netlify CLI commands through a shell) and @drawio/mcp
-  (it opens the diagram in a browser). For 24 more, REA's facts cannot
-  tell.
+- 19 start processes (8 only likely; n8n-mcp and @tanstack/ai-mcp from
+  their import of the MCP SDK's stdio client transport, which spawns the
+  server it connects to). Three have a tool whose code reaches process
+  execution: desktop-commander (its terminal tools), @netlify/mcp (a helper
+  that runs Netlify CLI commands through a shell) and @drawio/mcp (it opens
+  the diagram in a browser). For 24 more, REA's facts cannot tell.
 - Four run commands through a shell: desktop-commander, @netlify/mcp and
   Hostinger's two packages, which open their sign-in page with `exec()`.
 - Four send telemetry or error reports: figma-developer-mcp (PostHog) and

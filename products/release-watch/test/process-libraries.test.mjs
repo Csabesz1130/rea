@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isProcessLibrary } from "../src/catalog.mjs";
+import { processLibraryOf } from "../src/catalog.mjs";
 import { app, at, evaluate, fact, side } from "./helpers.mjs";
 
 const execa = (module) =>
@@ -18,11 +18,27 @@ const libraryFindings = (left, right, options = {}) =>
   evaluate(left, right, options).filter((finding) => finding.rule === "RW-C06");
 
 describe("process libraries", () => {
-  it("lists libraries that start processes, not other packages", () => {
-    assert.ok(isProcessLibrary("execa"));
-    assert.ok(isProcessLibrary("node-pty"));
-    assert.equal(isProcessLibrary("axios"), false);
-    assert.equal(isProcessLibrary("child_process"), false);
+  it("names libraries and entry points that start processes, not other packages", () => {
+    assert.equal(processLibraryOf("execa"), "execa");
+    assert.equal(processLibraryOf("node-pty"), "node-pty");
+    // The stdio client transport spawns the server it connects to; the
+    // rest of the SDK, the server transport included, starts nothing.
+    assert.equal(
+      processLibraryOf("@modelcontextprotocol/sdk/client/stdio.js"),
+      "@modelcontextprotocol/sdk/client/stdio",
+    );
+    assert.equal(
+      processLibraryOf("@modelcontextprotocol/client/stdio"),
+      "@modelcontextprotocol/client/stdio",
+    );
+    for (const specifier of [
+      "@modelcontextprotocol/sdk/server/stdio.js",
+      "@modelcontextprotocol/sdk/client/index.js",
+      "axios",
+      "child_process",
+      "node:child_process",
+    ])
+      assert.equal(processLibraryOf(specifier), null, specifier);
   });
 
   it("is medium when only a module that imported the library before changed", () => {
@@ -83,6 +99,24 @@ describe("process libraries", () => {
         release("v2", [asset("tools.js", "a")], [execa("tools.js")]),
       ),
       [],
+    );
+  });
+
+  it("names the MCP SDK's stdio client transport by its entry point", () => {
+    const specifier = "@modelcontextprotocol/sdk/client/stdio.js";
+    const stdio = fact(
+      specifier,
+      { specifier, module: "client.js" },
+      at("client.js", 1),
+    );
+    const [finding] = libraryFindings(
+      release("v1", [asset("client.js", "a")], []),
+      release("v2", [asset("client.js", "b")], [stdio]),
+    );
+    assert.equal(finding.severity, "high");
+    assert.equal(
+      finding.title,
+      "Processes started through @modelcontextprotocol/sdk/client/stdio in new or changed code are not examined",
     );
   });
 });

@@ -10,9 +10,8 @@ import path from "node:path";
 
 import { isTestPath } from "../../landscape/src/catalog.mjs";
 import {
-  isProcessLibrary,
   isProcessModule,
-  packageNameOf,
+  processLibraryOf,
 } from "../../release-watch/src/catalog.mjs";
 
 const SCRIPT = /\.[cm]?js$/;
@@ -81,8 +80,7 @@ const processImports = (lines) =>
       .map((match) => match[2])
       .filter(
         (specifier) =>
-          isProcessModule(specifier) ||
-          isProcessLibrary(packageNameOf(specifier)),
+          isProcessModule(specifier) || processLibraryOf(specifier) !== null,
       )
       .map((specifier) => ({ line: index + 1, specifier })),
   );

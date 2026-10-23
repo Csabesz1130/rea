@@ -6,8 +6,8 @@ import { isPtyPackage } from "../catalog.mjs";
 import { factLine, readingLine } from "../evidence.mjs";
 import {
   commandText,
-  isProcessLibrary,
   packageNameOf,
+  processLibraryOf,
 } from "../release-watch.mjs";
 import { TRAITS } from "./definitions.mjs";
 import { productFacts, runtimeImports } from "./runtime.mjs";
@@ -60,7 +60,8 @@ const libraries = (part, set) => {
         ],
         values: [name],
       });
-    if (!isProcessLibrary(name)) continue;
+    const library = processLibraryOf(fact.key);
+    if (library === null) continue;
     set.add(TRAITS.process, {
       strength: "likely",
       evidence: [
@@ -70,11 +71,11 @@ const libraries = (part, set) => {
           fact,
         ),
       ],
-      values: [name],
+      values: [library],
     });
     set.unknownBecause(
       TRAITS.shell,
-      `it starts processes through ${name}, whose shell use REA does not model`,
+      `it starts processes through ${library}, whose shell use REA does not model`,
     );
   }
 };

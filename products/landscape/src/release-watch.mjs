@@ -14,8 +14,8 @@ export {
   aiProviderOf,
   credentialOf,
   isAiEnvironmentKey,
-  isProcessLibrary,
   packageNameOf,
+  processLibraryOf,
 } from "../../release-watch/src/catalog.mjs";
 export {
   examinedInPart,

@@ -6,9 +6,8 @@
 import { factLine, readingLine } from "../evidence.mjs";
 import {
   bundledToolDispatchers,
-  isProcessLibrary,
   mcpServers,
-  packageNameOf,
+  processLibraryOf,
   registrationClaim,
   sdkUses,
   toolConnections,
@@ -107,8 +106,8 @@ const toolUnknowns = (part, set) => {
   const libraries = [
     ...new Set(
       runtimeImports(part.app)
-        .map((fact) => packageNameOf(fact.key))
-        .filter(isProcessLibrary),
+        .map((fact) => processLibraryOf(fact.key))
+        .filter((library) => library !== null),
     ),
   ];
   if (libraries.length > 0)

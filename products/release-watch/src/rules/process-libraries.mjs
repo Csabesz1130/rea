@@ -1,20 +1,18 @@
 // RW-C06: changed modules that import a library that starts processes
-// (execa, shelljs, cross-spawn, node-pty and the like). REA's child-process
-// extraction models node:child_process calls only, so a process started
-// through one of these is not classified, and the process, Electron and MCP
-// rules cannot see it.
-import { isProcessLibrary, packageNameOf } from "../catalog.mjs";
+// (execa, shelljs, cross-spawn, node-pty and the like, or the MCP SDK's stdio
+// client transport). REA's child-process extraction models node:child_process
+// calls only, so a process started through one of these is not classified,
+// and the process, Electron and MCP rules cannot see it.
+import { processLibraryOf } from "../catalog.mjs";
 import { renamedFrom } from "../diff.mjs";
 import { APP_SOURCE, cite, heuristic } from "./shared.mjs";
 
 const MAX_LINES = 6;
 
 const libraryImports = (app) =>
-  (app?.imports ?? []).filter((fact) =>
-    isProcessLibrary(packageNameOf(fact.key)),
-  );
+  (app?.imports ?? []).filter((fact) => processLibraryOf(fact.key) !== null);
 
-const importKey = (module, fact) => `${module}#${packageNameOf(fact.key)}`;
+const importKey = (module, fact) => `${module}#${processLibraryOf(fact.key)}`;
 
 /**
  * RW-C06 findings for one component. `changed` (changedFiles, the owner of
@@ -42,7 +40,7 @@ export const processLibraries = (context, changed) => {
     .map((fact) => ({ fact, added: !importedBefore(fact) }));
   if (fresh.length === 0) return [];
   const libraries = [
-    ...new Set(fresh.map(({ fact }) => packageNameOf(fact.key))),
+    ...new Set(fresh.map(({ fact }) => processLibraryOf(fact.key))),
   ];
   const moduleCount = new Set(fresh.map(({ fact }) => fact.data.module)).size;
   const added = fresh.some((site) => site.added);
@@ -66,7 +64,7 @@ export const processLibraries = (context, changed) => {
             ),
           ),
         heuristic(
-          "Release Watch lists packages that start processes; REA's child-process extraction models node:child_process calls only",
+          "Release Watch lists libraries that start processes; REA's child-process extraction models node:child_process calls only",
         ),
       ],
       unknowns: added

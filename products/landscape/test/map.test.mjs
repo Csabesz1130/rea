@@ -183,7 +183,12 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
       "index.js":
         'import { execa } from "execa";\nexport const run = (command) => execa(command, { shell: true });\n',
     });
-    const run = landscape("map", [shellOut, library]);
+    // The MCP SDK's stdio client transport spawns the server it connects to.
+    const client = products.write("mcp-client", "1.0.0", {
+      "index.js":
+        'import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";\nexport const connect = (command) => new StdioClientTransport({ command });\n',
+    });
+    const run = landscape("map", [shellOut, library, client]);
     products.keep(run.out);
     assert.equal(run.result.status, 0, run.result.stderr);
     assert.equal(
@@ -197,11 +202,18 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
     assert.deepEqual(row.cells.p2.reasons, [
       "it starts processes through execa, whose shell use REA does not model",
     ]);
+    assert.equal(
+      cell(run.report, "system.process", "mcp-client 1.0.0"),
+      "likely",
+    );
+    assert.deepEqual(row.cells.p3.reasons, [
+      "it starts processes through @modelcontextprotocol/sdk/client/stdio, whose shell use REA does not model",
+    ]);
     assert.deepEqual(row.counts, {
       yes: 1,
       likely: 0,
       no: 0,
-      unknown: 1,
+      unknown: 2,
       held: 1,
     });
   });

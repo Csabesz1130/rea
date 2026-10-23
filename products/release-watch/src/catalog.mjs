@@ -395,8 +395,24 @@ const PROCESS_LIBRARIES = new Set([
   "foreground-child",
 ]);
 
-/** True when a package name is a library that starts processes. */
-export const isProcessLibrary = (name) => PROCESS_LIBRARIES.has(name);
+// Entry points that start processes in packages that otherwise do not: the
+// MCP SDKs' stdio client transport spawns the server command it is given
+// through cross-spawn (@modelcontextprotocol/sdk 1.32.2 and
+// @modelcontextprotocol/client 2.3.1, read in their published files).
+const PROCESS_ENTRY_POINT =
+  /^(@modelcontextprotocol\/(?:sdk\/client|client)\/stdio)(?:\.js)?$/;
+
+/**
+ * The library an import specifier loads that starts processes for its
+ * caller: the package name of a process library, or the entry point of a
+ * package that starts processes only there. Null for any other specifier.
+ */
+export const processLibraryOf = (specifier) => {
+  const name = packageNameOf(specifier);
+  if (name === null) return null;
+  if (PROCESS_LIBRARIES.has(name)) return name;
+  return PROCESS_ENTRY_POINT.exec(specifier)?.[1] ?? null;
+};
 
 // Node's child_process module, by either specifier.
 const PROCESS_MODULE = /^(?:node:)?child_process$/;
