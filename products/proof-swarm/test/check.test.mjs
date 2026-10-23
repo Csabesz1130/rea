@@ -1,6 +1,7 @@
-// The check through the public CLI, on packages written for each case: a
-// claim passes only when what it cites is in the package's shipped text,
-// and a "no" only when it accounts for everything the scan finds.
+// The check and the collection through the public CLI, on packages written
+// for each case: a claim passes only when what it cites is in the package's
+// shipped text, a "no" only when it accounts for everything the scan finds,
+// and an answer only when a consistent review upholds a passing claim.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -163,6 +164,32 @@ describe("check: a yes path", () => {
       "pass",
     );
   });
+
+  it("does not count shell: false as a shell", () => {
+    // A reviewer in the first swarm run found this hole in the check.
+    const launcher = write({
+      "index.js": [
+        'import { spawn } from "node:child_process";',
+        'server.registerTool("run", {}, async ({ file }) =>',
+        '  spawn("ghidra", [file], { shell: false }));',
+      ].join("\n"),
+    });
+    const claim = yes([
+      {
+        file: "index.js",
+        line: 2,
+        text: 'server.registerTool("run"',
+        role: "registration",
+      },
+      {
+        file: "index.js",
+        line: 3,
+        text: 'spawn("ghidra", [file]',
+        role: "process",
+      },
+    ]);
+    assert.match(check(launcher, claim).output.errors.join("\n"), /shell yes/);
+  });
 });
 
 describe("check: a no", () => {
@@ -203,7 +230,6 @@ describe("check: a no", () => {
           file: "dist/gateway.js",
           line: 1,
           text: 'import { spawn } from "child_process"',
-          reachable_from_tool: false,
           why: "the gateway starts its child at startup, not from a tool",
         },
       ],
@@ -230,7 +256,6 @@ describe("check: a no", () => {
           file: "dist/cli.js",
           line: 2,
           text: 'execFileSync("git", ["--version"])',
-          reachable_from_tool: false,
           why: "only the CLI version command calls it; the echo tool returns its input",
         },
       ],
@@ -282,6 +307,152 @@ describe("scan", () => {
     assert.deepEqual(
       output.candidates.map(({ file, line }) => `${file}:${line}`),
       ["dist/run.js:4"],
+    );
+  });
+
+  it("lists process calls as compilers and bundlers emit them", () => {
+    // TypeScript calls an imported function through (0, binding.name)(…),
+    // and bundlers rename the binding. A solver in round 2 found the scan
+    // missed both.
+    const dir = write({
+      "dist/tsc.js": [
+        'const child_process_1 = require("child_process");',
+        'const pull = () => (0, child_process_1.spawnSync)("git", ["pull"]);',
+      ].join("\n"),
+      "dist/bundle.js": [
+        'var import_child_process = require("child_process");',
+        "var run = (command) => import_child_process.exec(command);",
+        "var words = (text) => /\\w+/.exec(text);",
+      ].join("\n"),
+    });
+    assert.deepEqual(
+      run(["scan", dir]).output.candidates.map(
+        ({ file, line }) => `${file}:${line}`,
+      ),
+      ["dist/bundle.js:2", "dist/tsc.js:2"],
+    );
+    const claim = yes([
+      {
+        file: "dist/bundle.js",
+        line: 2,
+        text: "import_child_process.exec(command)",
+        role: "registration",
+      },
+      {
+        file: "dist/bundle.js",
+        line: 2,
+        text: "import_child_process.exec(command)",
+        role: "process",
+      },
+    ]);
+    // The registration is not real, so the path fails, but not on the
+    // shell: exec on a renamed child_process binding runs a shell.
+    assert.doesNotMatch(
+      check(dir, claim).output.errors.join("\n"),
+      /shell yes/,
+    );
+  });
+
+  it("lists a file that loads the MCP SDK's stdio client transport", () => {
+    // It spawns the server it connects to. A reviewer in the first swarm
+    // run found a "no" that left it out.
+    const dir = write({
+      "dist/client.js": [
+        'import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";',
+        "export const transport = (command) => new StdioClientTransport({ command });",
+      ].join("\n"),
+      "dist/server.js":
+        'import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";',
+    });
+    assert.deepEqual(run(["scan", dir]).output.capable, [
+      {
+        file: "dist/client.js",
+        imports: [{ line: 1, specifier: "@modelcontextprotocol/client/stdio" }],
+      },
+    ]);
+  });
+});
+
+describe("collect", () => {
+  // One run over four packages, each with its own fate.
+  const dir = runner();
+  const claims = mkdtempSync(path.join(root, "claims-"));
+  const packages = ["upheld", "unnamed", "invented", "missing", "open"].map(
+    (slug) => ({ name: slug, version: "1.0.0", dir, slug, reasons: [] }),
+  );
+  const save = (slug, claim) =>
+    writeFileSync(path.join(claims, `${slug}.json`), JSON.stringify(claim));
+  save("upheld", yes(HOPS));
+  save("unnamed", yes(HOPS));
+  save(
+    "invented",
+    yes(HOPS.map((hop, at) => (at === 3 ? { ...hop, line: 3 } : hop))),
+  );
+  save("open", {
+    verdict: "undetermined",
+    shell: "undetermined",
+    residual: "the handler table is built at runtime from a config file",
+    hint_sequence: ["the bundle is minified"],
+  });
+  const review = (name, verdict, failures) => ({
+    name,
+    verdict,
+    failures,
+    reason: "read the handler",
+    conditions: "none",
+  });
+  const argsFile = path.join(root, "args.json");
+  const resultFile = path.join(root, "result.json");
+  writeFileSync(
+    argsFile,
+    JSON.stringify({ claims, batches: [{ id: 1, packages }] }),
+  );
+  writeFileSync(
+    resultFile,
+    JSON.stringify({
+      results: [
+        {
+          batch: 1,
+          // The solver's own report is not trusted: it says every check passed.
+          solve: {
+            packages: packages.map(({ name }) => ({
+              name,
+              check_status: "pass",
+            })),
+          },
+          review: {
+            reviews: [
+              review("upheld", "upheld", []),
+              review("unnamed", "refuted", []),
+              review("invented", "upheld", []),
+            ],
+          },
+        },
+      ],
+    }),
+  );
+
+  it("accepts only a passing claim that a consistent review upholds", () => {
+    const { result, output } = run(["collect", argsFile, resultFile]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(
+      Object.fromEntries(
+        output.records.map((record) => [record.name, record.outcome]),
+      ),
+      {
+        upheld: "reviewed yes",
+        unnamed: "review inconsistent",
+        invented: "failed the check",
+        missing: "no claim",
+        open: "undetermined",
+      },
+    );
+    assert.equal(output.outcomes["reviewed yes"], 1);
+    assert.match(
+      output.records
+        .find((record) => record.name === "invented")
+        .check.errors.join("\n"),
+      /dist\/run\.js:3 does not contain/,
     );
   });
 });

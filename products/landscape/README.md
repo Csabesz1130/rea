@@ -219,7 +219,9 @@ and the list.
   server it connects to). Three have a tool whose code reaches process
   execution: desktop-commander (its terminal tools), @netlify/mcp (a helper
   that runs Netlify CLI commands through a shell) and @drawio/mcp (it opens
-  the diagram in a browser). For 24 more, REA's facts cannot tell.
+  the diagram in a browser). For 24 more, REA's facts cannot tell;
+  [Proof Swarm](../proof-swarm/README.md#first-run) settles 21 of them
+  with checked, reviewed agent answers that stay apart from REA's marks.
 - Four run commands through a shell: desktop-commander, @netlify/mcp and
   Hostinger's two packages, which open their sign-in page with `exec()`.
 - Four send telemetry or error reports: figma-developer-mcp (PostHog) and

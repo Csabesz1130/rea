@@ -20,7 +20,10 @@ export const meta = {
 // at the top level. args:
 //   { cli: "<repo>/products/proof-swarm/bin/proof-swarm.mjs",
 //     claims: "<directory for claim files>",
-//     batches: [{ id, packages: [{ name, version, dir, slug, reasons: [..] }] }] }
+//     batches: [{ id, packages: [{ name, version, dir, slug, reasons: [..],
+//                                 calibration?: "yes" | "no" }] }] }
+// calibration is a known answer, for collect only; no prompt shows it. Save
+// the return value and run: proof-swarm collect <args.json> <result.json>.
 // Any agent runner can follow the same protocol: the prompts below are it.
 
 const SOLVE_SCHEMA = {
@@ -64,17 +67,18 @@ const REVIEW_SCHEMA = {
         properties: {
           name: { type: "string" },
           verdict: { type: "string", enum: ["upheld", "refuted"] },
+          failures: { type: "array", items: { type: "string" } },
           reason: { type: "string" },
           conditions: { type: "string" },
         },
-        required: ["name", "verdict", "reason", "conditions"],
+        required: ["name", "verdict", "failures", "reason", "conditions"],
       },
     },
   },
   required: ["reviews"],
 };
 
-const QUESTION = `Can code that runs when an MCP client calls one of this server's tools start an operating-system process (child_process exec/execFile/spawn/fork or their Sync forms, or a process library such as execa, cross-spawn, node-pty, shelljs or zx)? If so, does that process call run through a shell?`;
+const QUESTION = `Can code that runs when an MCP client calls one of this server's tools start an operating-system process (child_process exec/execFile/spawn/fork or their Sync forms, a process library such as execa, cross-spawn, node-pty, shelljs or zx, or the MCP SDK's stdio client transport, which spawns the server it connects to)? If so, does that process call run through a shell?`;
 
 const CLAIM_FORMAT = `Write the claim as JSON (products/proof-swarm/README.md, Claims):
 { "server", "version",
@@ -84,11 +88,11 @@ const CLAIM_FORMAT = `Write the claim as JSON (products/proof-swarm/README.md, C
      { "file", "line", "text", "role": "call", "calls": "<function name>" },
      { "file", "line", "text", "role": "definition", "defines": "<that name>" },
      { "file", "line", "text", "role": "process" } ] } ],
-  "process_sites": [ { "file", "line", "text", "reachable_from_tool": false, "why" } ],
+  "process_sites": [ { "file", "line", "text", "why" } ],
   "residual", "hint_sequence": [..], "work": { "files_read", "searches", "notes" } }
 - file is a path inside the package, line is 1-based, text is 6-400 characters copied from that line.
 - yes: one path from the line that registers the tool, through a call hop and a definition hop for every function on the way, to the process call.
-- no: process_sites cites every candidate line the scan lists, exactly, and a line in every process-capable file, each with a reason no tool reaches it; residual explains why code loaded at runtime cannot either.
+- no: process_sites cites every candidate line the scan lists, exactly, and a line in every process-capable file, each with why no tool can start a process there (no tool reaches it, or it is not a process call); residual explains why code loaded at runtime cannot either.
 - undetermined: residual says what blocks a decision. It is far better than a guess.`;
 
 const packageBlock = (item) => `- ${item.name} ${item.version}
@@ -125,6 +129,8 @@ const reviewPrompt = (
 For a yes: is the first hop a real MCP tool registration whose handler leads into the path; does each call reach the very function the next definition defines (not a same-named one elsewhere); is the process call reachable for some input or state (record the conditions); is it live code; is the shell answer right?
 For a no: what did it miss — a candidate it called unreachable that a tool reaches, a process function passed as a value, a library that starts processes, code loaded at runtime?
 Refute when a key step does not hold or cannot be confirmed; otherwise uphold. Cite the decisive file:line.
+
+Return for each claim: verdict; failures, one entry per step of the claim that does not hold, with its decisive file:line (a hop that does not lead where the path says, a site or path a no missed, a wrong shell answer); reason; and conditions, under which the answer holds, with any inaccuracy that does not change it. refuted needs at least one failure and upheld none: a review whose verdict and failures disagree is discarded.
 
 Claims:
 ${claims.map((entry) => `- ${entry.name}: verdict ${entry.verdict}, shell ${entry.shell}; claim ${entry.claim_path}; package ${batch.packages.find((item) => item.name === entry.name)?.dir ?? "(see claim)"}`).join("\n")}`;

@@ -9,7 +9,13 @@
 // question (README.md).
 import path from "node:path";
 
-import { PROCESS_CALL, linesOf, runningFiles, scan } from "./scan.mjs";
+import {
+  CHILD_PROCESS_RECEIVER,
+  PROCESS_CALL,
+  linesOf,
+  runningFiles,
+  scan,
+} from "./scan.mjs";
 
 const VERDICTS = ["yes", "no", "undetermined"];
 const MIN_QUOTE = 6;
@@ -22,9 +28,19 @@ const REGISTRATION =
   /registerTools?\s*\(|\.tool\s*\(|setRequestHandler\s*\(|addTools?\s*\(|CallToolRequestSchema|extends\s+MCPTool/;
 
 // exec and execSync always run their command in a shell; spawn and execFile
-// only with a shell option (Node.js documentation).
-const SHELL =
-  /(?:^|[^.\w$])exec(?:Sync)?\s*\(|\b(?:child_?process|childProcess|cp)\.exec(?:Sync)?\s*\(|shell\s*:\s*(?:true|!0|[\w$.]+)/;
+// only with a shell option that is not false (Node.js documentation). An
+// option set from a variable counts: it can be true. exec counts bare, on a
+// child_process receiver or through an import wrapper, as PROCESS_CALL
+// reads it; execSync on any receiver.
+const SHELL = new RegExp(
+  [
+    String.raw`(?:^|[^.\w$])exec(?:Sync)?\s*\(`,
+    String.raw`\.execSync\s*\(`,
+    String.raw`(?:${CHILD_PROCESS_RECEIVER}|\bcp)\.exec\s*\(`,
+    String.raw`\.exec(?:Sync)?\s*\)\s*\(`,
+    String.raw`shell\s*:\s*(?!false\b|!1\b)(?:true|!0|[\w$.]+)`,
+  ].join("|"),
+);
 
 const normalize = (text) => text.replace(/\s+/g, " ").trim();
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -201,9 +217,9 @@ const checkNo = (context) => {
     cited: place(context, site, `process site ${index + 1}`),
   }));
   for (const { site } of placed)
-    if (site.reachable_from_tool !== false || !hasReason(site.why))
+    if (!hasReason(site.why))
       errors.push(
-        `process site ${site.file}:${site.line}: a no needs reachable_from_tool false and a reason`,
+        `process site ${site.file}:${site.line}: a no needs a reason no tool starts a process there`,
       );
   const cited = new Set(
     placed

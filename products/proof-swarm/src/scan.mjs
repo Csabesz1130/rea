@@ -18,14 +18,32 @@ const SCRIPT = /\.[cm]?js$/;
 const SPECIFIER =
   /(?:\brequire\s*\(\s*|\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(["'`])([^"'`\n]+)\1/g;
 
+// What compilers and bundlers name a child_process binding: child_process_1
+// (TypeScript), import_child_process (esbuild),
+// child_process__WEBPACK_IMPORTED_MODULE_0__ (webpack).
+export const CHILD_PROCESS_RECEIVER = String.raw`[\w$]*(?:child_?process|childProcess)[\w$]*`;
+
+const PROCESS_FUNCTIONS = "spawn|spawnSync|execFile|execFileSync|execSync|fork";
+const EXECA_FUNCTIONS =
+  "execa|execaSync|execaCommand|execaCommandSync|execaNode";
+
 /**
  * A line that may call a process function: child_process's functions
- * called bare or on any receiver, execa's, and exec on a receiver named
- * like child_process or shelljs. exec on other receivers is usually
- * RegExp.prototype.exec and is left out.
+ * called bare or on any receiver; execa's; exec on a receiver named like
+ * child_process or shelljs (exec on other receivers is usually
+ * RegExp.prototype.exec and is left out); and any of them called through
+ * the wrapper TypeScript and bundlers emit for an imported function,
+ * (0, child_process_1.spawnSync)(…).
  */
-export const PROCESS_CALL =
-  /(?:^|[^.\w$])(?:spawn|spawnSync|execFile|execFileSync|execSync|fork|execa|execaSync|execaCommand|execaCommandSync|execaNode|crossSpawn)\s*\(|\.(?:spawn|spawnSync|execFile|execFileSync|execSync|fork)\s*\(|(?:^|[^.\w$])exec\s*\(|\b(?:child_?process|childProcess|cp|proc|shell|shelljs|sh)\.exec\s*\(/;
+export const PROCESS_CALL = new RegExp(
+  [
+    String.raw`(?:^|[^.\w$])(?:${PROCESS_FUNCTIONS}|${EXECA_FUNCTIONS}|crossSpawn)\s*\(`,
+    String.raw`\.(?:${PROCESS_FUNCTIONS})\s*\(`,
+    String.raw`(?:^|[^.\w$])exec\s*\(`,
+    String.raw`(?:${CHILD_PROCESS_RECEIVER}|\b(?:cp|proc|shell|shelljs|sh))\.exec\s*\(`,
+    String.raw`\.(?:${PROCESS_FUNCTIONS}|exec|${EXECA_FUNCTIONS})\s*\)\s*\(`,
+  ].join("|"),
+);
 
 // A process function handed on as a value (startServer(spawn, …), { exec }),
 // so a file that never loads child_process can still call it.
