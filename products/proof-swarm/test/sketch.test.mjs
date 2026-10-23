@@ -124,6 +124,20 @@ describe("sketch: level 0", () => {
     );
   });
 
+  it("counts a require of a computed template path as code loaded at runtime", () => {
+    // A solver in round 3 found the scan read it as a literal specifier.
+    const dir = server({
+      server: ["const manifest = require(`${process.env.DIR}/package.json`);"],
+    });
+    assert.equal(head(dir).verdict, "open");
+    assert.deepEqual(
+      run(["scan", dir]).output.runtimeCode.map(
+        ({ file, line }) => `${file}:${line}`,
+      ),
+      ["dist/server.js:3"],
+    );
+  });
+
   it("lists every way code outside the closure could still run", () => {
     const dir = server({
       server: [

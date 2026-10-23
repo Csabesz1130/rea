@@ -97,6 +97,20 @@ reviewed "yes" packages open. Sketching all 26 took 13.8 s and 14.5 s of
 CPU in one process, with a peak of 412 MB, most of it the cache of every
 package's text.
 
+Round 3 ran round 2's three packages again through `plan`: level 0
+settled @upstash/context7-mcp in 55 ms with no agent, and n8n-mcp and
+@tanstack/ai-mcp went to agents with their sketches and reached the same
+reviewed "no" as in round 2. Against round 2, the whole task took 164 tool
+uses instead of 212, about 0.7 million tokens of final context instead of
+1.0 million, and 14 minutes instead of 17. All of that came from context7
+needing no agent. By the agents' transcripts, the two packages still sent
+to agents cost more with the sketch than without: 164 tool uses against
+145, and 690,000 tokens of final context against 647,000. Their agents
+still checked the import structure themselves, and n8n-mcp's solver found
+the sixth flaw below. One run per package shows a direction, not an effect
+size: the coarse level paid where it settled a package outright, and the
+sketch in the prompt did not shorten the agents' reading.
+
 ## Claims
 
 A claim is a JSON file:
@@ -227,14 +241,19 @@ The question went to the 24 servers of Landscape's MCP Trust Index whose
 tool-reach cell REA's facts leave unknown, and to two calibration servers
 whose answer they settle (@drawio/mcp: yes; @upstash/context7-mcp: no),
 without telling the agents which were which. Round 2 ran the committed
-workflow once more, on the three servers the first run's fixes affected.
+workflow once more, on the three servers the first run's fixes affected,
+and round 3 ran those three again coarse to fine (below).
 
-|                         | First run                | Round 2                |
-| ----------------------- | ------------------------ | ---------------------- |
-| Packages                | 26, in 9 batches         | 3, one per batch       |
-| Solvers and reviewers   | 9 and 9                  | 3 and 3                |
-| Wall time, 2 at a time  | 101 min                  | 17 min                 |
-| Agent tokens, tool uses | about 3.7 million, 1,177 | about 1.0 million, 212 |
+|                         | First run                | Round 2                | Round 3                         |
+| ----------------------- | ------------------------ | ---------------------- | ------------------------------- |
+| Packages                | 26, in 9 batches         | 3, one per batch       | 3: 1 settled by plan, 2 batches |
+| Solvers and reviewers   | 9 and 9                  | 3 and 3                | 2 and 2                         |
+| Wall time, 2 at a time  | 101 min                  | 17 min                 | 14 min                          |
+| Agent tokens, tool uses | about 3.7 million, 1,177 | about 1.0 million, 212 | about 0.7 million, 164          |
+
+Agent tokens are what the workflow reports: the sum of each agent's final
+context. Counting every model call's input, cache reads included, round 2
+processed 20.8 million tokens and round 3 17.4 million.
 
 Of the 24 unknown cells, 21 are settled:
 
@@ -267,8 +286,8 @@ Calibration: in the first run @drawio/mcp came out right, and
 a reviewer that marked it refuted while writing that no step failed. In
 round 2 it came out right.
 
-The agents found five flaws in the harness itself. Each is fixed, the
-first four with a test that fails without the fix:
+The agents found six flaws in the harness itself. Each is fixed, all but
+the fifth with a test that fails without the fix:
 
 1. The check counted `shell: false` as a shell (rea-agents' reviewer,
    first run).
@@ -290,15 +309,21 @@ first four with a test that fails without the fix:
    even a line a tool reaches that starts no process (n8n-mcp's reviewer,
    round 2). The field is gone: `why` says which it is. First-run claims
    still carry it, and the check ignores it.
+6. The scan read a require of a template literal with `${…}` as a literal
+   specifier, so a path computed at runtime counted as neither runtime
+   code nor an escape (n8n-mcp's solver, round 3, at
+   `dist/loaders/node-loader.js:40`). It is now code loaded at runtime.
 
 After the first three fixes, every first-run claim was checked again. Two
 outcomes changed, both of servers round 2 re-ran: @tanstack/ai-mcp's "no"
 and n8n-mcp's refuted "no" left out a file the scan now lists. After the
-last two, both rounds' claims were checked again and none changed. The
+last three, and after the sketch's own additions to the scan
+(`getBuiltinModule`, Node's spawn bindings and `createRequire` called at
+once), every claim of every round was checked again and none changed. The
 first run was collected before `collect` existed, with the same rule but
-without the review-consistency test; round 2's results come from
-`collect`. By the solvers' own count, the check turned back 13 drafts in
-the first run and none in round 2.
+without the review-consistency test; rounds 2 and 3 come from `collect`.
+By the solvers' own count, the check turned back 13 drafts in the first
+run, none in round 2 and 3 in round 3.
 
 ## Data boundary
 

@@ -16,13 +16,20 @@ import {
 
 const SCRIPT = /\.[cm]?js$/;
 
-/**
- * A literal module specifier on a line: require("…"), import("…"), import …
- * from "…", export … from "…", import "…", and getBuiltinModule("…"), which
- * loads a built-in such as child_process without an import.
- */
-export const SPECIFIER =
+const SPECIFIER =
   /(?:\brequire\s*\(\s*|\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bgetBuiltinModule\s*\(\s*)(["'`])([^"'`\n]+)\1/g;
+
+/**
+ * The literal module specifiers a line names: require("…"), import("…"),
+ * import … from "…", export … from "…", import "…", and
+ * getBuiltinModule("…"), which loads a built-in such as child_process
+ * without an import. A template literal with ${…} names a path computed at
+ * runtime, which RUNTIME_CODE counts instead.
+ */
+export const specifiersOf = (line) =>
+  [...line.matchAll(SPECIFIER)]
+    .map((match) => match[2])
+    .filter((specifier) => !specifier.includes("${"));
 
 /** A line that registers an MCP tool, in the SDKs' and common frameworks' forms. */
 export const REGISTRATION =
@@ -63,10 +70,10 @@ const HANDED_ON =
   /[(,=:{]\s*(?:spawn|spawnSync|execFile|execFileSync|execSync|exec|fork)\s*[,)}]/;
 
 // A line that loads or evaluates code the specifiers do not name: require or
-// import() of an expression, require made by createRequire and called at
-// once, new Function and eval.
+// import() of an expression or of a template literal with ${…}, require
+// made by createRequire and called at once, new Function and eval.
 const RUNTIME_CODE =
-  /\brequire\s*\(\s*[^"'`\s)]|\bimport\s*\(\s*[^"'`\s)]|\bcreateRequire\s*\([^)]*\)\s*\(|\bnew\s+Function\s*\(|(?:^|[^.\w$])eval\s*\(/;
+  /\b(?:require|import)\s*\(\s*(?:[^"'`\s)]|`[^`]*\$\{)|\bcreateRequire\s*\([^)]*\)\s*\(|\bnew\s+Function\s*\(|(?:^|[^.\w$])eval\s*\(/;
 
 /** The lines of one file of a package, read once per process. */
 export const linesOf = (() => {
@@ -109,8 +116,7 @@ export const runningFiles = (root) =>
 
 const processImports = (lines) =>
   lines.flatMap((line, index) =>
-    [...line.matchAll(SPECIFIER)]
-      .map((match) => match[2])
+    specifiersOf(line)
       .filter(
         (specifier) =>
           isProcessModule(specifier) || processLibraryOf(specifier) !== null,

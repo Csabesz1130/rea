@@ -10,10 +10,10 @@ import path from "node:path";
 
 import {
   REGISTRATION,
-  SPECIFIER,
   linesOf,
   runningFiles,
   scan,
+  specifiersOf,
 } from "./scan.mjs";
 
 // Node's extension and index probing, broadened to the extensionless
@@ -134,8 +134,7 @@ const ownTargets = (root, manifest, specifier, files) => {
 
 const importsOf = (root, file, manifest, files) =>
   linesOf(root, file).flatMap((text, index) =>
-    [...text.matchAll(SPECIFIER)].map((match) => {
-      const specifier = match[2];
+    specifiersOf(text).map((specifier) => {
       const line = index + 1;
       if (specifier.startsWith("#")) {
         const targets = mapTargets(root, manifest.imports?.[specifier], files);
