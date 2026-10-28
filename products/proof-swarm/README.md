@@ -93,9 +93,9 @@ files.
 
 On the 26 packages of the first run, level 0 settles one,
 @upstash/context7-mcp, and agrees with its reviewed "no"; it leaves all 15
-reviewed "yes" packages open. Sketching all 26 took 13.8 s and 14.5 s of
-CPU in one process, with a peak of 412 MB, most of it the cache of every
-package's text.
+reviewed "yes" packages open. `plan` sketched all 26 in 7.2 to 8.3 s and
+7.9 to 9.1 s of CPU over two runs, with a peak of 458 MB, most of it the
+cache of every package's text.
 
 Round 3 ran round 2's three packages again through `plan`: level 0
 settled @upstash/context7-mcp in 55 ms with no agent, and n8n-mcp and
@@ -110,6 +110,56 @@ still checked the import structure themselves, and n8n-mcp's solver found
 the sixth flaw below. One run per package shows a direction, not an effect
 size: the coarse level paid where it settled a package outright, and the
 sketch in the prompt did not shorten the agents' reading.
+
+### REA at level 0
+
+The scan reads text, so a process call or an `eval` written in a string, a
+regex, a comment or a method definition keeps a package open as surely as
+a real one. With `--rea`, `sketch` and `plan` ask REA's parse which matches
+are code. REA reports every call, load and evaluation where it starts, so
+a match where REA's parse finds none is not one: level 0 discharges it.
+
+REA runs only when its facts could settle the package: no process-capable
+file is reached, every open line is a form REA reports at the very
+position the scan matched (a bare `eval`, `require`, `import()` or
+`Function`, or a process function called by its bare name), and every file
+that holds one is at most 640 KB. Of real package files analyzed alone at
+standard depth, REA examined every one up to 602 KB in full; for every one
+from 719 KB to 2.6 MB its semantic graph exceeded REA's result budget
+after 17 to 48 s, and REA recorded a failure. REA then analyzes copies of
+those files alone, and a match is discharged only when REA examined its
+file in full by Release Watch's coverage (no node limit, no failure) and
+reports nothing starting there. Positions are compared as offsets into the
+same text, because REA counts U+2028, U+2029 and a lone carriage return as
+line breaks and the scan does not. Level 0 records its basis, `scan and
+REA`, and `rea`: the Evidence id, the files and every discharged line,
+REA's error, or why REA was not run. `collect` sketches a package settled
+this way again with REA.
+
+On the 26 packages, level 0 with REA settles two: context7, and n8n-mcp,
+whose six open lines were strings, a regex and method definitions in
+three files. Both agree with their reviewed "no", and none of the 15
+reviewed "yes" packages is settled. The other reviewed "no" packages stay
+open for real reasons: @tanstack/ai-mcp reaches a process-capable file,
+and creem, @launchdarkly/mcp-server, @modelcontextprotocol/server-pdf and
+@notionhq/notion-mcp-server build code at runtime (depd's and ajv's
+`new Function`, function-bind's `Function`, express's `require(mod)`) in
+bundles of 1.0 to 2.6 MB, too large for REA to examine. `plan --rea`
+took 13.8 to 14.1 s, 18.4 to 18.7 s of CPU and a peak of 874 MB across its
+processes over two runs, against the 7.2 to 8.3 s above without REA.
+Before the size bound, REA spent 184 s analyzing those four bundles to no
+effect.
+
+Before relying on it, REA's positions were checked on packages written
+for each case. REA reported every real bare call, load and evaluation, 62
+in all, exactly where the scan matched it: in closures, class fields and
+static blocks, default parameters, getters, computed keys, templates,
+`new` expressions and optional calls, after non-ASCII text, a byte-order
+mark, a shebang, CRLF line ends and the line breaks above, and in a file
+whose parse REA recovered from a syntax error (Babel's recovery parses on
+through the same tokens). For invalid UTF-8 or a parse that fails, REA
+records a failure and nothing is discharged. Comparing line and column
+instead of offsets fails the tests.
 
 ## Claims
 
@@ -194,17 +244,19 @@ A claim is a JSON file:
 
 ```bash
 node bin/proof-swarm.mjs scan <package-dir>
-node bin/proof-swarm.mjs sketch <package-dir> [--level <0-3>]
+node bin/proof-swarm.mjs sketch <package-dir> [--level <0-3>] [--rea]
 node bin/proof-swarm.mjs check <claim.json> --package <package-dir>
-node bin/proof-swarm.mjs plan <workflow-args.json>
+node bin/proof-swarm.mjs plan <workflow-args.json> [--rea]
 node bin/proof-swarm.mjs collect <workflow-args.json> <workflow-result.json>
 ```
 
 `scan` lists what a claim must account for. `sketch` prints `{ levels }`
-up to `--level` (default 3). `check` prints `{ status, errors, warnings,
+up to `--level` (default 3); `--rea` adds REA's facts to level 0 and needs
+this checkout's REA build (`npm run build:cached`) or `REA_CLI`. `check` prints `{ status, errors, warnings,
 scan }` and exits 0 when the claim passes, 1 when it fails. `plan` prints
 the workflow's args again, with packages level 0 settles under `settled`
-and every other package carrying its sketch's levels 0 to 2. `collect`
+and every other package carrying its sketch's levels 0 to 2; `--rea`
+sketches with REA's facts. `collect`
 prints `{ outcomes, records }` for a swarm run: each
 package's claim, its check, its reviews, the solver's own report and the
 outcome (`reviewed yes`, `reviewed no`, `settled by the scan`,
@@ -219,7 +271,11 @@ starts processes (Release Watch's catalog: execa, node-pty, the MCP SDK's
 stdio client transport and others), lines that may call a process function
 (anywhere, since a file can call a function it was handed), process
 functions handed on as values, and lines that load or evaluate code at
-runtime. Files named as tests and declaration files do not count
+runtime. A module loads through `require` and what bundlers rename it to
+(`__require`, `require2`), `Module._load`, `getBuiltinModule` and every
+name a file binds to a `createRequire` result; a `createRequire` result
+that no name keeps whole is code loaded at runtime. Optional calls
+(`require?.(…)`) count like calls. Files named as tests and declaration files do not count
 (Landscape's catalog). It over-reports rather than misses; a "no" explains
 each line it lists.
 
@@ -230,7 +286,8 @@ script for the Workflow tool. It takes `{ cli, claims, batches }`: the path
 of `bin/proof-swarm.mjs`, a directory for claim files, and batches of
 `{ name, version, dir, slug, reasons }`, with `calibration` (`yes` or `no`)
 for a package whose answer is known; only `collect` reads it. Run `plan` on
-those args first and give the workflow what it prints; save the run's
+those args first, with `--rea` where REA is built, and give the workflow
+what it prints; save the run's
 return value as JSON and pass it to `collect` with the planned args. The
 prompts are the protocol, so any agent runner can follow them with the same
 commands.
@@ -319,8 +376,16 @@ outcomes changed, both of servers round 2 re-ran: @tanstack/ai-mcp's "no"
 and n8n-mcp's refuted "no" left out a file the scan now lists. After the
 last three, and after the sketch's own additions to the scan
 (`getBuiltinModule`, Node's spawn bindings and `createRequire` called at
-once), every claim of every round was checked again and none changed. The
-first run was collected before `collect` existed, with the same rule but
+once), every claim of every round was checked again and none changed.
+
+Feeding REA's facts into level 0 turned up two more gaps, found while
+building it rather than by agents, and fixed with tests: REA's line
+numbers differ from the scan's after U+2028, U+2029 or a lone carriage
+return, which would have discharged a real `eval`; and the scan missed
+modules loaded through bundlers' `require` names and `createRequire`
+bindings (two packages, both reviewed "yes", gain a process-capable file),
+optional calls and `Function(…)` without `new`. The wider scan drops nothing it found before. Every claim of every
+round was checked again and none changed. The first run was collected before `collect` existed, with the same rule but
 without the review-consistency test; rounds 2 and 3 come from `collect`.
 By the solvers' own count, the check turned back 13 drafts in the first
 run, none in round 2 and 3 in round 3.
@@ -349,6 +414,16 @@ locally, and nothing in `src/` calls a model.
   call from pieces at runtime is listed as an escape when the scan sees a
   dynamic load, and missed when it does not; deliberately disguised code
   is out of reach of a text scan.
+- The scan misses ordinary forms it does not model: a loader handed from
+  one file to another, a process function called through `.call`,
+  `.apply`, `Reflect` or a computed member, a call split across lines, a
+  tagged template, and a `createRequire` call more than 32 lines long or
+  with an unbalanced parenthesis in a regex inside it. It reads `.js`,
+  `.mjs` and `.cjs` files and node scripts; Node does not strip types or
+  run JSX under node_modules, so `.ts` and `.jsx` files do not count.
+- REA's facts discharge a match only where REA examined its file in full
+  and its parse finds nothing starting there; they say nothing about the
+  matches they keep, which agents still explain.
 - The sketch's closure follows literal imports between the package's own
   files. It does not decide which functions in a reached file run, so a
   large bundle is reached whole and stays open.
@@ -370,5 +445,11 @@ an import, and a collection in which only a passing claim with a
 consistent, upholding review is an answer. The sketch's tests cover a
 package level 0 settles because nothing can start a process, one it
 settles because no entry point loads the process code, the same package
-kept open by code loaded at runtime, every kind of escape, and a plan whose
-settled package collect reports as settled by the scan.
+kept open by code loaded at runtime, every kind of escape, a package with
+no entry point read whole, the loaders bundlers and `createRequire` leave,
+and a plan whose settled package collect reports as settled by the scan.
+With REA built, they also check that REA's facts discharge a comment, a
+string, a regex and a method definition; keep a real `eval` after a
+U+2028 and one after a syntax error REA's parser recovers from; leave
+forms REA does not report where they match to the scan; and settle a plan
+that collect reports on the same basis.

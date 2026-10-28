@@ -62,6 +62,7 @@ export const app = (overrides = {}) => ({
   htmlSinks: [],
   memberCalls: [],
   dynamicEvaluation: [],
+  dynamicCalls: [],
   inlineScripts: 0,
   ...overrides,
 });

@@ -8,13 +8,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-import {
-  REGISTRATION,
-  linesOf,
-  runningFiles,
-  scan,
-  specifiersOf,
-} from "./scan.mjs";
+import { REGISTRATION, linesOf, loadsOf, runningFiles, scan } from "./scan.mjs";
+import { REA_FULL_FILE_BYTES, reaFacts } from "./rea-facts.mjs";
 
 // Node's extension and index probing, broadened to the extensionless
 // specifiers bundlers and compilers leave behind. Reaching more files than
@@ -133,8 +128,8 @@ const ownTargets = (root, manifest, specifier, files) => {
 };
 
 const importsOf = (root, file, manifest, files) =>
-  linesOf(root, file).flatMap((text, index) =>
-    specifiersOf(text).map((specifier) => {
+  loadsOf(root, file).specifiers.flatMap((specifiers, index) =>
+    specifiers.map((specifier) => {
       const line = index + 1;
       if (specifier.startsWith("#")) {
         const targets = mapTargets(root, manifest.imports?.[specifier], files);
@@ -220,44 +215,67 @@ const text = (root, site) =>
     ? null
     : linesOf(root, site.file)[site.line - 1].trim().slice(0, 160);
 
+/**
+ * What a package's text says: the scan, the running files, the entry
+ * points, what they reach through literal imports (every running file when
+ * there is no entry point, since any of them may then run) and where tools
+ * are registered.
+ */
+const read = (root) => {
+  const found = scan(root);
+  const list = runningFiles(root);
+  const files = new Set(list);
+  const entries = entryPoints(root, files);
+  const reach = closure(
+    root,
+    entries.length > 0 ? entries : list,
+    files,
+    found.runtimeCode,
+  );
+  const tools = list.flatMap((file) =>
+    linesOf(root, file).flatMap((line, index) =>
+      REGISTRATION.test(line) ? [{ file, line: index + 1 }] : [],
+    ),
+  );
+  return { root, found, files, entries, reach, tools };
+};
+
 // Level 0: the whole package, and its answer when nothing that can run
-// starts a process.
-const packageLevel = (found, entries, reach, tools) => {
-  const counts = {
+// starts a process: no process-capable file and no candidate call is
+// reached, and nothing reached loads code another way. `open` holds the
+// escapes and candidate calls still open, after any REA discharged.
+const packageLevel = ({ found, entries, reach, tools }, open) => {
+  const head = {
     files: found.files,
     entry_points: entries.length,
     reached: reach.running,
     process_capable_files: found.capable.length,
     candidate_calls: found.candidates.length,
     runtime_code: found.runtimeCode.length,
-    escapes: reach.escapes.length,
+    escapes: open.escapes.length,
     tool_registrations: tools.length,
+    basis: open.rea ? "scan and REA" : "scan",
+    ...(open.rea ? { rea: open.rea } : {}),
   };
+  const reached = ({ file }) => reach.reached.has(file);
   if (
-    found.capable.length +
-      found.candidates.length +
-      found.runtimeCode.length ===
-    0
+    found.capable.some(reached) ||
+    open.candidates.some(reached) ||
+    open.escapes.length > 0
   )
-    return {
-      ...counts,
-      verdict: "no",
-      why: "the scan finds no process-capable file, candidate process call or code loaded at runtime in the shipped files",
-    };
-  const outside =
-    found.capable.every(({ file }) => !reach.reached.has(file)) &&
-    found.candidates.every(({ file }) => !reach.reached.has(file));
-  if (entries.length > 0 && reach.escapes.length === 0 && outside)
-    return {
-      ...counts,
-      verdict: "no",
-      why: "every process-capable file and candidate process call is outside what the entry points load through literal imports, and nothing they load can load code another way",
-    };
-  return { ...counts, verdict: "open" };
+    return { ...head, verdict: "open" };
+  return {
+    ...head,
+    verdict: "no",
+    why:
+      found.capable.length + open.candidates.length === 0
+        ? "nothing in the shipped files can start a process: no file loads a process module or library, no line calls a process function, and nothing that runs loads code another way"
+        : "every process-capable file and candidate process call is outside what the entry points load through literal imports, and nothing they load can load code another way",
+  };
 };
 
 // Level 2: the files a question about process reach turns on.
-const fileLevel = (found, reach, tools) => {
+const fileLevel = ({ found, reach, tools }, open) => {
   const files = new Map();
   const at = (file) => {
     if (!files.has(file))
@@ -272,7 +290,7 @@ const fileLevel = (found, reach, tools) => {
   };
   for (const { file, imports } of found.capable)
     at(file).loads.push(...new Set(imports.map((item) => item.specifier)));
-  for (const { file } of found.candidates) at(file).candidate_calls += 1;
+  for (const { file } of open.candidates) at(file).candidate_calls += 1;
   for (const { file } of tools) at(file).tool_registrations += 1;
   return [...files.values()].sort(
     (a, b) =>
@@ -280,55 +298,142 @@ const fileLevel = (found, reach, tools) => {
   );
 };
 
-/**
- * The sketch of the package at `root`: `{ levels }`, levels 0 to 3, each a
- * `{ level, name, positions }`. Level 0 is the package with its verdict
- * ("no" or "open"); level 1 its entry points; level 2 the files that load
- * a process module or library, call a process function or register a tool,
- * each marked reached or not; level 3 the lines left open: every escape,
- * and the candidate calls and tool registrations in reached files. When
- * level 0 settles the package, levels 1 to 3 are empty.
- */
-export const sketch = (root) => {
-  const found = scan(root);
-  const list = runningFiles(root);
-  const files = new Set(list);
-  const entries = entryPoints(root, files);
-  const reach = closure(root, entries, files, found.runtimeCode);
-  const tools = list.flatMap((file) =>
-    linesOf(root, file).flatMap((line, index) =>
-      REGISTRATION.test(line) ? [{ file, line: index + 1 }] : [],
-    ),
-  );
-  const head = packageLevel(found, entries, reach, tools);
-  const open = head.verdict === "open";
+const levelsOf = (state, open) => {
+  const { root, entries, reach, tools } = state;
+  const head = packageLevel(state, open);
+  const unsettled = head.verdict === "open";
+  const reached = ({ file }) => reach.reached.has(file);
   const lines = [
-    ...reach.escapes.map((site) => ({ ...site, text: text(root, site) })),
-    ...found.candidates
-      .filter(({ file }) => reach.reached.has(file))
-      .map((site) => ({
-        ...site,
-        kind: "candidate call",
-        text: text(root, site),
-      })),
-    ...tools
-      .filter(({ file }) => reach.reached.has(file))
-      .map((site) => ({
-        ...site,
-        kind: "tool registration",
-        text: text(root, site),
-      })),
+    ...open.escapes.map((site) => ({ ...site, text: text(root, site) })),
+    ...open.candidates.filter(reached).map((site) => ({
+      ...site,
+      kind: "candidate call",
+      text: text(root, site),
+    })),
+    ...tools.filter(reached).map((site) => ({
+      ...site,
+      kind: "tool registration",
+      text: text(root, site),
+    })),
   ];
   return {
     levels: [
       { level: 0, name: "package", positions: [head] },
-      { level: 1, name: "entry points", positions: open ? entries : [] },
+      { level: 1, name: "entry points", positions: unsettled ? entries : [] },
       {
         level: 2,
         name: "files",
-        positions: open ? fileLevel(found, reach, tools) : [],
+        positions: unsettled ? fileLevel(state, open) : [],
       },
-      { level: 3, name: "lines", positions: open ? lines : [] },
+      { level: 3, name: "lines", positions: unsettled ? lines : [] },
     ],
   };
+};
+
+/**
+ * The sketch of the package at `root`: `{ levels }`, levels 0 to 3, each a
+ * `{ level, name, positions }`. Level 0 is the package with its verdict
+ * ("no" or "open") and its basis; level 1 its entry points; level 2 the
+ * files that load a process module or library, call a process function or
+ * register a tool, each marked reached or not; level 3 the lines left
+ * open: every escape, and the candidate calls and tool registrations in
+ * reached files. When level 0 settles the package, levels 1 to 3 are
+ * empty.
+ */
+export const sketch = (root) => {
+  const state = read(root);
+  return levelsOf(state, {
+    escapes: state.reach.escapes,
+    candidates: state.found.candidates,
+    rea: null,
+  });
+};
+
+// The forms REA can rule out: a bare eval, require or import(), and a bare
+// call of a process function, which REA reports where the match starts.
+const positionsOf = (item) =>
+  item.kind === "code loaded or evaluated at runtime"
+    ? item.forms
+    : (item.calls ?? null);
+
+const rulable = (item) => {
+  const positions = positionsOf(item);
+  return (
+    Array.isArray(positions) &&
+    positions.length > 0 &&
+    positions.every(({ bare }) => bare)
+  );
+};
+
+/**
+ * The sketch with REA's facts. Only when REA's parse could settle the
+ * package, because no process-capable file is reached, every escape and
+ * reached candidate call is a bare form and every file that holds one is
+ * small enough for REA to examine in full (REA_FULL_FILE_BYTES), REA
+ * analyzes those files, and an item is discharged when REA examined its
+ * file in full and finds no call, load or evaluation starting where the
+ * text matched: the match is in a string, a regex, a comment or a
+ * definition. Level 0 then records `rea`: the Evidence id, the files REA
+ * analyzed and each item it discharged; REA's error; or, for a file too
+ * large, why REA was not run.
+ */
+export const sketchWithRea = async (root) => {
+  const state = read(root);
+  const { found, reach } = state;
+  const reachedCandidates = found.candidates.filter(({ file }) =>
+    reach.reached.has(file),
+  );
+  const items = [...reach.escapes, ...reachedCandidates];
+  const plain = {
+    escapes: reach.escapes,
+    candidates: found.candidates,
+    rea: null,
+  };
+  if (
+    items.length === 0 ||
+    found.capable.some(({ file }) => reach.reached.has(file)) ||
+    !items.every(rulable)
+  )
+    return levelsOf(state, plain);
+  const files = [...new Set(items.map(({ file }) => file))].sort();
+  const large = files.filter(
+    (file) => statSync(path.join(root, file)).size > REA_FULL_FILE_BYTES,
+  );
+  if (large.length > 0)
+    return levelsOf(state, {
+      ...plain,
+      rea: {
+        files,
+        not_run: `REA's semantic graph of a file above ${REA_FULL_FILE_BYTES / 1024} KB exceeds its result budget at standard depth, so it could rule nothing out in ${large.join(", ")}`,
+      },
+    });
+  const facts = await reaFacts(root, files);
+  if (!facts.ok)
+    return levelsOf(state, { ...plain, rea: { files, error: facts.error } });
+  const ruledOut = (item) =>
+    facts.examined(item.file) &&
+    positionsOf(item).every(
+      ({ column }) => !facts.startsAt(item.file, item.line, column),
+    );
+  const kept = (item) => !ruledOut(item);
+  return levelsOf(state, {
+    escapes: reach.escapes.filter(kept),
+    candidates: found.candidates.filter(
+      (item) => !reach.reached.has(item.file) || kept(item),
+    ),
+    rea: {
+      evidence_id: facts.evidence_id,
+      files,
+      discharged: [
+        ...new Map(
+          items
+            .filter(ruledOut)
+            .map(({ file, line }) => [
+              `${file}:${line}`,
+              { file, line, text: text(root, { file, line }) },
+            ]),
+        ).values(),
+      ],
+    },
+  });
 };

@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { checkClaim } from "./check.mjs";
-import { sketch } from "./sketch.mjs";
+import { sketch, sketchWithRea } from "./sketch.mjs";
 
 export const OUTCOMES = [
   "reviewed yes",
@@ -73,10 +73,15 @@ const byName = (entries) => {
   return map;
 };
 
-// A package plan settled before the run, sketched again: its outcome is
-// "settled by the scan" only while level 0 still says no.
-const settledRecord = (item) => {
-  const [head] = sketch(item.dir).levels[0].positions;
+// A package plan settled before the run, sketched again on the basis it
+// was settled on: its outcome is "settled by the scan" only while level 0
+// still says no.
+const settledRecord = async (item) => {
+  const { levels } =
+    item.sketch?.basis === "scan and REA"
+      ? await sketchWithRea(item.dir)
+      : sketch(item.dir);
+  const [head] = levels[0].positions;
   return {
     name: item.name,
     version: item.version,
@@ -100,7 +105,7 @@ const settledRecord = (item) => {
  * Each record keeps the claim, the check, the reviews and the solver's own
  * report beside the outcome; a package plan settled is sketched again.
  */
-export const collect = (args, result) => {
+export const collect = async (args, result) => {
   const runs = Array.isArray(result?.results) ? result.results : [];
   const solved = byName(runs.flatMap((run) => run?.solve?.packages ?? []));
   const reviewed = byName(runs.flatMap((run) => run?.review?.reviews ?? []));
@@ -124,7 +129,8 @@ export const collect = (args, result) => {
       };
     }),
   );
-  records.push(...(args?.settled ?? []).map(settledRecord));
+  for (const item of args?.settled ?? [])
+    records.push(await settledRecord(item));
   const outcomes = Object.fromEntries(
     OUTCOMES.map((outcome) => [
       outcome,

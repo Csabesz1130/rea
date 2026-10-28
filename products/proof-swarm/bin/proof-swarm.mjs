@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // proof-swarm scan <package-dir>
-// proof-swarm sketch <package-dir> [--level <0-3>]
+// proof-swarm sketch <package-dir> [--level <0-3>] [--rea]
 // proof-swarm check <claim.json> --package <package-dir>
-// proof-swarm plan <workflow-args.json>
+// proof-swarm plan <workflow-args.json> [--rea]
 // proof-swarm collect <workflow-args.json> <workflow-result.json>
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -12,13 +12,13 @@ import { collect } from "../src/accept.mjs";
 import { plan } from "../src/plan.mjs";
 import { checkClaim } from "../src/check.mjs";
 import { scan } from "../src/scan.mjs";
-import { sketch } from "../src/sketch.mjs";
+import { sketch, sketchWithRea } from "../src/sketch.mjs";
 
 const USAGE = `Usage:
   proof-swarm scan <package-dir>
-  proof-swarm sketch <package-dir> [--level <0-3>]
+  proof-swarm sketch <package-dir> [--level <0-3>] [--rea]
   proof-swarm check <claim.json> --package <package-dir>
-  proof-swarm plan <workflow-args.json>
+  proof-swarm plan <workflow-args.json> [--rea]
   proof-swarm collect <workflow-args.json> <workflow-result.json>
 
 scan: what a claim about the package's process reach must account for: the
@@ -28,14 +28,18 @@ and every line that loads or evaluates code at runtime.
 sketch: the package coarse to fine, in levels up to --level (default 3):
 the package and its verdict, its entry points, the files the question turns
 on, and the lines left open. Level 0 says "no" when nothing that can run
-starts a process; finer levels list only what coarser ones leave open.
+starts a process; finer levels list only what coarser ones leave open. With
+--rea, where REA's parse could settle the package, REA analyzes the files
+that hold its open lines and rules out matches that are no call, load or
+evaluation (in a string, a regex, a comment or a definition). It needs this
+checkout's REA build or REA_CLI.
 
 check: checks one claim (README.md: Claims) against the package's shipped
 text and prints { status, errors, warnings, scan }.
 
 plan: sketches every package in a workflow's args and prints the args again:
 packages level 0 settles move to settled, and every other package carries
-its sketch's levels 0 to 2 for the agents.
+its sketch's levels 0 to 2 for the agents. --rea sketches with REA.
 
 collect: checks every claim file a swarm run wrote again, pairs it with the
 run's reviews and prints { outcomes, records }. A claim is an answer only
@@ -57,6 +61,7 @@ try {
     options: {
       package: { type: "string" },
       level: { type: "string" },
+      rea: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -114,7 +119,8 @@ if (command === "scan") {
 } else if (command === "sketch") {
   const level = values.level === undefined ? 3 : Number(values.level);
   if (![0, 1, 2, 3].includes(level)) usage("--level is 0, 1, 2 or 3.");
-  const { levels } = sketch(directory(target));
+  const root = directory(target);
+  const { levels } = values.rea ? await sketchWithRea(root) : sketch(root);
   process.stdout.write(
     `${JSON.stringify({ levels: levels.filter((item) => item.level <= level) }, null, 1)}\n`,
   );
@@ -122,8 +128,8 @@ if (command === "scan") {
   const args = workflowArgs(target);
   const output =
     command === "plan"
-      ? plan(args)
-      : collect(args, readJson(second, "workflow's result file"));
+      ? await plan(args, { rea: values.rea === true })
+      : await collect(args, readJson(second, "workflow's result file"));
   process.stdout.write(`${JSON.stringify(output, null, 1)}\n`);
 } else {
   usage(

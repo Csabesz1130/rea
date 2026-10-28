@@ -10,7 +10,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { writeFiles } from "../../release-watch/test/cli-run.mjs";
+import { skip, writeFiles } from "../../release-watch/test/cli-run.mjs";
 
 const cli = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -83,7 +83,10 @@ describe("sketch: level 0", () => {
     );
     const [zero, ...rest] = levels(dir);
     assert.equal(zero.positions[0].verdict, "no");
-    assert.match(zero.positions[0].why, /finds no process-capable file/);
+    assert.match(
+      zero.positions[0].why,
+      /nothing in the shipped files can start a process/,
+    );
     assert.deepEqual(
       rest.map((level) => level.positions.length),
       [0, 0, 0],
@@ -170,6 +173,103 @@ describe("sketch: level 0", () => {
   });
 });
 
+describe("sketch: entry points", () => {
+  it("reads every running file when the package names no entry point", () => {
+    const dir = write(
+      {},
+      {
+        "lib/tools.js": 'server.registerTool("list", {}, async () => []);',
+        "lib/shell.js": 'require("child_process").execSync("make");',
+      },
+    );
+    const top = head(dir);
+    assert.equal(top.entry_points, 0);
+    assert.equal(top.reached, 2);
+    assert.equal(top.verdict, "open");
+  });
+});
+
+// Text that is no call: a comment, a string, a regex and a method
+// definition, each matching a process call or eval.
+const FALSE_POSITIVES = [
+  '// We never call spawn("x") or eval(code) here.',
+  'const help = "run exec(cmd) yourself";',
+  "const pattern = /exec(?:Sync)?\\(/;",
+  "export const tools = { spawn(options) { return options; } };",
+  'server.registerTool("help", {}, async () => help);',
+];
+
+describe("sketch with REA's facts", () => {
+  it("rules out text that REA's parse finds no call in", { skip }, () => {
+    const dir = write(
+      { bin: "index.js" },
+      { "index.js": FALSE_POSITIVES.join("\n") },
+    );
+    assert.equal(head(dir).verdict, "open");
+    const top = run(["sketch", dir, "--rea"]).output.levels[0].positions[0];
+    assert.equal(top.verdict, "no");
+    assert.equal(top.basis, "scan and REA");
+    assert.deepEqual(top.rea.files, ["index.js"]);
+    assert.deepEqual(
+      top.rea.discharged.map(({ line }) => line),
+      [1, 2, 3, 4],
+    );
+  });
+
+  it(
+    "keeps real calls, other line breaks and recovered parses open",
+    { skip },
+    () => {
+      const dir = write(
+        { bin: "index.js" },
+        {
+          "index.js": [
+            'import "./a.js";',
+            'import "./b.js";',
+            'import "./c.js";',
+          ].join("\n"),
+          // REA counts U+2028 as a line break and the scan does not; the eval
+          // is real all the same.
+          "a.js":
+            'const separated = "one\u2028two";\nexport const run = (code) => eval(code);',
+          // REA's parser recovers from the redeclaration and still reports
+          // the eval after it.
+          "b.js":
+            "let x = 1;\nlet x = 2;\nexport const run = (code) => eval(code);",
+          "c.js": 'export const note = "spawn(a) is not called";',
+        },
+      );
+      const { levels } = run(["sketch", dir, "--rea"]).output;
+      const [top] = levels[0].positions;
+      assert.equal(top.verdict, "open");
+      assert.deepEqual(
+        top.rea.discharged.map(({ file, line }) => `${file}:${line}`),
+        ["c.js:1"],
+      );
+      assert.deepEqual(
+        levels[3].positions.map(
+          ({ file, line, kind }) => `${file}:${line} ${kind}`,
+        ),
+        [
+          "a.js:2 code loaded or evaluated at runtime",
+          "b.js:3 code loaded or evaluated at runtime",
+        ],
+      );
+    },
+  );
+
+  it("leaves forms REA does not report where they match to the scan", () => {
+    const dir = write(
+      { bin: "index.js" },
+      { "index.js": "export const value = globalThis.eval(source);" },
+    );
+    const top = run(["sketch", dir, "--rea"]).output.levels[0].positions[0];
+    assert.equal(top.verdict, "open");
+    assert.equal(top.basis, "scan");
+    assert.equal(top.rea, undefined);
+  });
+});
+
 describe("plan and collect", () => {
   it("settles what level 0 settles and gives the rest their sketch", () => {
     const quiet = write(
@@ -222,6 +322,89 @@ describe("plan and collect", () => {
     const { outcomes } = run(["collect", plannedFile, resultFile]).output;
     assert.equal(outcomes["settled by the scan"], 1);
     assert.equal(outcomes["no claim"], 1);
+  });
+
+  it(
+    "settles with REA's facts and collects on the same basis",
+    { skip },
+    () => {
+      const dir = write(
+        { bin: "index.js" },
+        { "index.js": FALSE_POSITIVES.join("\n") },
+      );
+      const args = path.join(root, "rea-args.json");
+      const item = {
+        name: "help",
+        version: "1.0.0",
+        dir,
+        slug: "help",
+        reasons: [],
+      };
+      writeFileSync(
+        args,
+        JSON.stringify({
+          claims: mkdtempSync(path.join(root, "claims-")),
+          batches: [{ id: 1, packages: [item] }],
+        }),
+      );
+      const planned = run(["plan", args, "--rea"]).output;
+      assert.deepEqual(planned.batches, []);
+      assert.equal(planned.settled[0].sketch.basis, "scan and REA");
+      const plannedFile = path.join(root, "rea-planned.json");
+      const resultFile = path.join(root, "rea-result.json");
+      writeFileSync(plannedFile, JSON.stringify(planned));
+      writeFileSync(resultFile, JSON.stringify({ results: [] }));
+      const { records } = run(["collect", plannedFile, resultFile]).output;
+      assert.equal(records[0].outcome, "settled by the scan");
+      assert.equal(records[0].sketch.basis, "scan and REA");
+    },
+  );
+});
+
+describe("scan: loaders bundlers and createRequire leave", () => {
+  it("counts every name that loads child_process and every passed-on createRequire", () => {
+    const dir = write(
+      { bin: "index.mjs" },
+      {
+        "index.mjs": [
+          'import { createRequire as makeRequire } from "node:module";',
+          'const { spawn } = __require("child_process");',
+          "const load = /* @__PURE__ */ makeRequire(import.meta.url);",
+          'const cp = load("node:child_process");',
+          'const viaModule = Module._load("child_process");',
+          'const optional = process.getBuiltinModule?.("node:child_process");',
+          'const direct = makeRequire(import.meta.url)("child_process");',
+          'plugins.push(makeRequire(new URL("./", import.meta.url)));',
+          'spawn?.("ls");',
+          // Formatted over lines, wrapped as rolldown emits it, and called
+          // on the next line.
+          "const split = makeRequire(",
+          "  import.meta.url,",
+          ");",
+          'split("child_process");',
+          "var __rolled = /* #__PURE__ */ (() => makeRequire(import.meta.url))();",
+          "const later = makeRequire(import.meta.url) // the next line calls it",
+          '  ("child_process");',
+        ].join("\n"),
+      },
+    );
+    const { output } = run(["scan", dir]);
+    assert.deepEqual(
+      output.capable[0].imports.map(({ line }) => line),
+      [2, 4, 5, 6, 13],
+    );
+    assert.deepEqual(
+      output.runtimeCode.map(({ line, forms }) => `${line} ${forms[0].form}`),
+      [
+        "7 createRequire result passed on",
+        "8 createRequire result passed on",
+        "15 createRequire result passed on",
+      ],
+    );
+    assert.deepEqual(
+      output.candidates.map(({ line }) => line),
+      [9],
+    );
   });
 });
 

@@ -21,6 +21,7 @@ import {
   observationFact,
   semanticFact,
 } from "./provenance.mjs";
+import { dynamicCalls, dynamicEvaluation } from "./unknowns.mjs";
 
 // Property reads Release Watch pairs with their calls: the members MCP
 // server SDKs and frameworks register tools through (catalog.mjs), by the
@@ -432,22 +433,6 @@ const memberCalls = (scope) => {
   }
 };
 
-// Dynamic evaluation REA reports as an unknown scope (eval, new Function).
-const dynamicEvaluation = (semantic, contexts) =>
-  (semantic.unknowns ?? []).flatMap((unknown) => {
-    const location = unknown.evidence?.location?.value;
-    if (unknown.reason !== "dynamic-scope" || location?.kind !== "source-range")
-      return [];
-    return [
-      semanticFact(
-        { ...unknown, node_id: unknown.unknown_id },
-        contexts,
-        `${location.source}#eval`,
-        { module: location.source, detail: unknown.detail ?? null },
-      ),
-    ];
-  });
-
 const semanticFacts = (semantic, modules) => {
   const facts = {
     requests: [],
@@ -461,6 +446,7 @@ const semanticFacts = (semantic, modules) => {
     htmlSinks: [],
     memberCalls: [],
     dynamicEvaluation: [],
+    dynamicCalls: [],
     processUnknowns: [],
   };
   if (!semantic) return facts;
@@ -495,6 +481,7 @@ const semanticFacts = (semantic, modules) => {
     SEMANTIC_PROJECTIONS[node.kind]?.(node, scope);
   memberCalls(scope);
   facts.dynamicEvaluation = dynamicEvaluation(semantic, contexts);
+  facts.dynamicCalls = dynamicCalls(semantic, contexts);
   facts.processUnknowns = processUnknowns(semantic, contexts, {
     modules,
     childProcesses: facts.childProcesses,
