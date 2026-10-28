@@ -1,0 +1,28 @@
+#cloud-config
+# First boot of a Hetzner CPX32, or any Ubuntu 24.04 VM, for REA's
+# products: clones this repository as the rea user and runs
+# products/vm/bootstrap.sh, which adds swap, Node.js as .nvmrc pins it, the
+# locked dependencies and REA's build (README.md in this directory). Change
+# the branch below to run another one. Progress goes to
+# /var/log/rea-bootstrap.log; `cloud-init status --wait` returns when it is
+# done, and /var/lib/rea-bootstrap.done exists once it succeeded.
+package_update: true
+packages:
+  - git
+  - ca-certificates
+  - curl
+  - xz-utils
+runcmd:
+  - - bash
+    - -c
+    - |
+      set -euo pipefail
+      exec >>/var/log/rea-bootstrap.log 2>&1
+      export REA_BRANCH=claude/release-watch-prototype
+      export REA_REPO=https://github.com/Csabesz1130/rea.git
+      id -u rea >/dev/null 2>&1 || useradd --create-home --shell /bin/bash rea
+      if [ ! -d /home/rea/rea/.git ]; then
+        runuser -u rea -- env HOME=/home/rea git clone --quiet --branch "$REA_BRANCH" --single-branch "$REA_REPO" /home/rea/rea
+      fi
+      bash /home/rea/rea/products/vm/bootstrap.sh
+      touch /var/lib/rea-bootstrap.done

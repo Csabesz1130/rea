@@ -290,7 +290,8 @@ those args first, with `--rea` where REA is built, and give the workflow
 what it prints; save the run's
 return value as JSON and pass it to `collect` with the planned args. The
 prompts are the protocol, so any agent runner can follow them with the same
-commands.
+commands. [`products/vm`](../vm/README.md) runs everything up to the agents
+on one rented VM, from the MCP Trust Index to `plan --rea`.
 
 ## First run
 
