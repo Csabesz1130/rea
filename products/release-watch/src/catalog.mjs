@@ -58,7 +58,11 @@ export const aiProviderOf = (host) =>
 
 // `provider` names the one provider whose API an SDK's client calls itself.
 // Frameworks and UI hooks (Vercel AI SDK, LangChain) may call the vendor's
-// own server instead, and Ollama a local one, so they name none.
+// own server instead, and Ollama a local one, so they name none. Neither
+// does pi-ai, the library the pi coding agent calls its models through: it
+// calls whichever provider it is configured for, through the OpenAI,
+// Anthropic, Google Gen AI and Amazon Bedrock SDKs it depends on
+// (@earendil-works/pi-ai 1.5.2, read in its published files).
 const AI_SDKS = [
   { name: "openai", label: "OpenAI SDK", provider: "OpenAI" },
   { name: "@openai/agents", label: "OpenAI Agents SDK", provider: "OpenAI" },
@@ -103,6 +107,7 @@ const AI_SDKS = [
     provider: "Hugging Face",
   },
   { name: "replicate", label: "Replicate client", provider: "Replicate" },
+  { name: "@earendil-works/pi-ai", label: "pi-ai model library" },
 ];
 
 // MCP server SDKs and frameworks, by import specifier, with the member calls
@@ -150,7 +155,8 @@ const MCP_SERVERS = [
 // component that runs no server through them: a client (v1's
 // @modelcontextprotocol/sdk/client, v2's @modelcontextprotocol/client),
 // the HTTP transports and middleware v2 serves a server through, or shared
-// code that says neither (v1's types and protocol, v2's core).
+// code that says neither (v1's types and protocol, v2's core); and other
+// packages that are MCP clients.
 const MCP_PACKAGES = [
   {
     pattern: /^@modelcontextprotocol\/(client|sdk\/client)(\/|$)/,
@@ -166,6 +172,18 @@ const MCP_PACKAGES = [
     pattern: /^@modelcontextprotocol\/(sdk|core)(\/|$)/,
     label: "MCP SDK",
     role: "shared",
+  },
+  // MCP clients that are not the MCP SDK's, each listed after reading its
+  // published files. pi-mcp is the client the pi coding agent connects to
+  // MCP servers through: a client with stdio and Streamable HTTP transports
+  // that does not depend on the MCP SDK (@earendil-works/pi-mcp 1.5.2). Its
+  // stdio transport starts the server it is given, but the package's one
+  // entry exports it beside the HTTP transport, so an import does not say
+  // that a process starts.
+  {
+    pattern: /^@earendil-works\/pi-mcp(\/|$)/,
+    label: "MCP client library",
+    role: "client",
   },
 ];
 

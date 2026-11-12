@@ -58,6 +58,29 @@ describe("catalog", () => {
     assert.equal(sdkOf("@modelcontextprotocol/server-filesystem"), null);
   });
 
+  it("classifies the libraries the pi coding agent calls models and MCP servers through", () => {
+    for (const specifier of [
+      "@earendil-works/pi-mcp",
+      "@earendil-works/pi-mcp/oauth",
+    ]) {
+      assert.equal(sdkOf(specifier)?.kind, "mcp", specifier);
+      assert.equal(sdkOf(specifier).role, "client", specifier);
+    }
+    // It calls whichever provider it is configured for, so it names none.
+    for (const specifier of [
+      "@earendil-works/pi-ai",
+      "@earendil-works/pi-ai/providers/openrouter",
+    ])
+      assert.deepEqual(
+        sdkOf(specifier),
+        { kind: "ai", label: "pi-ai model library", provider: null },
+        specifier,
+      );
+    // The scope's other packages (a terminal UI, an agent loop) are neither.
+    assert.equal(sdkOf("@earendil-works/pi-tui"), null);
+    assert.equal(sdkOf("@earendil-works/pi-mcp-adapter"), null);
+  });
+
   it("takes only an imported server entry, not an installed package, for an MCP server", () => {
     const installed = fact(
       "fastmcp",
