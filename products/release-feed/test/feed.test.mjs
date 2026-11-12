@@ -19,6 +19,7 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { skip } from "../../release-watch/test/cli-run.mjs";
+import { failureOf } from "../src/compare.mjs";
 import {
   isPackageName,
   predecessorOf,
@@ -505,5 +506,39 @@ describe("sizing", () => {
     assert.equal(of(16, 30.5), "4 at 5856 MB");
     assert.equal(of(48, 180), "24 at 5760 MB");
     assert.equal(of(2, 64), "1 at 8192 MB");
+  });
+});
+
+describe("a comparison that ends without a report", () => {
+  it("says it outgrew its heap rather than quoting V8's stack trace", () => {
+    // What Node 22 wrote here when a process outgrew its heap, shortened.
+    const trace = [
+      "<--- Last few GCs --->",
+      "",
+      "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+      "----- Native stack trace -----",
+      "",
+      " 1: 0xe16044 node::OOMErrorHandler(char const*, v8::OOMDetails const&) [node]",
+      " 8: 0x1cc69b1  [/opt/node22/bin/node]",
+      "",
+    ].join("\n");
+    assert.deepEqual(failureOf(trace, null, 8192), {
+      ok: false,
+      reason: "out-of-memory",
+      detail:
+        "Release Watch outgrew its 8192 MB heap; --heap-mb gives a comparison more",
+    });
+    assert.deepEqual(
+      failureOf("a warning\nError: cannot read the release\n", 1, 8192),
+      {
+        ok: false,
+        reason: "compare-failed",
+        detail: "Error: cannot read the release",
+      },
+    );
+    assert.equal(
+      failureOf("", 3, 8192).detail,
+      "Release Watch exited with status 3 and wrote no report",
+    );
   });
 });

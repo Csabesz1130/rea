@@ -1,0 +1,26 @@
+{
+  "title": "Coding agent add-ons on npm: what each release changed",
+  "packages": [
+    "agent-cli-detector",
+    "@vercel/detect-agent",
+    "skills",
+    "agent-install",
+    "@openai/codex-sdk",
+    "acpx",
+    "agent-device",
+    "pi-mcp-adapter",
+    "add-mcp",
+    "@ai-sdk/harness-claude-code",
+    "agentic-flow",
+    "@claude-flow/cli",
+    "pr-shepherd",
+    "@intellectronica/ruler",
+    "ccstatusline",
+    "@musistudio/claude-code-router",
+    "cc-safety-net",
+    "@agents-dev/cli",
+    "claude-mem",
+    "block-no-verify",
+    "tdd-guard"
+  ]
+}

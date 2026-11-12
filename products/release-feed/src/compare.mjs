@@ -30,6 +30,32 @@ const endGroup = (child) => {
   setTimeout(() => signal("SIGKILL"), KILL_GRACE_MS).unref();
 };
 
+// What V8 writes when a process outgrows its heap, before a native stack
+// trace whose last line tells an operator nothing.
+const OUT_OF_HEAP = "JavaScript heap out of memory";
+
+/**
+ * Why a comparison that ended without a report failed, from what it wrote
+ * to stderr: `{ ok: false, reason, detail }` with reason "out-of-memory"
+ * when Release Watch outgrew its `heapMb` heap, else "compare-failed" with
+ * its last line.
+ */
+export const failureOf = (stderr, code, heapMb) => {
+  if (stderr.includes(OUT_OF_HEAP))
+    return {
+      ok: false,
+      reason: "out-of-memory",
+      detail: `Release Watch outgrew its ${heapMb} MB heap; --heap-mb gives a comparison more`,
+    };
+  const last = stderr.trim().split("\n").filter(Boolean).at(-1);
+  return {
+    ok: false,
+    reason: "compare-failed",
+    detail:
+      last ?? `Release Watch exited with status ${code} and wrote no report`,
+  };
+};
+
 /** Ends every comparison still running, as when this process is told to stop. */
 export const endComparisons = () => {
   for (const child of running) endGroup(child);
@@ -40,7 +66,8 @@ export const endComparisons = () => {
  * directory `out` (emptied first): `{ ok: true, report }` with Release
  * Watch's report.json, also when Release Watch could analyze only part of
  * a release (its verdict then says so); or `{ ok: false, reason, detail }`
- * with reason "timeout" (after `timeoutMs`) or "compare-failed". `heapMb`
+ * with reason "timeout" (after `timeoutMs`), "out-of-memory" or
+ * "compare-failed" (failureOf). `heapMb`
  * is the Node heap of Release Watch and of the REA processes it starts;
  * `depth` is Release Watch's ("standard" or "deep").
  */
@@ -114,18 +141,8 @@ export const compareReleases = ({
             detail: `report.json is not JSON: ${error.message}`,
           });
         }
-      const last = Buffer.concat(stderr)
-        .toString("utf8")
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .at(-1);
-      return resolve({
-        ok: false,
-        reason: "compare-failed",
-        detail:
-          last ??
-          `Release Watch exited with status ${code} and wrote no report`,
-      });
+      return resolve(
+        failureOf(Buffer.concat(stderr).toString("utf8"), code, heapMb),
+      );
     });
   });

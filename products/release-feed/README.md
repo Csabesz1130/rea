@@ -69,6 +69,37 @@ What the run taught, beyond its numbers:
 - Reports named the directory the feed ran in. The site's copies now give
   paths relative to the work directory.
 
+### A second watchlist: add-ons for coding agents
+
+`watchlists/agent-addons.json` holds the 21 most-downloaded open add-ons
+for coding agents ([Landscape](../landscape/README.md#on-real-products)
+maps what they do). On 12 November 2026 the feed ran on them with
+`--since 2026-10-20`, one comparison at a time with an 8 GB heap, on the
+same container.
+
+| Measure                                   | Result                                                                                                                                                                |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| With a newer release than on 20 October   | 16 of 21, with 246 releases published in between, 57 for one add-on                                                                                                   |
+| Compared                                  | 15; one failed                                                                                                                                                        |
+| With a change found                       | 8: highest severity high in 2, medium in 3, low in 3                                                                                                                  |
+| Changes                                   | 12: 4 sets of new third-party packages, 4 process executions (2 new, 2 moved), 2 possible new destinations, 1 request with an unresolved destination, 1 more MCP tool |
+| With a note on code that was not examined | 12                                                                                                                                                                    |
+| Wall time and CPU                         | 38.9 min and 72 min                                                                                                                                                   |
+| Peak memory, process family               | 9.1 GB                                                                                                                                                                |
+
+The two high changes are new process execution: `execFile()` in
+@agents-dev/cli 0.9.4 (`dist/core/shell.js`) and `spawn()` in a file new
+in ccstatusline 2.2.34; "new" means REA saw neither in the release
+before.
+
+The failed comparison is pr-shepherd 0.60.0 → 1.6.1 (1.6.1 ships 433
+script files). It ended after about 19 minutes with a V8 stack trace, and
+one process peaked at 9.0 GB, the run's peak: by both, Release Watch
+outgrew its 8 GB heap. The feed recorded it as `compare-failed` with the
+trace's last line. It now records `out-of-memory` and names `--heap-mb`;
+this entry was written before that change, and the comparison was not run
+again with a larger heap.
+
 ## How it works
 
 1. **Ask.** `npm view` gives a package's `latest` release and when each
@@ -88,7 +119,8 @@ What the run taught, beyond its numbers:
    downloaded is run.
 4. **Compare.** Release Watch compares the two directories in a child
    process with its own heap and a time limit. REA reads both releases
-   statically.
+   statically. A comparison that outgrows either is an entry that says
+   which.
 5. **Record.** The outcome is an entry: the two versions with their
    integrity and publish times, how many releases lay between them,
    Release Watch's verdict, its findings as changes or as notes on code
