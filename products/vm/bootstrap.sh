@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Prepares a fresh Ubuntu 24.04 VM, such as a Hetzner CPX32 (4 vCPU, 8 GB),
-# to run REA and its products: an unprivileged user, swap, this repository
+# Prepares a Linux server, fresh or already in use, to run REA and its
+# products (rehearsed on Ubuntu 24.04, for a Hetzner CPX32 and larger): an
+# unprivileged user, swap when the server has none, this repository
 # at a branch, Node.js as .nvmrc pins it (checked against node-sha256.txt),
 # the locked dependencies and REA's build, then a smoke test of REA through
 # Landscape. cloud-init.yaml runs it at first boot; run it again as root to
@@ -40,17 +41,21 @@ as_user() {
   fi
 }
 
-# What the steps below need that a minimal image may lack.
+# What the steps below need. A server already in use usually has them; a
+# minimal Debian or Ubuntu image gets them from apt, and on any other
+# system the bootstrap says what to install.
 packages() {
-  local missing=() package
-  for package in git ca-certificates curl xz-utils; do
-    dpkg-query -W -f='${Status}' "$package" 2>/dev/null |
-      grep -q "install ok installed" || missing+=("$package")
+  local missing=() tool
+  for tool in git curl xz tar; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
   done
   ((${#missing[@]} == 0)) && return
-  say "installing ${missing[*]}"
+  command -v apt-get >/dev/null 2>&1 ||
+    fail "install ${missing[*]} with this system's package manager, then run again"
+  say "installing what is missing: ${missing[*]}"
   DEBIAN_FRONTEND=noninteractive apt-get update -q
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${missing[@]}"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+    git ca-certificates curl xz-utils tar
 }
 
 # Swap absorbs a peak above the VM's memory instead of the kernel killing
@@ -171,3 +176,4 @@ checkout
 install_node
 build
 say "ready: as $REA_USER, run $REA_HOME/products/vm/pipeline.sh"
+say "or, as root, install the hourly feed: bash $REA_HOME/products/vm/install-service.sh"

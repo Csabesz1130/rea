@@ -1,9 +1,10 @@
 # REA on one VM
 
-Run REA's products on one rented VM: a first-boot setup for Ubuntu 24.04,
-sized for a Hetzner Cloud CPX32 (4 shared AMD vCPUs, 8 GB of memory,
-160 GB of disk), and the pipeline from the MCP Trust Index to Proof Swarm's
-plan. It is a recipe for a fresh machine of your own, not REA's installer:
+Run REA's products on one rented VM: a setup for a new server or one
+already in use (rehearsed on Ubuntu 24.04, first sized for a Hetzner Cloud
+CPX32 with 4 shared AMD vCPUs and 8 GB of memory, and using more when the
+server has more), the pipeline from the MCP Trust Index to Proof Swarm's
+plan, and [Release Feed](../release-feed/README.md) as an hourly service. It is a recipe for a fresh machine of your own, not REA's installer:
 it installs what the pipeline needs and changes nothing else.
 
 | File                  | What it does                                                                                                     |
@@ -15,6 +16,9 @@ it installs what the pipeline needs and changes nothing else.
 | `swarm-args.mjs`      | Turns a Landscape map into Proof Swarm's workflow args: every unknown tool-reach cell                            |
 | `measure.mjs`         | Runs a command and records its wall time and peak memory, of the process family and of its largest process       |
 | `agent-settings.json` | A Claude Code permission policy for the agents, if they run on the VM (untested; see Agents)                     |
+| `feed.sh`             | One run of Release Feed with this machine's settings; what the service runs                                      |
+| `install-service.sh`  | Installs Release Feed's work directory, settings file, systemd service and hourly timer                          |
+| `service/`            | The systemd service and timer, the settings file's first content, and a Caddyfile to serve the site              |
 
 ## Create the server
 
@@ -36,6 +40,27 @@ public, so the clone needs no credentials. Nothing on the VM listens but
 SSH; a Hetzner Cloud firewall that allows only inbound SSH keeps it so. Delete
 the server when the run is done (`hcloud server delete rea-1`): it is
 billed by the hour until then.
+
+## A server you already have
+
+On a server that is already running, whatever its size, run the bootstrap
+by hand as root. It needs git, curl, xz and tar, installs them with apt
+when they are missing, and otherwise adds only its own things: the user
+`rea`, a swap file when the server has none, Node.js under `/opt` and the
+checkout under `/home/rea/rea`.
+
+```bash
+ssh root@<address>
+curl -fsSLo /tmp/rea-bootstrap.sh \
+  https://raw.githubusercontent.com/Csabesz1130/rea/claude/release-watch-prototype/products/vm/bootstrap.sh
+bash /tmp/rea-bootstrap.sh
+```
+
+Download it, then run it: piping a script into `bash` lets a package
+installation read the rest of the script as its input. After a rescale to
+a larger server type nothing needs to change: run the same command to
+update the checkout, and each run sizes itself from the CPUs and memory it
+finds (below).
 
 ## What first boot does
 
@@ -88,6 +113,60 @@ map and the plan, 6144 by default), `BATCH_SIZE` and `CALIBRATE` change
 the defaults; `pipeline.sh` names them. Copy the results back with
 `scp -r rea@<address>:rea-work/map ./map`.
 
+## Release Feed as a service
+
+[Release Feed](../release-feed/README.md) watches npm packages and
+publishes what each new release changed. To run it every hour, as root:
+
+```bash
+bash /home/rea/rea/products/vm/install-service.sh
+systemctl start --no-block rea-release-feed.service   # the first run, now
+journalctl -u rea-release-feed.service -f             # follow it
+```
+
+`install-service.sh` creates `/var/lib/rea-feed` (owned by `rea`) with a
+first watchlist, the 40 MCP servers of the Trust Index; writes the settings
+file `/etc/rea-release-feed.env`, readable by root and the `rea` group
+because it can hold a webhook's URL; and installs
+`rea-release-feed.service` and its hourly timer. It never overwrites the
+watchlist or the settings, and backs up a unit file before replacing one
+that differs. The service runs `feed.sh` as `rea` with no new privileges
+and a read-only system apart from `/var/lib/rea-feed` and `rea`'s home.
+
+Edit `/var/lib/rea-feed/watchlist.json` to watch other packages, and the
+settings file for the rest: `FEED_SINCE` (on first sight, compare the
+stable release as of a day with the latest), `FEED_BASE_URL`,
+`FEED_ALERT_ON` and `RELEASE_FEED_WEBHOOK_URL`. A later run costs one
+registry call per package unless a release is new.
+
+### Serving the site
+
+The feed's site is plain files under `/var/lib/rea-feed/site`. Any web
+server can serve them; nothing here installs one. With
+[Caddy](https://caddyserver.com), which obtains the certificate itself
+once the domain's DNS points at the server and ports 80 and 443 are open:
+
+```bash
+apt-get install -y caddy
+cp /home/rea/rea/products/vm/service/Caddyfile /etc/caddy/Caddyfile   # set your domain in it
+systemctl reload caddy
+```
+
+Checked here with the Caddy that Ubuntu 24.04 packages (2.6.2): the
+Caddyfile validates, and on a local port it served the page, the feeds and
+a report, which a browser rendered under its Content-Security-Policy
+without errors. A real domain and its certificate were not tested here.
+
+### A larger server
+
+Release Feed runs as many comparisons at once as the server's CPUs and
+memory allow, counting 2 CPUs and 6.5 GB per comparison: one on 4 vCPUs
+and 8 GB, two on 8 vCPUs and 16 GB, four on 16 vCPUs and 32 GB.
+`pipeline.sh` gives the map and the plan a heap of 8 GB from 11 GB of
+memory up and 6 GB from 7 GB, the two values measured below. The map
+itself still reads two packages at a time, so a larger server shortens the
+feed's first run and its catch-up after many releases, not the one-off map.
+
 ## Agents
 
 The agents are not part of the VM's setup, and nothing in this section was
@@ -138,13 +217,16 @@ disallowed: less than a CPX32's 8 GB and the 4 GB of swap `bootstrap.sh`
 adds. One run each unless a row says otherwise; the first boot's downloads
 came through this container's network, not Hetzner's:
 
-| Step                                                    | Wall     | CPU, user + system | Peak memory, process family / largest process |
-| ------------------------------------------------------- | -------- | ------------------ | --------------------------------------------- |
-| `bootstrap.sh` at first boot, as `rea`, empty npm cache | 37 s     | 81 s               | 3.2 / 2.9 GB                                  |
-| `bootstrap.sh` again, nothing changed                   | 4.4 s    | 8.8 s              |                                               |
-| `fetch`: 40 packages, two runs                          | 36–49 s  | 27–30 s            | 0.28 / 0.21 GB                                |
-| `map`: 40 packages, 2 at a time, 6 GB heap              | 25.4 min | 59 min             | 6.4 / 3.0 GB                                  |
-| `plan --rea`: 24 packages                               | 13 s     | 16.5 s             | 0.98 / 0.58 GB                                |
+| Step                                                      | Wall      | CPU, user + system | Peak memory, process family / largest process |
+| --------------------------------------------------------- | --------- | ------------------ | --------------------------------------------- |
+| `bootstrap.sh` at first boot, as `rea`, empty npm cache   | 37 s      | 81 s               | 3.2 / 2.9 GB                                  |
+| `bootstrap.sh` again, nothing changed                     | 4.4 s     | 8.8 s              |                                               |
+| `fetch`: 40 packages, two runs                            | 36–49 s   | 27–30 s            | 0.28 / 0.21 GB                                |
+| `map`: 40 packages, 2 at a time, 6 GB heap                | 25.4 min  | 59 min             | 6.4 / 3.0 GB                                  |
+| `plan --rea`: 24 packages                                 | 13 s      | 16.5 s             | 0.98 / 0.58 GB                                |
+| `bootstrap.sh` downloaded and run, no checkout yet, twice | 45 s      | 51–57 s            |                                               |
+| `feed.sh` as `rea`: 3 packages, 2 comparisons, twice      | 22–24 s   | 33–35 s            |                                               |
+| `feed.sh` again, nothing new, twice                       | 0.9–1.1 s | 0.9–1.0 s          |                                               |
 
 The map stayed under the limit, with no process killed for memory. It
 exits with status 1 because REA's analysis of @next-ai-drawio/mcp-server
@@ -154,6 +236,14 @@ unknown tool-reach cells are the same 24 the first swarm run took; level 0
 settles n8n-mcp with REA's facts and sends 23 packages to agents in 8
 batches. A run leaves 5.9 GB in `~/rea-work`, nearly all of it REA's
 Evidence.
+
+The last three rows are the path of a server already in use, rehearsed on
+12 November 2026 in the same kind of container without a memory limit:
+the bootstrap, `install-service.sh`, and the feed run as `rea` with the
+settings file's variables. `systemd-analyze verify` accepts the installed
+units. No systemd runs in that container, so the timer firing and the
+service's sandboxing were not exercised; neither was a real Hetzner
+server, whose upgrade to a larger type this recipe has not seen.
 
 ## Modal or Vast.ai
 

@@ -15,7 +15,8 @@
 # Settings (environment):
 #   WORK        output directory                     (~/rea-work)
 #   JOBS        products REA analyzes at once        (2)
-#   HEAP_MB     Node heap for the map and the plan   (6144)
+#   HEAP_MB     Node heap for the map and the plan   (by memory: 8192 from
+#               11 GB up, 6144 from 7 GB, else three quarters of it)
 #   BATCH_SIZE  packages per agent batch             (3)
 #   CALIBRATE   npm names whose known answer is added as calibration (none)
 set -euo pipefail
@@ -24,7 +25,17 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 WORK=${WORK:-$HOME/rea-work}
 JOBS=${JOBS:-2}
-HEAP_MB=${HEAP_MB:-6144}
+# The heaps the measured runs used: 6144 fit in 7 GiB, 8192 is what the
+# first index run had on 16 GB. Less memory gets three quarters of it.
+memory_mb=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
+if ((memory_mb >= 11000)); then
+  default_heap=8192
+elif ((memory_mb >= 7000)); then
+  default_heap=6144
+else
+  default_heap=$((memory_mb * 3 / 4))
+fi
+HEAP_MB=${HEAP_MB:-$default_heap}
 BATCH_SIZE=${BATCH_SIZE:-3}
 CALIBRATE=${CALIBRATE:-}
 step=${1:-all}

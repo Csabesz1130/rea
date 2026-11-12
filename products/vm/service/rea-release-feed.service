@@ -1,0 +1,29 @@
+# Release Feed as a service: one run of products/vm/feed.sh as the rea
+# user. rea-release-feed.timer starts it; install-service.sh installs both.
+[Unit]
+Description=Release Feed: compare new releases of the watched npm packages
+Documentation=https://github.com/Csabesz1130/rea/tree/claude/release-watch-prototype/products/vm
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=rea
+Group=rea
+WorkingDirectory=/var/lib/rea-feed
+EnvironmentFile=-/etc/rea-release-feed.env
+ExecStart=/home/rea/rea/products/vm/feed.sh
+# A first run compares many releases; later runs take seconds to minutes.
+TimeoutStartSec=12h
+Nice=10
+# The run reads packages it downloaded and never runs them; it still gets
+# no more of the system than it needs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rea-feed /home/rea
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
