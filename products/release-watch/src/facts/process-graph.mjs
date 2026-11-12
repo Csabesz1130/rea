@@ -3,8 +3,8 @@
 // parameters REA links them to, return values), member reads by where they
 // start, call sites with their argument ranges, REA's process sites, the
 // property slots REA destructures from a binding, which binding each
-// definition defines, the binding each read reads, constant and unknown
-// values REA reports for bindings. Ranges and node ids only; no source is
+// definition defines, the binding each read reads, and the unknown values
+// REA reports for bindings. Ranges and node ids only; no source is
 // read. calls.mjs owns which node wraps a call argument and ranges.mjs how
 // ranges compare. Reach (rules/reach-index.mjs) indexes the same call sites,
 // arguments and member reads as calls.mjs projects them, without node ids;
@@ -91,18 +91,12 @@ const groupNodes = (nodes, module, slots) => {
 const indexRelation = (graph, relation, source, target) => {
   push(graph.out, source.node_id, { ...relation, target });
   const kind = relation.relation;
-  if (kind === "defines" && isBinding(target)) {
+  if (kind === "defines" && isBinding(target))
     push(graph.defines, source.node_id, target);
-    if (source.kind === "literal")
-      graph.literals.set(target.node_id, source.properties?.value);
-  }
   if (kind === "reads" && isBinding(source))
     graph.readBinding.set(target.node_id, source);
-  if (kind === "aliases") {
-    push(graph.aliasedFrom, target.node_id, source);
-    if (source.kind === "call-site" && isBinding(target))
-      graph.callAssigned.add(target.node_id);
-  }
+  if (kind === "aliases" && source.kind === "call-site" && isBinding(target))
+    graph.callAssigned.add(target.node_id);
 };
 
 // What REA reports about each binding's value: the reasons it gives for a
@@ -127,10 +121,9 @@ const indexReasons = (graph, unknowns, byId) => {
  * REA's child-process nodes); property slots by module and the binding id
  * of their object (a scope id, unique only within its file); the relations
  * from nodes of included modules by source node; the bindings each
- * definition node defines; the binding each read reads; the nodes that
- * alias into each node; the constant REA reports for a binding a literal
- * defines; the bindings a call's result is assigned to; and the reasons REA
- * gives for each binding's unknown value.
+ * definition node defines; the binding each read reads; the bindings a
+ * call's result is assigned to; and the reasons REA gives for each
+ * binding's unknown value.
  */
 export const processGraph = (semantic, childProcesses) => {
   const byId = new Map(semantic.nodes.map((node) => [node.node_id, node]));
@@ -148,8 +141,6 @@ export const processGraph = (semantic, childProcesses) => {
     out: new Map(),
     defines: new Map(),
     readBinding: new Map(),
-    aliasedFrom: new Map(),
-    literals: new Map(),
     callAssigned: new Set(),
     reasons: new Map(),
   };

@@ -459,7 +459,8 @@ passed.
   (`module.exports = require("child_process")`, `export { execSync } from
   "node:child_process"`), followed through re-exports and any number of
   local modules. A `require(name)`
-  counts when REA reports `name` constant "child_process". Release Watch's
+  counts when REA reports `name` constant "child_process" (the reading of
+  constant specifiers described under RW-C06). Release Watch's
   correlations are labelled heuristic: a binding declared or assigned right
   before a read of such a value, when REA gives it the same unknown value
   (`const proc = cp`, not `const ready = typeof cp === "object"`), or right
@@ -503,6 +504,21 @@ passed.
   an import is not seen. A module whose content the old release shipped,
   under any path, did not change, and a declaration file's import of one
   starts nothing.
+- A package loaded through a variable counts as imported, for the rules
+  that read a module's imports (RW-A01, RW-A03, RW-C05, RW-C06, RW-D01 and
+  whether a component is an MCP server), when the load's whole argument is
+  one variable and REA reports one string constant as that variable's only
+  value: `const lydell = "@lydell/node-pty"; await
+  import(lydell)`, as Gemini CLI core loads its pseudo-terminal, or
+  `require(name)`. REA resolves such a load to no module; Release Watch
+  reads the specifier from REA's facts and the evidence line says so
+  ("loads @lydell/node-pty (import(lydell), where REA reports lydell
+  constant)", basis derived). A parameter, a variable assigned again, a
+  variable REA reports two values for (`flag ? "a" : "b"`) and a constant
+  that is only part of the specifier (`import(base + "/sub")`) are not
+  read: what such a load takes stays unknown. A constant path
+  (`"./plugin.js"`) is not read either, since REA owns which file a path
+  resolves to.
 - Browser code is classified from what HTML pages and service workers load.
   Dedicated workers and scripts loaded at runtime are not classified, so a
   call that moved from a worker into page code is reported at medium, and a
@@ -536,7 +552,11 @@ passed.
   moved from `tool()` to `registerTool()` keeps its capability. Another
   package of the SDK (a client, v2's HTTP transports and middleware, or
   shared code such as types) is a new MCP SDK package for RW-A03, worded by
-  that role and not as code that talks to AI models.
+  that role and not as code that talks to AI models. So is an MCP client
+  that is not the SDK's, once the catalog holds it: @earendil-works/pi-mcp,
+  the client the pi coding agent connects to MCP servers through (read in
+  its published 1.5.2). A client the catalog does not hold is an ordinary
+  package (RW-D01).
 - RW-M01 compares, per kind of process execution, how many tool
   registrations each side's facts connect to it; REA does not identify a
   tool across releases. When the paths that make the count grow pass
@@ -587,7 +607,10 @@ passed.
   imports one (openai, @anthropic-ai/sdk and other single-provider clients)
   is reported as a possible direct call to that provider, medium.
   Frameworks and clients that may call the vendor's own or a local server
-  instead (Vercel AI SDK, LangChain, LlamaIndex, Ollama) are not.
+  instead (Vercel AI SDK, LangChain, LlamaIndex, Ollama) are not, nor is a
+  library that calls whichever provider it is configured for
+  (@earendil-works/pi-ai, which the pi coding agent calls its models
+  through).
 - A request that reads a URL constant or an object property REA reports a
   literal for (`TELEMETRY_URL`, `ENDPOINTS.telemetry`, `C.TELEMETRY_URL`
   through a namespace import), in its module or imported through export

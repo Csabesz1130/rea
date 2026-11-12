@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { SECURITY_HEADERS, packageNameOf } from "../catalog.mjs";
 import { captureUnread } from "../facts/capture.mjs";
+import { importClaim } from "../facts/loads.mjs";
 import { isDeclarationPath } from "../facts/modules.mjs";
 import {
   appOneSided,
@@ -343,7 +344,7 @@ const unmodeledClients = (context) => {
         module: fact.data.module,
         client: packageNameOf(fact.key),
         direct: true,
-        line: cite(`${fact.data.module} imports ${fact.key}`, fact, APP_SOURCE),
+        line: cite(importClaim(fact), fact, APP_SOURCE),
       })),
     // A changed module that calls through a client another module set up.
     ...transitiveSites(app, clients, changed),

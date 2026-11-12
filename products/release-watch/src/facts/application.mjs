@@ -3,9 +3,11 @@
 import { HTML_SINKS, MCP_REGISTRATION_MEMBERS } from "../catalog.mjs";
 import { innermostCall, sameStart } from "../ranges.mjs";
 import { isUrl, scriptKey } from "../urls.mjs";
+import { bindingRelations } from "./bindings.mjs";
 import { callGraph } from "./calls.mjs";
 import { coverageOf, unreachedModules } from "./coverage.mjs";
 import { comparableExpression } from "./expression.mjs";
+import { constantLoads, recordConstantLoads } from "./loads.mjs";
 import {
   assetObservation,
   browserModules,
@@ -327,6 +329,7 @@ const SEMANTIC_PROJECTIONS = {
       value,
       binding,
       binding_range: defined?.range ?? null,
+      binding_constant: defined?.constant ?? false,
       property,
       range: rangeOf(node),
     };
@@ -370,34 +373,6 @@ const SEMANTIC_PROJECTIONS = {
   "call-site": (node, scope) => {
     if (rangeOf(node) !== null) scope.callSites.push(node);
   },
-};
-
-const bindingRelations = (semantic, facts, contexts) => {
-  const byId = new Map(semantic.nodes.map((node) => [node.node_id, node]));
-  const definedBinding = new Map();
-  for (const relation of semantic.relations) {
-    const source = byId.get(relation.source_node_id);
-    const target = byId.get(relation.target_node_id);
-    if (relation.relation === "defines" && target?.kind === "binding")
-      definedBinding.set(relation.source_node_id, {
-        name: target.label ?? null,
-        range: rangeOf(target),
-      });
-    const readsBinding =
-      relation.relation === "reads" && source?.kind === "binding";
-    if (!readsBinding || !rangeOf(target ?? {})) continue;
-    const modulePath = source.identity?.module_path ?? null;
-    facts.bindingReads.push(
-      semanticFact(target, contexts, `${modulePath}#${source.label}`, {
-        module: modulePath,
-        name: source.label,
-        range: rangeOf(target),
-        binding_range: rangeOf(source),
-        binding_owner: source.function_node_id ?? null,
-      }),
-    );
-  }
-  return definedBinding;
 };
 
 /**
@@ -448,6 +423,7 @@ const semanticFacts = (semantic, modules) => {
     dynamicEvaluation: [],
     dynamicCalls: [],
     processUnknowns: [],
+    constantImports: [],
   };
   if (!semantic) return facts;
   const contexts = new Map(
@@ -480,6 +456,11 @@ const semanticFacts = (semantic, modules) => {
   for (const node of semantic.nodes)
     SEMANTIC_PROJECTIONS[node.kind]?.(node, scope);
   memberCalls(scope);
+  // Before the process rules ask what each unresolved load takes.
+  facts.constantImports = recordConstantLoads(
+    modules,
+    constantLoads(modules, facts),
+  );
   facts.dynamicEvaluation = dynamicEvaluation(semantic, contexts);
   facts.dynamicCalls = dynamicCalls(semantic, contexts);
   facts.processUnknowns = processUnknowns(semantic, contexts, {
@@ -522,6 +503,7 @@ export const applicationFacts = (evidence) => {
   const { modules, imports } = importIndex(graph);
   const graphPart = graphFacts(graph);
   const calls = callGraph(semantic);
+  const { constantImports, ...semanticPart } = semanticFacts(semantic, modules);
   return {
     evidence_id: evidence.evidence_id,
     root_sha256: result.root_artifact_sha256,
@@ -536,12 +518,14 @@ export const applicationFacts = (evidence) => {
       ...(semantic?.limitations ?? []),
     ],
     modules,
-    imports,
+    // What REA resolved, then the loads whose specifier Release Watch reads
+    // from a constant (loads.mjs).
+    imports: [...imports, ...constantImports],
     browserModules: browserModules(graph, modules),
     ...graphPart,
     windows: withLoads(graphPart.windows, graph, semantic, calls.functions),
     embeddedSources: withBundles(graphPart.embeddedSources, graph),
-    ...semanticFacts(semantic, modules),
+    ...semanticPart,
     ...calls,
   };
 };

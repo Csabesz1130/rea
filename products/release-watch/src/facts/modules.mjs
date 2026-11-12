@@ -168,7 +168,8 @@ const recordReexport = (edge, exporter, target, entry) => {
 };
 
 // A load REA resolved to no module (`require(name)`); REA renders its
-// expression.
+// expression. loads.mjs reads the specifier of the ones whose argument is a
+// constant.
 const isUnresolvedLoad = (target) =>
   firstObservation(target)?.properties?.resolution === "unresolved";
 
@@ -217,7 +218,10 @@ const recordImport = (edge, sourcePath, target, entry) => {
  * and range); re-exports (exported name to module and imported name),
  * star re-exports, and exports REA traces to an external module
  * (`externalExports`, by exported name). Also returns one fact per
- * external import specifier and module.
+ * external import specifier and module. After `applicationFacts` has read
+ * the semantic graph, `externalImports` also holds the specifiers of
+ * unresolved loads REA's facts give as constants, and those loads' sites
+ * carry `constant` (loads.mjs).
  */
 export const importIndex = (graph) => {
   const byId = new Map(graph.nodes.map((node) => [node.node_id, node]));

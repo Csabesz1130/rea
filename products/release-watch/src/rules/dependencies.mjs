@@ -4,6 +4,7 @@ import { builtinModules } from "node:module";
 
 import { packageNameOf, sdkOf } from "../catalog.mjs";
 import { importsUnknown } from "../facts/coverage.mjs";
+import { importClaim } from "../facts/loads.mjs";
 import { unknownElsewhere } from "./component-absence.mjs";
 import { APP_SOURCE, cite, heuristic, packResult } from "./shared.mjs";
 
@@ -84,7 +85,7 @@ export const dependencyPack = (context) => {
   const unseen = imported.filter(([name]) => unknown.has(name));
   if (imported.length === 0) return packResult();
   const lines = [...fresh, ...unseen].map(([name, facts]) =>
-    cite(`${facts[0].data.module} imports ${name}`, facts[0], APP_SOURCE),
+    cite(importClaim(facts[0], name), facts[0], APP_SOURCE),
   );
   return packResult([
     {

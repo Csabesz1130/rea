@@ -2,6 +2,7 @@
 // release never contacted, or a provider that browser code now calls, may
 // call, or reaches through a provider SDK when no old browser code did.
 import { aiProviderOf } from "../catalog.mjs";
+import { importClaim } from "../facts/loads.mjs";
 import { sdkUses } from "../surfaces.mjs";
 import {
   browserGuessedHosts,
@@ -260,9 +261,7 @@ export const sdkPlacementFindings = (context) => {
     why: `The ${sdk.label} sends requests to ${sdk.provider} unless the code points it elsewhere, so prompts and user data may go to ${sdk.provider} straight from users' browsers. ${browserRisk(sdk.provider)}`,
     recommendation: ROUTE,
     evidence: [
-      ...facts.map((fact) =>
-        cite(`${fact.data.module} imports ${fact.key}`, fact, APP_SOURCE),
-      ),
+      ...facts.map((fact) => cite(importClaim(fact), fact, APP_SOURCE)),
       BROWSER_CODE,
     ],
     unknowns: [

@@ -6,7 +6,7 @@
 // - imports of a local module's exports that hold child_process
 //   (process-exports.mjs);
 // - a `require(name)` REA resolved to no module whose argument REA reports
-//   constant "child_process";
+//   constant "child_process" (loads.mjs reads the constant);
 // - as Release Watch's correlation, a load REA resolved to no module, or a
 //   call of a require function REA does not resolve (`module.require`,
 //   `process.mainModule.require`, a function createRequire returns,
@@ -14,7 +14,6 @@
 //   through a read of a child_process export on what it loads.
 import { isNodeModule, isProcessModule } from "../catalog.mjs";
 import { sameRange, sameStart, within } from "../ranges.mjs";
-import { argumentPosition } from "./calls.mjs";
 import { exportHolder, wholeHolder } from "./process-exports.mjs";
 import {
   calleeOf,
@@ -160,42 +159,30 @@ const loaderHolder = (name) => ({
   loader: name,
 });
 
-// The constant REA reports for the one binding whose read is the first
-// argument of `call`, or undefined.
-const constantArgument = (graph, index, call) => {
-  const callRange = rangeOf(call);
-  const first = index.arguments.find(
-    (node) => within(rangeOf(node), callRange) && argumentPosition(node) === 0,
-  );
-  const sources = first ? (graph.aliasedFrom.get(first.node_id) ?? []) : [];
-  const binding =
-    sources.length === 1 ? graph.readBinding.get(sources[0].node_id) : null;
-  return binding
-    ? { binding, value: graph.literals.get(binding.node_id) }
-    : undefined;
-};
-
-// `require(name)` and the like: REA resolved the load to no module.
-const unresolvedSeeds = (graph, index, entry) =>
+// `require(name)` and the like: REA resolved the load to no module. Where
+// REA's facts give the specifier as a constant (loads.mjs owns that
+// reading, `site.data.constant`), the load is child_process or it is not;
+// any other unresolved load may be.
+const unresolvedSeeds = (index, entry) =>
   (entry?.unresolvedSites ?? []).flatMap((site) => {
     const call = index.calls.find(
       (node) => site.data.range && sameRange(rangeOf(node), site.data.range),
     );
     if (!call) return [];
     const name = site.data.expression ?? "require(…)";
-    const constant = constantArgument(graph, index, call);
+    const constant = site.data.constant ?? null;
     // A constant REA reports for another module is not child_process.
-    if (typeof constant?.value === "string" && !isProcessModule(constant.value))
-      return [];
-    const holder = isProcessModule(constant?.value)
-      ? {
-          name,
-          member: null,
-          via: "constant",
-          from: constant.binding.label ?? null,
-          heuristic: false,
-        }
-      : loaderHolder(name);
+    if (constant !== null && !isProcessModule(constant.value)) return [];
+    const holder =
+      constant !== null
+        ? {
+            name,
+            member: null,
+            via: "constant",
+            from: constant.binding,
+            heuristic: false,
+          }
+        : loaderHolder(name);
     return [{ site, call, binding: false, holder }];
   });
 
@@ -344,7 +331,7 @@ export const seedsOf = ({
     ...externalSeeds(entry),
     ...localSeeds(modules, entry, exports),
   ];
-  const unresolved = unresolvedSeeds(graph, index, entry);
+  const unresolved = unresolvedSeeds(index, entry);
   const taken = [
     ...(entry?.externalSites ?? []),
     ...(entry?.localSites ?? []),

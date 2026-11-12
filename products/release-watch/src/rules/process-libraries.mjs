@@ -5,6 +5,7 @@
 // and the process, Electron and MCP rules cannot see it.
 import { processLibraryOf } from "../catalog.mjs";
 import { renamedFrom } from "../diff.mjs";
+import { importClaim } from "../facts/loads.mjs";
 import { APP_SOURCE, cite, heuristic } from "./shared.mjs";
 
 const MAX_LINES = 6;
@@ -58,7 +59,7 @@ export const processLibraries = (context, changed) => {
           .slice(0, MAX_LINES)
           .map(({ fact, added: isNew }) =>
             cite(
-              `${fact.data.module} imports ${fact.key}${isNew ? "" : `, as it did in ${context.labels.left}, and changed`}`,
+              `${importClaim(fact)}${isNew ? "" : `, as it did in ${context.labels.left}, and changed`}`,
               fact,
               APP_SOURCE,
             ),
