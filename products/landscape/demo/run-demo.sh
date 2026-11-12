@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Map product categories with Landscape.
-#   run-demo.sh [fixtures|mcp|history|all|index|gemini]   (default: all)
+#   run-demo.sh [fixtures|mcp|history|all|index|gemini|agents|addons]   (default: all)
 # fixtures maps the checked-in example products offline, with one marked as
 # yours. mcp downloads five public terminal MCP servers from npm and maps
 # them (about two and a half minutes; the largest takes most of it).
@@ -9,8 +9,11 @@
 # Trust Index: about half an hour and 5.5 GB of Evidence; run it with
 # NODE_OPTIONS=--max-old-space-size=8192, since with Node's default heap
 # REA keeps fewer results of the largest servers. gemini follows Google's
-# Gemini CLI core from its first public release to 0.64.0, each release
-# split into one component per source directory (about five minutes). all
+# Gemini CLI core from its first public release to 0.64.0 (about five
+# minutes). agents maps four open coding agents and addons the 21
+# most-installed open add-ons for coding agents; run both with
+# NODE_OPTIONS=--max-old-space-size=6144. A set's large packages are read as
+# one component per source directory (packages.json names the root). all
 # runs fixtures, mcp and history. All need a built REA checkout (npm run build:cached); every
 # set but fixtures also needs npm and tar.
 set -euo pipefail
@@ -21,8 +24,8 @@ which="${1:-all}"
 cli="$here/../bin/landscape.mjs"
 fixtures="$here/../test/fixtures"
 
-case "$which" in fixtures | mcp | history | all | index | gemini) ;; *)
-  echo "Usage: $0 [fixtures|mcp|history|all|index|gemini]" >&2
+case "$which" in fixtures | mcp | history | all | index | gemini | agents | addons) ;; *)
+  echo "Usage: $0 [fixtures|mcp|history|all|index|gemini|agents|addons]" >&2
   exit 1
   ;;
 esac
@@ -33,8 +36,8 @@ setting() {
     "$here/packages.json" "$1" "$2"
 }
 
-# Downloads one demo set and reads its unpacked package directories into
-# `packages`; a failed download stops the demo.
+# Downloads one demo set and reads the directories to map into `packages`:
+# each unpacked package, or its split; a failed download stops the demo.
 fetch_set() {
   local list="$work/$1-packages.txt" line
   mkdir -p "$work"
@@ -88,14 +91,19 @@ fi
 if [[ "$which" == gemini ]]; then
   echo "Downloading four Gemini CLI core releases from npm:"
   fetch_set gemini
-  splits=()
-  for package in "${packages[@]}"; do
-    release="$(basename "$package")"
-    splits+=("$(node "$here/split.mjs" "$package" --root "$(setting gemini root)" \
-      --out "$work/gemini-split/$release")")
-  done
   status=0
-  node "$cli" history "${splits[@]}" --category "$(setting gemini category)" \
+  node "$cli" history "${packages[@]}" --category "$(setting gemini category)" \
     --out "$work/gemini" || status=$?
   show gemini "$status"
 fi
+
+for set in agents addons; do
+  if [[ "$which" == "$set" ]]; then
+    echo "Downloading the $(setting "$set" category | tr '[:upper:]' '[:lower:]') from npm:"
+    fetch_set "$set"
+    status=0
+    node "$cli" map "${packages[@]}" --category "$(setting "$set" category)" \
+      --out "$work/$set" || status=$?
+    show "$set" "$status" brief
+  fi
+done

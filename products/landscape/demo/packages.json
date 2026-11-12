@@ -393,6 +393,202 @@
           "integrity": "sha512-weixSZKBqgJwAuqJwTSiLLABTMenjxAxj1EzysBtWgQHytd/e4ORc+NSKgVG3ljxAHdEEJbPONEQ8qTwzz5EcQ=="
         }
       ]
+    },
+    "agents": {
+      "category": "Open coding agents",
+      "selected": "2026-11-12",
+      "rule": "Coding agents on npm that declare an open-source license and ship their JavaScript as separate modules, which REA examines in full; monthly downloads as npm's search reported them that day. Left out: agents under proprietary terms (@anthropic-ai/claude-code, @github/copilot, @sourcegraph/amp, @augmentcode/auggie, @factory/cli) or a source-available license (@charmland/crush), agents shipped as native binaries (@openai/codex, opencode-ai, cline, @kilocode/cli), and agents shipped as one bundle of 7 to 24 MB, beyond what REA examines in one file (@google/gemini-cli, @qwen-code/qwen-code, @continuedev/cli, @letta-ai/letta-code, @moonshot-ai/kimi-code, @oh-my-pi/pi-coding-agent, @neovate/code). @google/gemini-cli-core is the engine of @google/gemini-cli. A package with a root is read as one component per directory under it.",
+      "packages": [
+        {
+          "name": "@earendil-works/pi-coding-agent",
+          "version": "1.5.2",
+          "license": "MIT",
+          "integrity": "sha512-mUWI04rqF1Vd/m1q+Ps1XeWsTXEVvRUnsmRa83I3Dzua0Tx5bYS93imeqtIfrXf7PkkaR6ERz+AuQhIJlom5yA==",
+          "monthly_downloads": 21990279,
+          "root": "dist",
+          "skip": ["bundle"]
+        },
+        {
+          "name": "@google/gemini-cli-core",
+          "version": "0.68.0",
+          "license": "Apache-2.0",
+          "integrity": "sha512-hmmzfgU/L/pkhB5/joYezs7k7w+2FoQXZPLRYEk5gpHuY1cxmg4NlNv1aT3b4PDWoQlIbn7tir2z/32nLujtuw==",
+          "monthly_downloads": 155406,
+          "root": "dist/src"
+        },
+        {
+          "name": "@nanocollective/nanocoder",
+          "version": "1.32.0",
+          "license": "MIT",
+          "integrity": "sha512-6eMRhavQuKlICN8V5aTVBrlX+MWT2JmGM17hXkNY7Aryo8aahkaTCegS2gpOFwmAdqwzcOgWsuip+6JrjjfxgA==",
+          "monthly_downloads": 9858,
+          "root": "dist"
+        },
+        {
+          "name": "@vibe-kit/grok-cli",
+          "version": "0.0.34",
+          "license": "MIT",
+          "integrity": "sha512-jOaN4+WTK14jm5hIcXrYB2XuOEuWCyOvRMn58tbkD5fztZZS03u2YMv1gVrHpk/1/rls8UhwwL8witaJoZF10A==",
+          "monthly_downloads": 4125
+        }
+      ]
+    },
+    "addons": {
+      "category": "Add-ons for coding agents",
+      "selected": "2026-11-12",
+      "rule": "npm search for keywords claude-code, coding-agent, ai-coding and codex and the texts \"ai-agent cli\" and \"coding agent cli\", ranked by monthly downloads; kept when the package is a tool people add to a coding agent (it installs skills, rules or MCP servers, drives or routes an agent, guards its commands, keeps its memory, runs several, or reports on one), declares an open-source license and ships JavaScript REA can read; one package per project. Left out for size: billion-context, omniroute and @yawlabs/ctxlint ship bundles beyond what REA examines in one file. A package with a root is read as one component per directory under it.",
+      "packages": [
+        {
+          "name": "agent-cli-detector",
+          "version": "0.1.7",
+          "license": "MIT",
+          "integrity": "sha512-d8OWDVdZMgjhLUT9ZPgSv/BdFFF9pVuscC0JdUSz3bjwE15gcp6u/o0/JooM2yyAWC49KThFhXlgTXRa9B7yng==",
+          "monthly_downloads": 43855919
+        },
+        {
+          "name": "@vercel/detect-agent",
+          "version": "1.2.7",
+          "license": "Apache-2.0",
+          "integrity": "sha512-5tWaC9V+u4SHcSMKBz9FQb3Dhl/1A2lQ6QqHovu8uQeb8dTyjEevpJMANm/uQEn/usYB63fpdjWYjkJ8/bGtjA==",
+          "monthly_downloads": 29262995
+        },
+        {
+          "name": "skills",
+          "version": "1.8.1",
+          "license": "MIT",
+          "integrity": "sha512-QK3wlZ5j8wcpLPUOXt7+1Gu1f9JKpv7lBpO0zmqKa5VBrt45/woVo8Max1x4wha3pCNafNHiiodYK6Xi/0alQQ==",
+          "monthly_downloads": 19394843
+        },
+        {
+          "name": "agent-install",
+          "version": "0.0.8",
+          "license": "MIT",
+          "integrity": "sha512-x/AxHAzJx788UnM3MfjPIpIda8swS+x5Dz9wTt9MfteWzQXLgAtWuYU21FKj4rfwZa4Ru8R+xJIhxBnZBNsR+w==",
+          "monthly_downloads": 15755648
+        },
+        {
+          "name": "@openai/codex-sdk",
+          "version": "0.167.2",
+          "license": "Apache-2.0",
+          "integrity": "sha512-qBUFNVvBmTcmZW+5IzvidwScLYnkycR0q5vJWBj3JEVX3PJhoRxHwV9aixWNfg/5McIWQCSSO/sXw3y/dpNJ/g==",
+          "monthly_downloads": 9455560
+        },
+        {
+          "name": "acpx",
+          "version": "0.22.0",
+          "license": "MIT",
+          "integrity": "sha512-dD+xgRwLFOfwL7/VEdn3zrVNFleFoIA0EUETK35w/e+MeYB5FN5+vKERoV60d4SUirTqX610yb/wN+2OFcjpMQ==",
+          "monthly_downloads": 2254356
+        },
+        {
+          "name": "agent-device",
+          "version": "0.21.36",
+          "license": "MIT",
+          "integrity": "sha512-aG88WlEHjFc/OEBQC7AJg+2LfNoVT/ogxnnzIUYUEgafdiTvBaA+X6uQ2wNmpp2ZrHLy8QIXoEOyc3NEZgJCpQ==",
+          "monthly_downloads": 2203358
+        },
+        {
+          "name": "pi-mcp-adapter",
+          "version": "7.0.1",
+          "license": "MIT",
+          "integrity": "sha512-hLmB6v2NxzZLUcgnVP4EKxWPBQGPXK5DRvL48UP1lZeyfjzhZbB+3zcawOdIIxHujxE9eqrVNapx6Hh5YmDFrA==",
+          "monthly_downloads": 1709377
+        },
+        {
+          "name": "add-mcp",
+          "version": "2.6.1",
+          "license": "Apache-2.0",
+          "integrity": "sha512-Jimza7/1JLaC3RVoaImX+CJSYKrQZkKuBZoV77zdo5yZwl/ZI66ba2uBVz690VSiqXR3yWKIPaw6Ou4ntzuRwg==",
+          "monthly_downloads": 1224565
+        },
+        {
+          "name": "@ai-sdk/harness-claude-code",
+          "version": "1.0.185",
+          "license": "Apache-2.0",
+          "integrity": "sha512-AZAkYXGHxAL4mp9BItpsS56gk/PTllemQrQmnXrNoYF9y2fhUHotZungaTvRjQoUuEP2kw2Sb/4l/5fow+8HQQ==",
+          "monthly_downloads": 1087261
+        },
+        {
+          "name": "agentic-flow",
+          "version": "3.5.5",
+          "license": "MIT",
+          "integrity": "sha512-KDKDnLS55Ydj1yWsdGyXfhTsDzv4cs6BL61TJLIl15WkV0g5+oIaQUcZQI9Gm1J/ADu8h7WNl7SGPYqoJldLVQ==",
+          "monthly_downloads": 489896,
+          "root": "dist"
+        },
+        {
+          "name": "@claude-flow/cli",
+          "version": "3.76.0",
+          "license": "MIT",
+          "integrity": "sha512-I8AjBUlX9dU8qVnMfd+jyZVm6DySApQVwxGVmyTjRhhO2ufr94XPCns2JwP75eYZzQ3COsoXpIHmB/neHNG/yg==",
+          "monthly_downloads": 429638,
+          "root": "dist/src"
+        },
+        {
+          "name": "pr-shepherd",
+          "version": "1.6.1",
+          "license": "MIT",
+          "integrity": "sha512-6GF2ES5bV30qNQBIbWWHTy7xB+dYBok0s/0S30sL3FRPEC8g5N7MzImba08HWQO9K84j60/CqvCKHu77mJccZw==",
+          "monthly_downloads": 428088,
+          "root": "bin"
+        },
+        {
+          "name": "@intellectronica/ruler",
+          "version": "0.3.46",
+          "license": "MIT",
+          "integrity": "sha512-oQRNNW8/PHnye1qTJQlAuVozBkqpu/9J7SmugOXxt27UrKuVb/yxeqY7Hdq6yzNOgLkTs4Hl2gEb8lg0hRNkTA==",
+          "monthly_downloads": 403417
+        },
+        {
+          "name": "ccstatusline",
+          "version": "2.2.34",
+          "license": "MIT",
+          "integrity": "sha512-RREgeGegR19S4e8ukMzPf0E/2TZDuWTBT6iCT483TPP/7X6uqeGH16AUJEcaUsWDd9+3besf1B7ZCLyLJG81fw==",
+          "monthly_downloads": 211709
+        },
+        {
+          "name": "@musistudio/claude-code-router",
+          "version": "3.1.3",
+          "license": "MIT",
+          "integrity": "sha512-dVHRu9Sb/xG9dgr8nHJmvd5XVIQ5yrEeKmMoPUEBc9xtgykfRT2z76NRI+fylpeiMzYC60z6vrV6x/3IY52pvg==",
+          "monthly_downloads": 185747
+        },
+        {
+          "name": "cc-safety-net",
+          "version": "2.7.12",
+          "license": "MIT",
+          "integrity": "sha512-oVwGaRTFewMNXJO4cRq8VbeUHxX9HZ2s6x1yna60a32/XwtoB4Q0RRNXlBrgUzp/o13wQbrBD1S1trCg/nwV6w==",
+          "monthly_downloads": 153287
+        },
+        {
+          "name": "@agents-dev/cli",
+          "version": "0.9.4",
+          "license": "Apache-2.0",
+          "integrity": "sha512-aYNMqbpTNgXWyZCPgx/mHSS+ZMaya1HKXZDjOdHL4CsAP0++eeVpXXp+iIb/Tm6QZnyyEjAnb9OMvz8Rwk7aOA==",
+          "monthly_downloads": 148394
+        },
+        {
+          "name": "claude-mem",
+          "version": "15.18.1",
+          "license": "Apache-2.0",
+          "integrity": "sha512-cSt6+4t2hQ3raLvQfA5q15PqIZeuwxBC66Y3WaJJSfHwILOqfLYqGbnYSeci5MJ/G1uWXEpSQGg8k2ODlzYvxA==",
+          "monthly_downloads": 138988
+        },
+        {
+          "name": "block-no-verify",
+          "version": "1.4.2",
+          "license": "MIT",
+          "integrity": "sha512-2X6BKiNufTiPrRQ9BaOT0+0Zf+d35ENcz1ABaheYbfMlTyh+T5OrcrjojK+WdHrlswVNRGxBJAhTLL/HFsSYrQ==",
+          "monthly_downloads": 109804
+        },
+        {
+          "name": "tdd-guard",
+          "version": "1.7.0",
+          "license": "MIT",
+          "integrity": "sha512-XA//WKhrLkhSCkZwb4D9tDLa0F32A/XnFp9To4jxXPciEZvRxCyvJExHZZL7C/oiamWdm0UQxbQNilo/kXOImw==",
+          "monthly_downloads": 105703
+        }
+      ]
     }
   }
 }

@@ -67,6 +67,10 @@ bash products/landscape/demo/run-demo.sh history     # six releases of ai-rename
 NODE_OPTIONS=--max-old-space-size=8192 \
   bash products/landscape/demo/run-demo.sh index     # the 40 most-downloaded MCP servers
 bash products/landscape/demo/run-demo.sh gemini      # Gemini CLI core, launch to 0.64.0
+NODE_OPTIONS=--max-old-space-size=6144 \
+  bash products/landscape/demo/run-demo.sh agents    # four open coding agents
+NODE_OPTIONS=--max-old-space-size=6144 \
+  bash products/landscape/demo/run-demo.sh addons    # 21 add-ons for coding agents
 cd products/landscape
 node bin/landscape.mjs map A B C --ours MINE --category "AI note apps" --out map
 node bin/landscape.mjs history V1 V2 V3 --category "Product X" --out trajectory
@@ -96,6 +100,10 @@ node bin/landscape.mjs history split-v1 split-v2 --category "Product X"
 Each directory is then examined in full, but imports between directories are
 not followed, so a trait that needs a path across them (an MCP tool that
 reaches process execution through another directory's helper) may not show.
+`--skip <name>` leaves a directory under the root out, for a package that
+ships a bundle of the same modules beside them. A demo set names the root
+(and what to skip) of each large package in `demo/packages.json`, and the
+demo splits those as it downloads them.
 
 ## Who it is for
 
@@ -262,6 +270,75 @@ directory of every release in full.
   so REA cannot settle that a later `process.env` read is the variable's;
   Landscape marks the key read likely rather than gone.
 
+**Open coding agents** (`run-demo.sh agents`): pi 1.5.2
+(@earendil-works/pi-coding-agent, MIT, 22 million downloads a month),
+Gemini CLI core 0.68.0 (Apache-2.0), nanocoder 1.32.0 and grok-cli 0.0.34
+(both MIT), on 12 November 2026: the coding agents on npm that declare an
+open-source license and ship their JavaScript as separate modules. The
+three largest are read as one component per directory, pi without the
+bundle it ships beside its modules. REA examined all 1,392 script files of
+the four in full. `demo/packages.json` holds the rule and the agents it
+leaves out: five under proprietary terms and one source-available, four
+shipped as native binaries, and seven shipped as one bundle of 7 to 24 MB.
+
+- All four start processes. nanocoder runs a command through a shell
+  (`exec()` in its VS Code path discovery); for the other three REA's
+  facts cannot tell (child_process calls it did not classify, cross-spawn,
+  execa, the MCP SDK's stdio transport).
+- Gemini CLI core, nanocoder and grok-cli send prompts to a hosted model
+  and connect to MCP servers. Gemini CLI core sends usage statistics
+  (Google Clearcut) and nanocoder asks npm's registry for its latest
+  version.
+- Read by hand, four marks fall short, each for a reason that will recur:
+  pi calls its models and MCP servers through its own packages
+  (@earendil-works/pi-ai, @earendil-works/pi-mcp), which this run did not
+  read and Landscape's catalog does not hold, so "connects to MCP servers"
+  is true of all four; pi reports its version to `pi.dev/api/report-install`
+  on a fresh install and after an update unless a setting, `PI_TELEMETRY`
+  or `PI_OFFLINE` turns that off, in a request whose address is a template
+  literal REA did not resolve; Gemini CLI core loads node-pty through a
+  variable (`import(name)`), so its interactive terminal is not seen; and
+  grok-cli reads its key from `GROK_API_KEY`, a name of its own.
+- pi's "uses web storage" is the HTML page it exports a session to
+  (`core/export-html/template.js`), not the agent.
+
+**Add-ons for coding agents** (`run-demo.sh addons`): the 21
+most-downloaded open-source tools people add to a coding agent, as npm's
+search ranked them on 12 November 2026: two detectors that tell a CLI an
+agent is running it (agent-cli-detector and @vercel/detect-agent, 73
+million downloads a month between them), five installers of skills, rules
+and MCP servers (skills, agent-install, add-mcp, ruler, @agents-dev/cli),
+three drivers (@openai/codex-sdk, acpx, @ai-sdk/harness-claude-code), and
+tools that extend, orchestrate, route, report on and guard an agent.
+`demo/packages.json` holds the rule and the list. REA examined 14 in full
+and 7 in part; agentic-flow, @claude-flow/cli and pr-shepherd are read as
+one component per directory.
+
+- 16 start processes, 6 of them only likely. None was seen running a
+  command through a shell, and for 15 REA's facts cannot tell: they use
+  child_process in ways REA did not classify.
+- agent-cli-detector runs `ps` to walk the process tree
+  (`dist/index.js:247`), so a CLI that embeds it starts a process to learn
+  which agent is calling; @vercel/detect-agent reads environment variables
+  and one path.
+- 10 contact remote hosts (3 only likely). skills and agent-install fetch
+  through `git`, which shows as a process, not as a request. cc-safety-net
+  and @agents-dev/cli ask npm's registry for their own latest version.
+- 5 call a hosted model (1 only likely), among them the guard tdd-guard.
+  3 serve MCP tools (@ai-sdk/harness-claude-code, agentic-flow,
+  pr-shepherd) and pi-mcp-adapter connects to MCP servers.
+- Landscape saw telemetry in none. Read by hand, two send it: skills
+  reports each command to `www.skills.sh/tele/t` with the name of the
+  agent it detected, unless `DISABLE_TELEMETRY` or `DO_NOT_TRACK` is set,
+  and claude-mem's worker names PostHog's hosts. Release Watch tied
+  skills' request to its `TELEMETRY_URL`; Landscape reads telemetry from
+  host names only. claude-mem's worker is a 4.9 MB bundle REA examined in
+  part.
+- The openings Landscape suggests for this set (local-first AI, bring any
+  model, works offline, interactive sessions) do not fit it: the 21 do
+  seven different jobs, and an opening is a count across products that do
+  the same one.
+
 ## Limits and cost
 
 - Landscape reads shipped code statically; it does not run the products. A
@@ -276,7 +353,8 @@ directory of every release in full.
 
 Measured on this container (4 CPUs, 16 GB of memory), one run each,
 standard depth, two products at a time. Every run but the Gemini history
-had `NODE_OPTIONS=--max-old-space-size=8192`, as this container sets it:
+had `NODE_OPTIONS=--max-old-space-size=8192`, as this container sets it,
+and the two coding-agent sets had 6144:
 
 | Run                                           | Wall      | CPU      | Peak memory (process family) |
 | --------------------------------------------- | --------- | -------- | ---------------------------- |
@@ -285,8 +363,12 @@ had `NODE_OPTIONS=--max-old-space-size=8192`, as this container sets it:
 | ai-renamer history, 6 releases                | 12.7 s    | 33 s     | 0.84 GB                      |
 | top 40 MCP servers, map                       | 27 min    | 65 min   | 5.2 GB                       |
 | Gemini CLI core, 4 releases in 84 directories | 5.3 min   | 10.3 min | 1.3 GB                       |
+| open coding agents, 4 in 83 components        | 5.2 min   | 11.1 min | 2.1 GB                       |
+| add-ons for coding agents, 21 packages        | 13.4 min  | 31 min   | 4.0 GB                       |
 
-Most of the MCP map's time and memory is desktop-commander (266 files):
+The coding-agent row is `run-demo.sh agents` whole, download and split
+included; a first run of the same map alone took 5.1 min and gave the same
+cells. Most of the MCP map's time and memory is desktop-commander (266 files):
 about 137 s of REA analysis, and Evidence of about 300 MB that Landscape
 reads whole. Agent tokens were not measured; Landscape makes no model calls.
 
@@ -299,7 +381,14 @@ What the large runs showed:
   imports; REA reports the result budget it hit, and Landscape marks them
   examined in part. Give large maps the heap shown in Quick start. The
   Gemini history, split into directories, ran with the default heap.
-- The 40 servers' Evidence takes 5.5 GB of disk, Gemini's 743 MB.
+- The 40 servers' Evidence takes 5.5 GB of disk, Gemini's 743 MB, the
+  four agents' 1.3 GB and the 21 add-ons' 3.6 GB.
+- Read by hand against the two coding-agent sets, Landscape's marks fall
+  short in five ways: a product's own model or MCP library that the
+  catalog does not hold (pi), an address built in a template literal (pi's
+  install report), a package loaded through a variable (Gemini CLI core's
+  node-pty), a provider key under a name of the product's own (grok-cli),
+  and telemetry named by a variable or a path rather than a host (skills).
 - Landscape counts every shipped file except tests, so templates a product
   copies into new projects and maintenance scripts shipped beside it count
   too (the ui5 and n8n-mcp marks above). It does not yet tell what a
