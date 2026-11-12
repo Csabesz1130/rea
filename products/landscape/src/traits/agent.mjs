@@ -6,6 +6,7 @@
 import { factLine, readingLine } from "../evidence.mjs";
 import {
   bundledToolDispatchers,
+  importClaim,
   mcpServers,
   processLibraryOf,
   registrationClaim,
@@ -38,11 +39,7 @@ const servers = (part, set) => {
   set.add(TRAITS.mcpServer, {
     evidence: [
       ...found.map(({ label, facts: [fact] }) =>
-        factLine(
-          part.name,
-          `${fact.data.module} imports ${fact.key}, an ${label}`,
-          fact,
-        ),
+        factLine(part.name, `${importClaim(fact)}, an ${label}`, fact),
       ),
       readingLine(
         part.name,
@@ -66,7 +63,7 @@ const clients = (part, set) => {
         evidence: [
           factLine(
             part.name,
-            `${fact.data.module} imports ${fact.key}, an ${use.sdk.label}`,
+            `${importClaim(fact)}, an ${use.sdk.label}`,
             fact,
           ),
         ],

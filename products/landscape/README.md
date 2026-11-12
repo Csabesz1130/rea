@@ -129,9 +129,12 @@ demo splits those as it downloads them.
 Each cell is one of:
 
 - **● Yes**: REA's facts show it, directly or tied together by Release Watch
-  without a guess (a request that reads the variable holding a URL).
+  without a guess (a request that reads the variable holding a URL, a
+  package loaded through a variable REA reports constant).
 - **◐ Likely**: only a guess suggests it, such as a URL near requests, a
-  library known to start processes, or a host whose name says telemetry.
+  library known to start processes, a host or the variable holding its
+  address named for telemetry, or an API key read beside a provider's
+  address under a name the provider does not document.
 - **– Not seen**: not observed where REA looked, which is not proof of
   absence.
 - **? Unknown**: REA examined the product only in part, or a library REA
@@ -281,24 +284,38 @@ the four in full. `demo/packages.json` holds the rule and the agents it
 leaves out: five under proprietary terms and one source-available, four
 shipped as native binaries, and seven shipped as one bundle of 7 to 24 MB.
 
-- All four start processes. nanocoder runs a command through a shell
-  (`exec()` in its VS Code path discovery); for the other three REA's
-  facts cannot tell (child_process calls it did not classify, cross-spawn,
-  execa, the MCP SDK's stdio transport).
-- Gemini CLI core, nanocoder and grok-cli send prompts to a hosted model
-  and connect to MCP servers. Gemini CLI core sends usage statistics
-  (Google Clearcut) and nanocoder asks npm's registry for its latest
+- All four start processes and connect to MCP servers: three through the
+  MCP SDK, pi through a client of its own (@earendil-works/pi-mcp, which
+  Release Watch's catalog holds now that its published files were read).
+  nanocoder runs a command through a shell (`exec()` in its VS Code path
+  discovery); for the other three REA's facts cannot tell (child_process
+  calls it did not classify, cross-spawn, execa, node-pty, the MCP SDK's
+  stdio transport).
+- Gemini CLI core, nanocoder and grok-cli send prompts to a hosted model.
+  For pi REA's facts cannot tell: it imports undici, an HTTP client REA
+  does not model. Read by hand, it calls its models through its own
+  library (@earendil-works/pi-ai, listed among its building blocks), which
+  calls whichever provider it is configured for and so names none.
+- Only Gemini CLI core runs interactive terminal sessions. It loads
+  @lydell/node-pty, then node-pty, through a variable (`const lydell =
+  "@lydell/node-pty"; await import(lydell)` in `utils/getPty.js`); REA
+  resolves that load to no module, and Release Watch reads the package
+  because REA reports the variable constant. It sends usage statistics
+  (Google Clearcut), and nanocoder asks npm's registry for its latest
   version.
-- Read by hand, four marks fall short, each for a reason that will recur:
-  pi calls its models and MCP servers through its own packages
-  (@earendil-works/pi-ai, @earendil-works/pi-mcp), which this run did not
-  read and Landscape's catalog does not hold, so "connects to MCP servers"
-  is true of all four; pi reports its version to `pi.dev/api/report-install`
-  on a fresh install and after an update unless a setting, `PI_TELEMETRY`
-  or `PI_OFFLINE` turns that off, in a request whose address is a template
-  literal REA did not resolve; Gemini CLI core loads node-pty through a
-  variable (`import(name)`), so its interactive terminal is not seen; and
-  grok-cli reads its key from `GROK_API_KEY`, a name of its own.
+- grok-cli's key read is likely, not sure: it reads `GROK_API_KEY`, a name
+  xAI does not document, in the module that holds `https://api.x.ai/v1`
+  (`dist/utils/settings-manager.js`).
+- Read by hand, one mark still falls short: pi reports its version to
+  `pi.dev/api/report-install` on a fresh install and after an update
+  unless a setting, `PI_TELEMETRY` or `PI_OFFLINE` turns that off. The
+  request's address is a template literal with a literal origin
+  (`modes/interactive/interactive-mode.js:1112`), and REA's Evidence holds
+  the request with no address and no part of the template, so Landscape
+  cannot name where it goes; `pi.dev` shows only as a likely host, from
+  another URL the same module holds. When this run was first read, three
+  more fell short: pi's MCP client, Gemini CLI core's terminal and
+  grok-cli's key.
 - pi's "uses web storage" is the HTML page it exports a session to
   (`core/export-html/template.js`), not the agent.
 
@@ -327,17 +344,18 @@ one component per directory.
 - 5 call a hosted model (1 only likely), among them the guard tdd-guard.
   3 serve MCP tools (@ai-sdk/harness-claude-code, agentic-flow,
   pr-shepherd) and pi-mcp-adapter connects to MCP servers.
-- Landscape saw telemetry in none. Read by hand, two send it: skills
-  reports each command to `www.skills.sh/tele/t` with the name of the
-  agent it detected, unless `DISABLE_TELEMETRY` or `DO_NOT_TRACK` is set,
-  and claude-mem's worker names PostHog's hosts. Release Watch tied
-  skills' request to its `TELEMETRY_URL`; Landscape reads telemetry from
-  host names only. claude-mem's worker is a 4.9 MB bundle REA examined in
-  part.
+- Landscape marks telemetry likely in one, skills: its request reads its
+  address from a variable named `TELEMETRY_URL`
+  (`dist/_chunks/remove.mjs:3390`), and the name is all that says
+  telemetry, so the mark is a guess. Read by hand, it reports each command
+  to `www.skills.sh/tele/t` with the name of the agent it detected, unless
+  `DISABLE_TELEMETRY` or `DO_NOT_TRACK` is set. Read by hand, a second
+  sends it: claude-mem's worker names PostHog's hosts, in a 4.9 MB bundle
+  REA examined in part, so its cell is unknown rather than not seen.
 - The openings Landscape suggests for this set (local-first AI, bring any
-  model, works offline, interactive sessions) do not fit it: the 21 do
-  seven different jobs, and an opening is a count across products that do
-  the same one.
+  model, no telemetry, works offline, interactive sessions) do not fit it:
+  the 21 do seven different jobs, and an opening is a count across
+  products that do the same one. No telemetry rests on skills alone.
 
 ## Limits and cost
 
@@ -363,12 +381,15 @@ and the two coding-agent sets had 6144:
 | ai-renamer history, 6 releases                | 12.7 s    | 33 s     | 0.84 GB                      |
 | top 40 MCP servers, map                       | 27 min    | 65 min   | 5.2 GB                       |
 | Gemini CLI core, 4 releases in 84 directories | 5.3 min   | 10.3 min | 1.3 GB                       |
-| open coding agents, 4 in 83 components        | 5.2 min   | 11.1 min | 2.1 GB                       |
+| open coding agents, 4 in 83 components        | 5.3 min   | 11.4 min | 2.1 GB                       |
 | add-ons for coding agents, 21 packages        | 13.4 min  | 31 min   | 4.0 GB                       |
 
 The coding-agent row is `run-demo.sh agents` whole, download and split
-included; a first run of the same map alone took 5.1 min and gave the same
-cells. Most of the MCP map's time and memory is desktop-commander (266 files):
+included, measured with the readings of constant load specifiers, variable
+names and key names described above. The run before they were added, on
+the same checkout, took 5.4 min, 11.7 min of CPU and 2.1 GB: no difference
+one run each can show. The other rows were measured before them and not
+again. Most of the MCP map's time and memory is desktop-commander (266 files):
 about 137 s of REA analysis, and Evidence of about 300 MB that Landscape
 reads whole. Agent tokens were not measured; Landscape makes no model calls.
 
@@ -383,12 +404,26 @@ What the large runs showed:
   Gemini history, split into directories, ran with the default heap.
 - The 40 servers' Evidence takes 5.5 GB of disk, Gemini's 743 MB, the
   four agents' 1.3 GB and the 21 add-ons' 3.6 GB.
-- Read by hand against the two coding-agent sets, Landscape's marks fall
-  short in five ways: a product's own model or MCP library that the
-  catalog does not hold (pi), an address built in a template literal (pi's
-  install report), a package loaded through a variable (Gemini CLI core's
-  node-pty), a provider key under a name of the product's own (grok-cli),
-  and telemetry named by a variable or a path rather than a host (skills).
+- Read by hand against the two coding-agent sets, Landscape's marks fell
+  short in five ways. Four are read now, each only as far as REA's facts
+  go. A product's own MCP client or model library counts once Release
+  Watch's catalog holds it, as it holds pi's two now that their published
+  files were read; one it does not hold is listed among the packages and
+  read as nothing more. A package loaded through a variable counts when
+  the variable is the load's whole argument and REA reports one constant
+  for it (Gemini CLI core's node-pty); through a parameter, a variable
+  assigned again or a string built at runtime it is still not seen. A
+  provider key under a name of the product's own is likely when the name
+  ends in `_API_KEY` and the module that reads it holds a known provider's
+  address (grok-cli); the documented names stay the only sure ones.
+  Telemetry is likely when a request reads its address from a variable or
+  property whose name says telemetry or analytics (skills); a path that
+  says so is not read.
+- The fifth is not read: an address built in a template literal with a
+  literal origin (pi's install report). REA reports such a request with no
+  address and its Evidence holds no part of the template, so Release Watch
+  has no origin to keep; that needs REA's request extraction to report a
+  template's static text.
 - Landscape counts every shipped file except tests, so templates a product
   copies into new projects and maintenance scripts shipped beside it count
   too (the ui5 and n8n-mcp marks above). It does not yet tell what a
@@ -415,5 +450,7 @@ cd products/landscape && npm test     # needs the REA build from npm run build:c
 ```
 
 The CLI tests map the checked-in example products in `test/fixtures` and
-products the tests write, with REA's real output; `model.test.mjs` covers
-counting, opening and trajectory rules directly.
+products the tests write, with REA's real output; `readings.test.mjs` writes
+them in the shapes of the real products a hand reading corrected.
+`model.test.mjs` covers counting, opening and trajectory rules directly, and
+`catalog.test.mjs` what the catalog reads from a name alone.

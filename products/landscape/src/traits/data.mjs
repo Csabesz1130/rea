@@ -6,38 +6,93 @@ import {
   isUpdateHost,
   isUpdatePackage,
   telemetryHost,
+  telemetryName,
   telemetryPackage,
   telemetryWord,
 } from "../catalog.mjs";
 import { factLine, readingLine } from "../evidence.mjs";
-import { LOCAL, displayUrl, packageNameOf } from "../release-watch.mjs";
+import {
+  LOCAL,
+  assignedName,
+  displayUrl,
+  importClaim,
+  packageNameOf,
+} from "../release-watch.mjs";
 import { TRAITS } from "./definitions.mjs";
-import { hostLines, isSure, strengthOf } from "./destinations.mjs";
+import {
+  destinationLine,
+  hostLines,
+  isSure,
+  strengthOf,
+} from "./destinations.mjs";
 import { clientReason, runtimeImports } from "./runtime.mjs";
 
 const catalogLine = (part, text) =>
   readingLine(part.name, `${text} (Landscape's catalog)`);
 
+// The requests Release Watch ties to a variable or property holding the
+// host's address (rules/destinations.mjs, "bound-literal") whose name says
+// telemetry: the name the request reads, or the one the address is assigned
+// to where it is defined (an import may rename it). Each with the name and
+// its word.
+const telemetryReads = (sources) =>
+  sources.flatMap((source) => {
+    if (source.kind !== "bound-literal") return [];
+    const name = [source.reads, assignedName(source.fact)].find(
+      (candidate) => telemetryName(candidate) !== null,
+    );
+    return name ? [{ source, name, word: telemetryName(name) }] : [];
+  });
+
+// Telemetry a host's sources suggest: a service the catalog knows, which
+// is as sure as the request to it; else, as a guess, a host whose own name
+// says telemetry, or a request that reads its address from a variable
+// whose name does.
+const telemetryOf = (part, host, sources) => {
+  const service = telemetryHost(host);
+  if (service)
+    return {
+      strength: strengthOf(sources),
+      evidence: [
+        catalogLine(
+          part,
+          `${host} is ${service.service}'s ${service.kind} service`,
+        ),
+        ...hostLines(part.name, sources),
+      ],
+      values: [service.service],
+    };
+  const word = telemetryWord(host);
+  if (word)
+    return {
+      strength: "likely",
+      evidence: [
+        catalogLine(part, `${host}'s name says ${word}`),
+        ...hostLines(part.name, sources),
+      ],
+      values: [host],
+    };
+  const reads = telemetryReads(sources);
+  if (reads.length === 0) return null;
+  return {
+    strength: "likely",
+    evidence: reads.flatMap(({ source, name, word: said }) => [
+      catalogLine(
+        part,
+        `the request's address is held in ${name}, a name that says ${said}`,
+      ),
+      destinationLine(part.name, source),
+    ]),
+    values: [host],
+  };
+};
+
 const hostTraits = (part, set, host, sources) => {
   const strength = strengthOf(sources);
   const lines = hostLines(part.name, sources);
   set.add(TRAITS.remote, { strength, evidence: lines, values: [host] });
-  const telemetry = telemetryHost(host);
-  const word = telemetry ? null : telemetryWord(host);
-  if (telemetry || word)
-    set.add(TRAITS.telemetry, {
-      strength: telemetry ? strength : "likely",
-      evidence: [
-        catalogLine(
-          part,
-          telemetry
-            ? `${host} is ${telemetry.service}'s ${telemetry.kind} service`
-            : `${host}'s name says ${word}`,
-        ),
-        ...lines,
-      ],
-      values: [telemetry ? telemetry.service : host],
-    });
+  const telemetry = telemetryOf(part, host, sources);
+  if (telemetry) set.add(TRAITS.telemetry, telemetry);
   if (isUpdateHost(host))
     set.add(TRAITS.updates, {
       strength,
@@ -73,7 +128,7 @@ const packageTraits = (part, set) => {
         evidence: [
           factLine(
             part.name,
-            `${fact.data.module} imports ${fact.key}, which sends ${telemetry.kind} to ${telemetry.service} (Landscape's catalog)`,
+            `${importClaim(fact)}, which sends ${telemetry.kind} to ${telemetry.service} (Landscape's catalog)`,
             fact,
           ),
         ],
@@ -84,7 +139,7 @@ const packageTraits = (part, set) => {
         evidence: [
           factLine(
             part.name,
-            `${fact.data.module} imports ${fact.key}, which checks for newer versions (Landscape's catalog)`,
+            `${importClaim(fact)}, which checks for newer versions (Landscape's catalog)`,
             fact,
           ),
         ],

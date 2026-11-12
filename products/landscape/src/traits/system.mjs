@@ -6,6 +6,7 @@ import { isPtyPackage } from "../catalog.mjs";
 import { factLine, readingLine } from "../evidence.mjs";
 import {
   commandText,
+  importClaim,
   packageNameOf,
   processLibraryOf,
 } from "../release-watch.mjs";
@@ -54,7 +55,7 @@ const libraries = (part, set) => {
         evidence: [
           factLine(
             part.name,
-            `${fact.data.module} imports ${fact.key}, which runs programs in a pseudo-terminal (Landscape's catalog)`,
+            `${importClaim(fact)}, which runs programs in a pseudo-terminal (Landscape's catalog)`,
             fact,
           ),
         ],
@@ -67,7 +68,7 @@ const libraries = (part, set) => {
       evidence: [
         factLine(
           part.name,
-          `${fact.data.module} imports ${fact.key}, a library that starts processes; REA does not model the processes it starts`,
+          `${importClaim(fact)}, a library that starts processes; REA does not model the processes it starts`,
           fact,
         ),
       ],

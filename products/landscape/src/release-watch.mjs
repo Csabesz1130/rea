@@ -21,9 +21,11 @@ export {
   examinedInPart,
   failedFiles,
 } from "../../release-watch/src/facts/coverage.mjs";
+export { importClaim } from "../../release-watch/src/facts/loads.mjs";
 export { isDeclarationPath } from "../../release-watch/src/facts/modules.mjs";
 export {
   LOCAL,
+  assignedName,
   browserHosts,
   clientImports,
   contactSchemes,

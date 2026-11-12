@@ -1,8 +1,9 @@
 // AI traits of one component: which providers it calls (a host Release
 // Watch attributes to a provider, an imported SDK that calls one provider's
 // API itself, a provider URL its code holds), local models, environment
-// keys, browser-side model calls and shipped credentials.
-import { localModelPackage, localModelUrl } from "../catalog.mjs";
+// keys (a documented name, or as a guess a name of the product's own beside
+// a provider's address), browser-side model calls and shipped credentials.
+import { isApiKeyName, localModelPackage, localModelUrl } from "../catalog.mjs";
 import { factLine, readingLine } from "../evidence.mjs";
 import {
   aiProviderOf,
@@ -11,6 +12,7 @@ import {
   credentialOf,
   displayUrl,
   hostOf,
+  importClaim,
   isAiEnvironmentKey,
   packageNameOf,
   sdkUses,
@@ -59,7 +61,7 @@ const providerSdks = (part, set) => {
       evidence: [
         factLine(
           part.name,
-          `${fact.data.module} imports ${fact.key}, the ${sdk.label}, which calls ${sdk.provider}'s API itself (Release Watch's catalog)`,
+          `${importClaim(fact)}, the ${sdk.label}, which calls ${sdk.provider}'s API itself (Release Watch's catalog)`,
           fact,
         ),
       ],
@@ -110,7 +112,7 @@ const localPackages = (part, set) => {
         evidence: [
           factLine(
             part.name,
-            `${fact.data.module} imports ${fact.key}, a client for ${server} (Landscape's catalog)`,
+            `${importClaim(fact)}, a client for ${server} (Landscape's catalog)`,
             fact,
           ),
         ],
@@ -178,6 +180,57 @@ const browserCalls = (part, set) => {
   }
 };
 
+// The provider addresses each module of the product's running code holds,
+// by module: `[{ url, provider }]`.
+const providerAddresses = (part) => {
+  const held = new Map();
+  for (const literal of productFacts(part.app.urlLiterals)) {
+    const provider = aiProviderOf(hostOf(literal.data.url));
+    if (provider === null) continue;
+    if (!held.has(literal.data.module)) held.set(literal.data.module, []);
+    held.get(literal.data.module).push({ url: literal.data.url, provider });
+  }
+  return held;
+};
+
+// A key under a name of the product's own: an environment variable with the
+// shape of an API key's name that Release Watch's catalog does not hold,
+// read in a module that also holds a provider's address (grok-cli reads
+// GROK_API_KEY beside https://api.x.ai/v1, where xAI documents
+// XAI_API_KEY). A guess: the name does not say whose key it is, and the
+// module may send it elsewhere. A read REA settled as the variable's is
+// cited once, not again as the property read it also reports.
+const otherKeys = (part, set) => {
+  const addresses = providerAddresses(part);
+  if (addresses.size === 0) return;
+  const settled = productFacts(part.app.configReads).filter(
+    (read) => read.data.source_kind === "environment",
+  );
+  const seen = new Set(
+    settled.map((read) => `${read.data.module}#${read.data.key}`),
+  );
+  const unsettled = productFacts(part.app.envPropertyReads).filter(
+    (read) => !seen.has(`${read.data.module}#${read.data.key}`),
+  );
+  for (const read of [...settled, ...unsettled]) {
+    const { key, module } = read.data;
+    if (isAiEnvironmentKey(key) || !isApiKeyName(key)) continue;
+    const [address] = addresses.get(module) ?? [];
+    if (!address) continue;
+    set.add(TRAITS.environmentKey, {
+      strength: "likely",
+      evidence: [
+        readingLine(
+          part.name,
+          `${module} reads ${key} from the environment and holds ${displayUrl(address.url)}, ${address.provider}'s API; ${key} is not a name the catalog holds for a provider (a guess)`,
+          read.location,
+        ),
+      ],
+      values: [key],
+    });
+  }
+};
+
 // Credentials are cited by kind and place only; their values never leave
 // the Evidence files.
 const shippedKeys = (part, set) => {
@@ -224,6 +277,7 @@ export const readAi = (part, set) => {
   namedUrls(part, set);
   localPackages(part, set);
   environmentKeys(part, set);
+  otherKeys(part, set);
   browserCalls(part, set);
   shippedKeys(part, set);
 };

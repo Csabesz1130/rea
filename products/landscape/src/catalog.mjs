@@ -1,8 +1,9 @@
 // Product knowledge Landscape adds to Release Watch's catalog: which hosts
 // and packages send analytics, error reports or session recordings (a known
-// service, or a host whose name says telemetry), which
-// local addresses serve models, which packages run interactive terminals
-// and which check a registry for updates. Matches here are Landscape's
+// service, or a host or variable whose name says telemetry), which
+// environment variable names have the shape of an API key's, which local
+// addresses serve models, which packages run interactive terminals and
+// which check a registry for updates. Matches here are Landscape's
 // heuristics, never REA observations; reports label them so.
 
 const suffixOf = (host, suffix) =>
@@ -111,8 +112,11 @@ export const telemetryHost = (host) => {
   return entry ? { service: entry.service, kind: entry.kind } : null;
 };
 
-// Words a collector's own host name carries (`telemetry.example.app`,
-// `app-analytics-proxy.run.app`), as whole dash-separated parts of a label.
+// Words that say what a collector is for, in its own host name
+// (`telemetry.example.app`, `app-analytics-proxy.run.app`) or in the name of
+// the variable or property that holds its address (`TELEMETRY_URL`,
+// `analyticsEndpoint`, `ENDPOINTS.telemetry`). Whole words only: `tele` or
+// `telemetryless` says nothing.
 const TELEMETRY_WORDS = new Set(["telemetry", "analytics"]);
 
 /** The telemetry word a host's name carries (`telemetry`), or null. */
@@ -121,6 +125,23 @@ export const telemetryWord = (host) => {
   for (const label of host.split("."))
     for (const part of label.split("-"))
       if (TELEMETRY_WORDS.has(part)) return part;
+  return null;
+};
+
+// The words of a JavaScript name: its parts between dots, underscores and
+// dollar signs, and within a part the runs a capital letter starts
+// (`analyticsEndpoint`) or an all-capitals run ends (`TELEMETRYUrl`).
+const NAME_WORD = /[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+/g;
+
+/**
+ * The telemetry word the name of a variable or property carries
+ * (`telemetry` for `TELEMETRY_URL` and for `ENDPOINTS.telemetry`), or null.
+ * The name says what its author called the address, not what is sent there.
+ */
+export const telemetryName = (name) => {
+  if (typeof name !== "string") return null;
+  for (const word of name.match(NAME_WORD) ?? [])
+    if (TELEMETRY_WORDS.has(word.toLowerCase())) return word.toLowerCase();
   return null;
 };
 
@@ -134,6 +155,15 @@ export const telemetryPackage = (name) => {
   );
   return entry ? { service: entry.service, kind: entry.kind } : null;
 };
+
+// The shape vendors give the environment variable that holds an API key
+// (`XAI_API_KEY`, and `GROK_API_KEY` as grok-cli names its own). The shape
+// says that a key is read, not whose key it is.
+const API_KEY_NAME = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_API_KEY$/;
+
+/** True when an environment variable's name has the shape of an API key's. */
+export const isApiKeyName = (name) =>
+  typeof name === "string" && API_KEY_NAME.test(name);
 
 // Local model servers by the port their documentation gives as default.
 const LOCAL_MODEL_PORTS = new Map([
