@@ -1,0 +1,16 @@
+{
+  "name": "proof-swarm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Settle what static analysis leaves unknown with agents that take each question to a finished claim, a deterministic check of every line the claim cites, and an adversarial reviewer.",
+  "type": "module",
+  "bin": {
+    "proof-swarm": "bin/proof-swarm.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

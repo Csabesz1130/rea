@@ -1,6 +1,7 @@
 // Desktop and web traits of one component: Electron and its window
 // safeguards (Release Watch's reading of REA's window options), web pages,
 // service workers, browser storage and scripts loaded from other hosts.
+import { storagePlace } from "../catalog.mjs";
 import { factLine, readingLine } from "../evidence.mjs";
 import {
   displayScript,
@@ -9,6 +10,7 @@ import {
   windowSafeguards,
 } from "../release-watch.mjs";
 import { TRAITS } from "./definitions.mjs";
+import { productFacts } from "./runtime.mjs";
 
 const desktop = (part, set) => {
   const reasons = surfacesOf(part.side).electron;
@@ -18,7 +20,7 @@ const desktop = (part, set) => {
         readingLine(part.name, reason, null, "Release Watch"),
       ),
     });
-  for (const window of part.app?.windows ?? [])
+  for (const window of productFacts(part.app?.windows ?? []))
     for (const guard of windowSafeguards(window)) {
       if (guard.state === "unsafe")
         set.add(TRAITS.weakWindow, {
@@ -53,18 +55,19 @@ const pageWords = (scripts, modules) =>
 
 const web = (part, set) => {
   const { app } = part;
-  if (app.pageScripts.length > 0 || app.browserModules.size > 0)
+  const pageScripts = productFacts(app.pageScripts);
+  if (pageScripts.length > 0 || app.browserModules.size > 0)
     set.add(TRAITS.pages, {
       evidence: [
         readingLine(
           part.name,
-          pageWords(app.pageScripts.length, app.browserModules.size),
+          pageWords(pageScripts.length, app.browserModules.size),
           null,
           "Release Watch",
         ),
       ],
     });
-  for (const worker of app.serviceWorkers)
+  for (const worker of productFacts(app.serviceWorkers))
     set.add(TRAITS.offline, {
       evidence: [
         factLine(
@@ -74,7 +77,17 @@ const web = (part, set) => {
         ),
       ],
     });
-  for (const store of app.storage)
+  for (const store of productFacts(app.storage)) {
+    const place = storagePlace(store.data.storage_kind);
+    // A database file is not browser storage.
+    if (place === "file") continue;
+    if (place === null) {
+      set.unknownBecause(
+        TRAITS.browserStorage,
+        `REA reports storage of a kind Landscape does not place (${store.data.storage_kind})`,
+      );
+      continue;
+    }
     set.add(TRAITS.browserStorage, {
       evidence: [
         factLine(
@@ -85,7 +98,8 @@ const web = (part, set) => {
       ],
       values: [store.data.storage_kind],
     });
-  for (const script of app.pageScripts) {
+  }
+  for (const script of pageScripts) {
     const host = scriptHostOf(script.data.script_path);
     if (host)
       set.add(TRAITS.foreignScript, {

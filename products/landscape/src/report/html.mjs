@@ -96,7 +96,13 @@ table.map { border-collapse: collapse; width: 100%; min-width: 560px; font-varia
 .map td a, .map td span, .legend span { font-family: "DejaVu Sans", "Segoe UI Symbol", "Noto Sans Symbols 2", "Apple Symbols", var(--body); }
 .map td a { text-decoration: none; display: inline-block; width: 26px; height: 26px; line-height: 26px; border-radius: 50%; font-size: 15px; }
 .mark-yes { color: var(--accent); background: var(--accent-soft); }
-tr.risk .mark-yes { color: var(--risk); background: var(--risk-soft); }
+td.risk .mark-yes { color: var(--risk); background: var(--risk-soft); }
+.map th.vertical { vertical-align: bottom; padding: 10px 4px; min-width: 36px; }
+.map th.vertical span { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); max-height: 190px; text-align: left; font: 600 12px/1.25 var(--body); }
+.map th.vertical.risk span { color: var(--risk); }
+.map th.groupcol { font: 600 10.5px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); border-left: 1px solid var(--rule); text-align: left; }
+.map th.trait small { display: block; font: 500 11px/1.3 var(--mono); color: var(--muted); }
+.map tr.counts th, .map tr.counts td { border-top: 1.5px solid var(--ink); }
 .mark-likely { color: var(--likely); }
 .mark-no { color: var(--muted); }
 .mark-unknown { color: var(--unknown); font: 600 13px/26px var(--mono); }
@@ -186,11 +192,42 @@ const cellLink = (row, product) => {
   const cell = row.cells[product.id];
   const mark = MARKS[cell.state];
   if (cell.state === "no")
-    return `<td><span class="mark-no" title="${escape(mark.word)}${cell.notes?.length ? `: ${escape(cell.notes.join("; "))}` : ""}">${mark.mark}</span></td>`;
-  return `<td><a class="mark-${cell.state}" href="#${anchor(row.id, product.id)}" title="${escape(mark.word)}: ${escape(mark.hint)}">${mark.mark}</a></td>`;
+    return `<td class="${row.kind}"><span class="mark-no" title="${escape(mark.word)}${cell.notes?.length ? `: ${escape(cell.notes.join("; "))}` : ""}">${mark.mark}</span></td>`;
+  return `<td class="${row.kind}"><a class="mark-${cell.state}" href="#${anchor(row.id, product.id)}" title="${escape(product.label)} · ${escape(row.label)}: ${escape(mark.word)}">${mark.mark}</a></td>`;
 };
 
-const mapSection = (model, look) => {
+// Maps of more products than this read better with products as rows.
+const WIDE = 8;
+
+const groupsOf = (model) =>
+  GROUPS.map((group) => ({
+    group,
+    rows: model.rows.filter((row) => row.group === group.id),
+  })).filter(({ rows }) => rows.length > 0);
+
+// Products as rows and traits as columns, grouped as GROUPS orders them.
+const productRows = (model, look) => {
+  const groups = groupsOf(model);
+  const rows = groups.flatMap((entry) => entry.rows);
+  const head = `<tr><th class="trait" rowspan="2">Product</th>${groups
+    .map(
+      ({ group, rows: grouped }) =>
+        `<th class="groupcol" colspan="${grouped.length}">${escape(group.label)}</th>`,
+    )
+    .join(
+      "",
+    )}</tr><tr>${rows.map((row) => `<th class="vertical ${row.kind}" title="${escape(row.label)}"><span>${escape(row.label)}</span></th>`).join("")}</tr>`;
+  const body = model.products
+    .map(
+      (product) =>
+        `<tr><th class="trait">${escape(product.label)}<small>${product.role === "ours" ? "yours · " : ""}${escape(coverageWords(product))}</small></th>${rows.map((row) => cellLink(row, product)).join("")}</tr>`,
+    )
+    .join("");
+  const counts = `<tr class="counts"><th class="trait">Count</th>${rows.map((row) => `<td class="count">${row.counts.held}/${look.compared.length}</td>`).join("")}</tr>`;
+  return `<thead>${head}</thead><tbody>${body}${counts}</tbody>`;
+};
+
+const traitRows = (model, look) => {
   const head = `<tr><th class="trait">Trait</th>${model.products
     .map(
       (product) =>
@@ -212,6 +249,14 @@ const mapSection = (model, look) => {
       ),
     ];
   }).join("");
+  return `<thead>${head}</thead><tbody>${body}</tbody>`;
+};
+
+const mapSection = (model, look) => {
+  const table =
+    model.products.length > WIDE
+      ? productRows(model, look)
+      : traitRows(model, look);
   return `<section><h2>Map</h2><div class="legend">${Object.values(MARKS)
     .map(
       (entry) =>
@@ -219,7 +264,7 @@ const mapSection = (model, look) => {
     )
     .join(
       "",
-    )}<span>⚠ a risk to users</span></div><div class="scroll"><table class="map"><thead>${head}</thead><tbody>${body}</tbody></table></div></section>`;
+    )}<span>⚠ a risk to users</span></div><div class="scroll"><table class="map">${table}</table></div></section>`;
 };
 
 const where = (location, product) => {

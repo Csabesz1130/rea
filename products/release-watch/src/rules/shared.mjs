@@ -8,6 +8,13 @@ export const GO_SOURCE = "REA inspect_go_binary";
 
 export const severityRank = (severity) => SEVERITIES.indexOf(severity);
 
+/**
+ * Whether a rule is one of the RW-C family, which reports what the
+ * analysis could not examine or compare, not a change in the release:
+ * what a reader weighs as a limit of the other findings.
+ */
+export const isCoverageRule = (rule) => /^RW-C\d+$/.test(rule);
+
 export const maxSeverity = (severities) =>
   severities.reduce(
     (highest, severity) =>

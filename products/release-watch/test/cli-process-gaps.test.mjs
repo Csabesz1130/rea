@@ -237,7 +237,7 @@ describe("compare: process libraries REA does not model", { skip }, () => {
         ],
         ["tools.js imports execa", "inferred"],
         [
-          "Release Watch lists packages that start processes; REA's child-process extraction models node:child_process calls only",
+          "Release Watch lists libraries that start processes; REA's child-process extraction models node:child_process calls only",
           "heuristic",
         ],
       ],

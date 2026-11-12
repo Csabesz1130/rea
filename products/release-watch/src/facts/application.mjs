@@ -21,11 +21,29 @@ import {
   observationFact,
   semanticFact,
 } from "./provenance.mjs";
+import { dynamicCalls, dynamicEvaluation } from "./unknowns.mjs";
 
 // Property reads Release Watch pairs with their calls: the members MCP
 // server SDKs and frameworks register tools through (catalog.mjs), by the
 // last name of REA's read path (`server.experimental.tasks.registerToolTask`).
 // Which of these calls register tools in an app is the MCP rules' call.
+// The key of a static read of an `env` property (`process.env.KEY`). REA
+// reports such a read, without a configuration source, when it cannot
+// settle that the value read is the variable's: code it saw earlier may have
+// changed process.env, as a helper returning process.env[key] can. The
+// path starts at the receiver REA resolved, so the receiver may also be
+// another object with an env property.
+const environmentKeyOf = (node) => {
+  const path = node.properties?.property_path;
+  return node.properties?.operation_kind === "read" &&
+    Array.isArray(path) &&
+    path.length === 2 &&
+    path[0] === "env" &&
+    typeof path[1] === "string"
+    ? path[1]
+    : null;
+};
+
 const trackedMember = (label) => {
   const member = /^read:\/(?:.+\/)?([^/]+)$/.exec(label)?.[1] ?? null;
   return MCP_REGISTRATION_MEMBERS.has(member) ? member : null;
@@ -339,6 +357,15 @@ const SEMANTIC_PROJECTIONS = {
         }),
       );
     if (trackedMember(label)) scope.trackedReads.push(node);
+    const key = environmentKeyOf(node);
+    if (key !== null)
+      scope.facts.envPropertyReads.push(
+        semanticFact(node, scope.contexts, `${modulePath}#env:${key}`, {
+          module: modulePath,
+          key,
+          range,
+        }),
+      );
   },
   "call-site": (node, scope) => {
     if (rangeOf(node) !== null) scope.callSites.push(node);
@@ -406,34 +433,20 @@ const memberCalls = (scope) => {
   }
 };
 
-// Dynamic evaluation REA reports as an unknown scope (eval, new Function).
-const dynamicEvaluation = (semantic, contexts) =>
-  (semantic.unknowns ?? []).flatMap((unknown) => {
-    const location = unknown.evidence?.location?.value;
-    if (unknown.reason !== "dynamic-scope" || location?.kind !== "source-range")
-      return [];
-    return [
-      semanticFact(
-        { ...unknown, node_id: unknown.unknown_id },
-        contexts,
-        `${location.source}#eval`,
-        { module: location.source, detail: unknown.detail ?? null },
-      ),
-    ];
-  });
-
 const semanticFacts = (semantic, modules) => {
   const facts = {
     requests: [],
     childProcesses: [],
     timers: [],
     configReads: [],
+    envPropertyReads: [],
     stringLiterals: [],
     urlLiterals: [],
     bindingReads: [],
     htmlSinks: [],
     memberCalls: [],
     dynamicEvaluation: [],
+    dynamicCalls: [],
     processUnknowns: [],
   };
   if (!semantic) return facts;
@@ -468,6 +481,7 @@ const semanticFacts = (semantic, modules) => {
     SEMANTIC_PROJECTIONS[node.kind]?.(node, scope);
   memberCalls(scope);
   facts.dynamicEvaluation = dynamicEvaluation(semantic, contexts);
+  facts.dynamicCalls = dynamicCalls(semantic, contexts);
   facts.processUnknowns = processUnknowns(semantic, contexts, {
     modules,
     childProcesses: facts.childProcesses,

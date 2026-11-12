@@ -183,7 +183,12 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
       "index.js":
         'import { execa } from "execa";\nexport const run = (command) => execa(command, { shell: true });\n',
     });
-    const run = landscape("map", [shellOut, library]);
+    // The MCP SDK's stdio client transport spawns the server it connects to.
+    const client = products.write("mcp-client", "1.0.0", {
+      "index.js":
+        'import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";\nexport const connect = (command) => new StdioClientTransport({ command });\n',
+    });
+    const run = landscape("map", [shellOut, library, client]);
     products.keep(run.out);
     assert.equal(run.result.status, 0, run.result.stderr);
     assert.equal(
@@ -197,11 +202,18 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
     assert.deepEqual(row.cells.p2.reasons, [
       "it starts processes through execa, whose shell use REA does not model",
     ]);
+    assert.equal(
+      cell(run.report, "system.process", "mcp-client 1.0.0"),
+      "likely",
+    );
+    assert.deepEqual(row.cells.p3.reasons, [
+      "it starts processes through @modelcontextprotocol/sdk/client/stdio, whose shell use REA does not model",
+    ]);
     assert.deepEqual(row.counts, {
       yes: 1,
       likely: 0,
       no: 0,
-      unknown: 1,
+      unknown: 2,
       held: 1,
     });
   });
@@ -219,5 +231,124 @@ describe("map: what REA's facts cannot settle", { skip }, () => {
     assert.equal(run.report.errors[0].product, "p2");
     assert.equal(cell(run.report, "data.remote", "runner-c 1.0.0"), "yes");
     assert.equal(cell(run.report, "data.remote", empty.label), "unknown");
+  });
+});
+
+describe("map: an MCP server SDK bundled into the code", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("reads a bundled tool-call dispatcher as likely, not a tool registry", () => {
+    // What a bundler leaves of an MCP server: the SDK's request schema and
+    // dispatcher inlined, with no import of the SDK.
+    const bundled = products.write("bundled-server", "1.0.0", {
+      "dist/bundle.js":
+        'import { spawn } from "node:child_process";\nvar CallToolRequestSchema = { method: "tools/call" };\nclass Server { setRequestHandler(schema, handler) { this.handler = handler; } }\nconst server = new Server();\nserver.setRequestHandler(CallToolRequestSchema, async () => spawn("gcloud", ["info"]));\n',
+    });
+    // An agent's own tool registry, as an MCP client keeps one.
+    const registry = products.write("agent-registry", "1.0.0", {
+      "index.js":
+        'import { spawn } from "node:child_process";\nclass ToolRegistry { registerTool(tool) { this.tool = tool; } }\nexport const tools = new ToolRegistry();\ntools.registerTool({ run: () => spawn("git", ["status"]) });\n',
+    });
+    const run = landscape("map", [bundled, registry]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(
+      cell(run.report, "agent.mcp-server", "bundled-server 1.0.0"),
+      "likely",
+    );
+    assert.equal(
+      cell(run.report, "agent.tool-process", "bundled-server 1.0.0"),
+      "unknown",
+    );
+    for (const row of ["agent.mcp-server", "agent.tool-process"])
+      assert.equal(cell(run.report, row, "agent-registry 1.0.0"), "no", row);
+  });
+});
+
+describe("map: AI keys read from the environment", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("keeps a key read REA could not settle as likely, not absent", () => {
+    const direct = products.write("keys-direct", "1.0.0", {
+      "index.js": "export const key = () => process.env.GEMINI_API_KEY;\n",
+    });
+    // A helper that returns process.env[key] for a key it is given: REA
+    // then cannot settle that a later process.env read is the variable's.
+    const helper = products.write("keys-helper", "1.0.0", {
+      "index.js":
+        'export function mode() { if (process.env["GEMINI_API_KEY"]) return "key"; return "login"; }\nconst getEnv = (key) => process.env[key];\nexport const project = () => getEnv("GOOGLE_CLOUD_PROJECT");\n',
+    });
+    const run = landscape("map", [direct, helper]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(
+      cell(run.report, "ai.environment-key", "keys-direct 1.0.0"),
+      "yes",
+    );
+    assert.equal(
+      cell(run.report, "ai.environment-key", "keys-helper 1.0.0"),
+      "likely",
+    );
+  });
+});
+
+describe("map: browser storage", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("counts Web Storage and IndexedDB, not a database file", () => {
+    const page = products.write("notes-web", "1.0.0", {
+      "index.js":
+        'export const save = (text) => localStorage.setItem("draft", text);\n',
+    });
+    const server = products.write("todos-server", "1.0.0", {
+      "index.js":
+        'import Database from "better-sqlite3";\nexport const open = () => new Database("todos.db");\n',
+    });
+    const run = landscape("map", [page, server]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(cell(run.report, "web.storage", "notes-web 1.0.0"), "yes");
+    assert.equal(cell(run.report, "web.storage", "todos-server 1.0.0"), "no");
+  });
+});
+
+describe("map: only code that runs with the product", { skip }, () => {
+  const products = written();
+  after(() => products.cleanup());
+
+  it("leaves out tests, mocks and test helpers a package ships, not code in a test directory", () => {
+    const shipped = products.write("runner-d", "1.0.0", {
+      "index.js": "export const run = () => 1;\n",
+      "index.test.js":
+        'export const probe = () => fetch("https://api.openai.com/v1/models");\n',
+      "loggers.test.circular.js":
+        'export const probe = () => fetch("https://api.anthropic.com/v1/models");\n',
+      "__mocks__/shell.js":
+        'import { exec } from "node:child_process";\nexport const run = (command) => exec(command);\n',
+      "test-utils/server.js":
+        'export const ping = () => fetch("https://test-server.example/ping");\n',
+    });
+    const other = products.write("runner-e", "1.0.0", {
+      "index.js":
+        'import { exec } from "node:child_process";\nexport const run = (command) => exec(command);\n',
+    });
+    // The code that runs a project's tests is the product's own.
+    const tester = products.write("runner-f", "1.0.0", {
+      "utils/test/run.js":
+        'import { spawn } from "node:child_process";\nexport const test = (scheme) => spawn("xcodebuild", ["test", "-scheme", scheme]);\n',
+    });
+    const run = landscape("map", [shipped, other, tester]);
+    products.keep(run.out);
+    assert.equal(run.result.status, 0, run.result.stderr);
+    for (const row of ["system.process", "system.shell"])
+      assert.equal(cell(run.report, row, "runner-d 1.0.0"), "no", row);
+    assert.equal(cell(run.report, "system.process", "runner-f 1.0.0"), "yes");
+    assert.deepEqual(
+      run.report.rows.map((row) => row.id),
+      ["system.process", "system.shell"],
+    );
   });
 });

@@ -1,0 +1,13 @@
+{
+  "name": "rea-vm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Run REA's products on one VM, such as a Hetzner CPX32: first-boot setup, the pipeline from the MCP Trust Index to Proof Swarm's plan, and its measured costs.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -5,16 +5,21 @@
 // sites, not tool names or schemas.
 import { factLine, readingLine } from "../evidence.mjs";
 import {
-  isProcessLibrary,
+  bundledToolDispatchers,
   mcpServers,
-  packageNameOf,
+  processLibraryOf,
   registrationClaim,
   sdkUses,
   toolConnections,
   toolRegistrations,
 } from "../release-watch.mjs";
 import { TRAITS } from "./definitions.mjs";
-import { isRuntimeImport, runtimeImports } from "./imports.mjs";
+import {
+  inProduct,
+  isRuntimeImport,
+  productFacts,
+  runtimeImports,
+} from "./runtime.mjs";
 
 const MAX_LINES = 6;
 
@@ -71,7 +76,9 @@ const clients = (part, set) => {
 };
 
 const toolProcesses = (part, set) => {
-  const connections = toolConnections(part.app);
+  const connections = toolConnections(part.app).filter(({ call }) =>
+    inProduct(call),
+  );
   if (connections.length === 0) return;
   const settled = connections.filter((connection) => !connection.path?.guess);
   const cited = (settled.length > 0 ? settled : connections).slice(
@@ -99,8 +106,8 @@ const toolUnknowns = (part, set) => {
   const libraries = [
     ...new Set(
       runtimeImports(part.app)
-        .map((fact) => packageNameOf(fact.key))
-        .filter(isProcessLibrary),
+        .map((fact) => processLibraryOf(fact.key))
+        .filter((library) => library !== null),
     ),
   ];
   if (libraries.length > 0)
@@ -108,18 +115,45 @@ const toolUnknowns = (part, set) => {
       TRAITS.toolProcess,
       `it imports ${libraries.join(", ")}, which ${libraries.length === 1 ? "starts" : "start"} processes REA does not model`,
     );
-  if (part.app.processUnknowns.length > 0)
+  if (productFacts(part.app.processUnknowns).length > 0)
     set.unknownBecause(
       TRAITS.toolProcess,
       "it uses child_process in ways REA did not classify as process calls",
     );
 };
 
+// A component that dispatches MCP tool calls with no MCP server SDK import:
+// the SDK is bundled into its code, so it likely serves MCP tools, and with
+// no import to tell which calls register tools, what they reach is unknown.
+const bundledServers = (part, set) => {
+  const dispatchers = bundledToolDispatchers(part.app).filter(inProduct);
+  if (dispatchers.length === 0) return;
+  set.add(TRAITS.mcpServer, {
+    strength: "likely",
+    evidence: dispatchers
+      .slice(0, MAX_LINES)
+      .map((call) =>
+        factLine(
+          part.name,
+          `setRequestHandler() call whose first argument reads CallToolRequestSchema, as an MCP server SDK bundled into the code dispatches tool calls; REA reports no import of one`,
+          call,
+        ),
+      ),
+  });
+  set.unknownBecause(
+    TRAITS.toolProcess,
+    "its MCP server SDK is bundled into its code, so Release Watch cannot tell which calls register tools",
+  );
+};
+
 /** Record one component's agent-tool traits. */
 export const readAgent = (part, set) => {
   if (!part.app) return;
   clients(part, set);
-  if (!servers(part, set)) return;
+  if (!servers(part, set)) {
+    bundledServers(part, set);
+    return;
+  }
   toolProcesses(part, set);
   toolUnknowns(part, set);
 };

@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 // fetch.mjs <set> --work <dir>: download one set of demo packages from npm
 // (packages.json), check each tarball against its pinned sha512 integrity,
-// and unpack it into its own directory under <dir>/packages. Prints one
-// unpacked package directory per line. npm fetches the tarball and runs none
-// of the package's scripts; nothing it downloads is executed.
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-} from "node:fs";
+// and unpack it into its own directory under <dir>/packages, named for the
+// package and version so that a report names a product REA could not read.
+// A package (or its set) that names a `root` is large: it is laid out as one
+// component per directory under that root (split.mjs), without the
+// directories it lists under `skip`. Prints one directory per line for
+// Landscape to read: the unpacked package, or its split. Release Feed's
+// fetcher does the work: npm fetches the tarball and runs none of the
+// package's scripts, a tarball that holds a link is refused, and nothing
+// downloaded is executed.
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+
+import { fetchPackage } from "../../release-feed/src/npm.mjs";
+import { describe, split } from "./split.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { values, positionals } = parseArgs({
@@ -34,62 +34,31 @@ if (!sets[setName] || !values.work) {
   process.exit(1);
 }
 
-const run = (command, args, cwd) => {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
-  if (result.status !== 0)
-    throw new Error(
-      `${command} ${args.join(" ")} failed: ${result.stderr || result.error?.message}`,
-    );
-  return result.stdout;
-};
-
-const integrityOf = (file) =>
-  `sha512-${createHash("sha512").update(readFileSync(file)).digest("base64")}`;
-
-// One directory per package version: a name a scope cannot break.
-const directoryName = ({ name, version }) =>
-  `${name.replace(/^@/, "").replace(/\//g, "__")}-${version}`;
-
-const fetchPackage = (pkg, root) => {
-  const target = path.join(root, directoryName(pkg));
-  if (existsSync(path.join(target, "package", "package.json")))
-    return path.join(target, "package");
-  const download = path.join(root, `${directoryName(pkg)}.download`);
-  rmSync(download, { recursive: true, force: true });
-  mkdirSync(download, { recursive: true });
-  run(
-    "npm",
-    [
-      "pack",
-      `${pkg.name}@${pkg.version}`,
-      "--pack-destination",
-      download,
-      "--ignore-scripts",
-      "--silent",
-    ],
-    download,
-  );
-  const [tarball] = readdirSync(download).filter((file) =>
-    file.endsWith(".tgz"),
-  );
-  const file = path.join(download, tarball);
-  const found = integrityOf(file);
-  if (found !== pkg.integrity)
-    throw new Error(
-      `${pkg.name}@${pkg.version}: tarball integrity ${found} is not the pinned ${pkg.integrity}`,
-    );
-  const unpacked = path.join(download, "unpacked");
-  mkdirSync(unpacked);
-  run("tar", ["-xzf", file, "-C", unpacked], download);
-  rmSync(target, { recursive: true, force: true });
-  renameSync(unpacked, target);
-  rmSync(download, { recursive: true, force: true });
-  return path.join(target, "package");
-};
-
-const root = path.join(path.resolve(values.work), "packages");
+const work = path.resolve(values.work);
+const root = path.join(work, "packages");
 mkdirSync(root, { recursive: true });
-for (const pkg of sets[setName].packages) {
+const set = sets[setName];
+for (const pkg of set.packages) {
   process.stderr.write(`  ${pkg.name}@${pkg.version} (${pkg.license})\n`);
-  process.stdout.write(`${fetchPackage(pkg, root)}\n`);
+  const fetched = await fetchPackage(pkg, root);
+  if (!fetched.ok)
+    throw new Error(
+      `${pkg.name}@${pkg.version}: ${fetched.reason}: ${fetched.detail}`,
+    );
+  const under = pkg.root ?? set.root;
+  if (under === undefined) {
+    process.stdout.write(`${fetched.dir}\n`);
+    continue;
+  }
+  const made = split(
+    fetched.dir,
+    path.join(work, "split", path.basename(fetched.dir)),
+    { root: under, skip: pkg.skip ?? [] },
+  );
+  if (!made)
+    throw new Error(
+      `${pkg.name}@${pkg.version}: no script files under ${under}`,
+    );
+  process.stderr.write(describe(made));
+  process.stdout.write(`${made.out}\n`);
 }
