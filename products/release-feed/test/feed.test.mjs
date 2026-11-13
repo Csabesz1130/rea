@@ -2,21 +2,16 @@
 // the integrity check, unpacking, Release Watch and REA all run for real
 // on packages written for each case. The comparisons need REA built.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import http from "node:http";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { skip } from "../../release-watch/test/cli-run.mjs";
 import { failureOf } from "../src/compare.mjs";
@@ -27,16 +22,21 @@ import {
   stableAsOf,
 } from "../src/npm.mjs";
 import { sizing } from "../src/sizing.mjs";
-import { startRegistry, tarball } from "./registry.mjs";
+import {
+  SERVER,
+  SERVER_WITH_SHELL,
+  SERVER_WITH_SYNC,
+  harness,
+  manifest,
+  release,
+} from "./harness.mjs";
+import { tarball } from "./registry.mjs";
 
-const cli = fileURLToPath(new URL("../bin/release-feed.mjs", import.meta.url));
-const root = mkdtempSync(path.join(tmpdir(), "release-feed-test-"));
-let registry;
+const { registry, feed, feedFor } = harness();
 let hook;
 const alerts = [];
 
 before(async () => {
-  registry = await startRegistry();
   hook = http.createServer((request, response) => {
     const chunks = [];
     request.on("data", (chunk) => chunks.push(chunk));
@@ -47,82 +47,7 @@ before(async () => {
   });
   await new Promise((resolve) => hook.listen(0, "127.0.0.1", resolve));
 });
-after(async () => {
-  await registry.close();
-  await new Promise((resolve) => hook.close(resolve));
-  rmSync(root, { recursive: true, force: true });
-});
-
-// The CLI, without blocking the registry this process serves.
-const feed = (args, env = {}) =>
-  new Promise((resolve) => {
-    execFile(
-      process.execPath,
-      [cli, ...args],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          npm_config_cache: path.join(root, "npm-cache"),
-          ...env,
-        },
-      },
-      (error, stdout, stderr) =>
-        resolve({
-          status: error ? (error.code ?? 1) : 0,
-          stdout,
-          stderr,
-          output: stdout.startsWith("{") ? JSON.parse(stdout) : null,
-        }),
-    );
-  });
-
-let count = 0;
-// A work directory and the watchlist for it.
-const feedFor = (packages) => {
-  const work = path.join(root, `feed-${(count += 1)}`);
-  mkdirSync(work, { recursive: true });
-  const watchlist = path.join(work, "watchlist.json");
-  writeFileSync(watchlist, JSON.stringify({ title: "Test feed", packages }));
-  const run = (args = [], env = {}) =>
-    feed(
-      ["run", watchlist, "--work", work, "--registry", registry.url, ...args],
-      env,
-    );
-  const entries = () =>
-    JSON.parse(readFileSync(path.join(work, "site/api/entries.json"), "utf8"))
-      .entries;
-  return { work, run, entries };
-};
-
-const manifest = (name, version) =>
-  JSON.stringify({ name, version, type: "module", bin: "index.js" });
-const SERVER = [
-  'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
-  'const server = new McpServer({ name: "notes", version: "1.0.0" });',
-  'server.registerTool("list", {}, async () => (await fetch("https://api.example.com/notes")).json());',
-].join("\n");
-// A tool that starts a process and calls a new host: changes Release Watch
-// reports as such.
-const SERVER_WITH_SYNC = [
-  'import { spawn } from "node:child_process";',
-  SERVER,
-  "const sync = async () => {",
-  '  const child = spawn("git", ["pull"]);',
-  '  await fetch("https://telemetry.example.net/sync");',
-  "  return child.pid;",
-  "};",
-  'server.registerTool("sync", {}, sync);',
-].join("\n");
-// A process call REA does not classify: Release Watch notes it as code it
-// could not examine, beside one more tool registration.
-const SERVER_WITH_SHELL = [
-  'import { execSync } from "node:child_process";',
-  SERVER,
-  'server.registerTool("run", {}, async ({ command }) => execSync(command).toString());',
-].join("\n");
-const release = (name, version, code = SERVER) =>
-  tarball({ "package.json": manifest(name, version), "index.js": code });
+after(() => new Promise((resolve) => hook.close(resolve)));
 
 const allFiles = (directory) =>
   readdirSync(directory, { recursive: true, withFileTypes: true })

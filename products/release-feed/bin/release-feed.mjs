@@ -2,15 +2,26 @@
 // release-feed run <watchlist.json> --work <dir> [options]
 // release-feed site --work <dir> [options]
 // release-feed status --work <dir>
+// release-feed review --work <dir>
+// release-feed approve|reject <entry-id> --work <dir> --by <name> [--note <text>]
+// release-feed gate <name>@<version>... --work <dir>
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { THRESHOLDS, sendAlerts } from "../src/alert.mjs";
 import { endComparisons } from "../src/compare.mjs";
-import { isPackageName } from "../src/npm.mjs";
+import { isPackageName, isVersion } from "../src/npm.mjs";
+import {
+  REVIEW_FROM,
+  decide,
+  gateOf,
+  isOpen,
+  stateOf,
+  stateText,
+} from "../src/review.mjs";
 import { pruneEvidence, runFeed } from "../src/run.mjs";
-import { buildSite } from "../src/site.mjs";
+import { buildSite, headlineOf } from "../src/site.mjs";
 import { sizing } from "../src/sizing.mjs";
 import {
   acquireLock,
@@ -23,6 +34,10 @@ const USAGE = `Usage:
   release-feed run <watchlist.json> --work <dir> [options]
   release-feed site --work <dir> [--title <text>] [--base-url <url>] [--no-reports]
   release-feed status --work <dir>
+  release-feed review --work <dir>
+  release-feed approve <entry-id> --work <dir> --by <name> [--note <text>]
+  release-feed reject <entry-id> --work <dir> --by <name> [--note <text>]
+  release-feed gate <name>@<version>... --work <dir>
 
 run: asks the npm registry for the latest release of every package in the
 watchlist ({ "title": "...", "packages": ["name", ...] }). A release not
@@ -58,15 +73,38 @@ comparison's report) and alerts are sent. Nothing downloaded is run.
                           an alert for a comparison with a change at or
                           above it to the URL in RELEASE_FEED_WEBHOOK_URL
                           (default: high; no URL, no alerts)
+  --review                Review mode, kept by the work directory from then
+                          on: a new release is compared with the release
+                          last accepted, and stays unaccepted until its
+                          comparison is cleared (no change found in code
+                          examined in full) or a person approves it
+  --review-from <sev>     info | low | medium | high | critical: the least
+                          severe change that needs a person (default: low).
+                          Turns review mode on
 
 site: builds the site again from the entries, without asking the registry.
 
 status: prints the last run's summary, what each package was last seen
 at, and this machine's sizing.
 
+review: prints the comparisons that wait for a person, and the accepted
+release of each package.
+
+approve, reject: record a person's verdict on one comparison, by its id
+(as review prints it). An approval makes the comparison's new release the
+accepted one. Each verdict is appended to <dir>/decisions.jsonl with the
+ids and digests of the Evidence it was made on. The site shows it after
+the next run or site command.
+
+gate: says whether each named release may be installed: one accepted on
+first sight, cleared, or approved. Exit status 0 when all are, 3 when one
+is not.
+
 Exit status: 0 when the command completed (a release that could not be
 compared is an entry that says why), 1 when it could not run (another run
-holds the lock, or the state cannot be read), 2 on usage errors.`;
+holds the lock, the state cannot be read, or a verdict has no entry
+waiting for it), 2 on usage errors, 3 when gate does not let a release
+through.`;
 
 const usage = (message) => {
   process.stderr.write(`${message}\n\n${USAGE}\n`);
@@ -91,6 +129,10 @@ try {
       "base-url": { type: "string" },
       "no-reports": { type: "boolean" },
       "alert-on": { type: "string" },
+      review: { type: "boolean" },
+      "review-from": { type: "string" },
+      by: { type: "string" },
+      note: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -105,11 +147,20 @@ if (values.help) {
 }
 
 const [command, target] = positionals;
-if (!["run", "site", "status"].includes(command))
+const COMMANDS = [
+  "run",
+  "site",
+  "status",
+  "review",
+  "approve",
+  "reject",
+  "gate",
+];
+if (!COMMANDS.includes(command))
   usage(
     command
       ? `Unknown command: ${command}`
-      : "Name a command: run, site or status.",
+      : `Name a command: ${COMMANDS.join(", ")}.`,
   );
 if (!values.work) usage("Name the work directory with --work.");
 const work = path.resolve(values.work);
@@ -165,7 +216,96 @@ const fail = (message) => {
 
 const lastRunFile = path.join(work, "last-run.json");
 
-if (command === "status") {
+const NOT_IN_REVIEW = `the feed in ${work} is not in review mode; run it with --review`;
+
+// The state of a feed in review mode, or the end of the command.
+const reviewState = () => {
+  let state;
+  try {
+    state = readState(work);
+  } catch (error) {
+    fail(error.message);
+  }
+  if (!state.review) fail(NOT_IN_REVIEW);
+  return state;
+};
+
+if (command === "review") {
+  const state = reviewState();
+  const output = {
+    review_from: state.review.from,
+    waiting: readEntries(work)
+      .filter(isOpen)
+      .map((entry) => ({
+        id: entry.id,
+        state: stateOf(entry),
+        headline: headlineOf(entry),
+        changes: entry.findings
+          .filter((finding) => finding.kind === "change")
+          .map(({ severity, rule, title }) => `[${severity}] ${rule} ${title}`),
+        not_examined: entry.findings
+          .filter((finding) => finding.kind === "coverage")
+          .map(({ title }) => title),
+        report: entry.report ?? null,
+      })),
+    accepted: Object.fromEntries(
+      Object.entries(state.packages).map(([name, seen]) => [
+        name,
+        seen.approved
+          ? { version: seen.approved.version, basis: seen.approved.basis }
+          : null,
+      ]),
+    ),
+  };
+  process.stdout.write(`${JSON.stringify(output, null, 1)}\n`);
+} else if (command === "approve" || command === "reject") {
+  if (!target) usage(`Name the entry to ${command}, by its id.`);
+  if (!values.by?.trim()) usage("Say who decides with --by <name>.");
+  let release;
+  try {
+    release = acquireLock(work);
+  } catch (error) {
+    fail(error.message);
+  }
+  // The lock is released before the command ends, whatever the outcome.
+  let result;
+  try {
+    const state = readState(work);
+    result = state.review
+      ? decide(work, state, target, {
+          verdict: command === "approve" ? "approved" : "rejected",
+          by: values.by.trim(),
+          note: values.note,
+          at: new Date().toISOString(),
+        })
+      : { ok: false, reason: NOT_IN_REVIEW };
+  } catch (error) {
+    result = { ok: false, reason: error.message };
+  } finally {
+    release();
+  }
+  if (!result.ok) fail(result.reason);
+  process.stdout.write(
+    `${JSON.stringify({ id: result.entry.id, state: stateText(result.entry) }, null, 1)}\n`,
+  );
+} else if (command === "gate") {
+  const specs = positionals.slice(1).map((spec) => {
+    const at = spec.lastIndexOf("@");
+    const [name, version] = [spec.slice(0, at), spec.slice(at + 1)];
+    if (at < 1 || !isPackageName(name) || !isVersion(version))
+      usage(`gate takes releases as <name>@<version>, not ${spec}.`);
+    return { name, version };
+  });
+  if (specs.length === 0) usage("Name the releases to gate.");
+  const state = reviewState();
+  const entries = readEntries(work);
+  const releases = specs.map(({ name, version }) =>
+    gateOf(state, entries, name, version),
+  );
+  const allowed = releases.every((release) => release.allowed);
+  process.stdout.write(`${JSON.stringify({ allowed, releases }, null, 1)}\n`);
+  process.exitCode = allowed ? 0 : 3;
+} else if (command === "status") {
   let state;
   try {
     state = readState(work);
@@ -213,6 +353,9 @@ if (command === "status") {
   const depth = values.depth ?? "standard";
   if (!["standard", "deep"].includes(depth))
     usage("--depth takes standard or deep.");
+  const reviewFrom = values["review-from"];
+  if (reviewFrom !== undefined && !REVIEW_FROM.includes(reviewFrom))
+    usage(`--review-from takes one of ${REVIEW_FROM.join(", ")}.`);
   const machine = sizing();
   const parallel = count("parallel", machine.parallel);
   const heapMb = count("heap-mb", machine.heapMb, 256);
@@ -227,6 +370,9 @@ if (command === "status") {
     release?.();
     fail(error.message);
   }
+  // Review mode stays with the work directory once a run asked for it.
+  if (values.review || reviewFrom !== undefined || state.review)
+    state.review = { from: reviewFrom ?? state.review?.from ?? "low" };
   const stop = (signal) => {
     endComparisons();
     release();
@@ -289,6 +435,7 @@ if (command === "status") {
                 not_examined: entry.findings.length - entry.changes.count,
               }
             : { reason: entry.reason }),
+          ...(entry.review ? { state: stateOf(entry) } : {}),
         })),
       unreachable: results
         .filter((result) => result.outcome === "unreachable")

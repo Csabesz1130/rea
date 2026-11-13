@@ -14,6 +14,8 @@
 #   FEED_ALERT_ON          severity that alerts         (high)
 #   FEED_NO_REPORTS        1 leaves full reports out of the site  (unset)
 #   FEED_MAX_EVIDENCE_GB   REA Evidence to keep         (10)
+#   FEED_REVIEW_FROM       review mode: the least severe change that needs
+#                          a person, info to critical (unset: no review)
 #   FEED_DEPTH             standard or deep: how much of a large release
 #                          REA examines                 (standard)
 #   RELEASE_FEED_WEBHOOK_URL   where alerts go          (none: no alerts)
@@ -43,5 +45,6 @@ if [[ -n "${FEED_SINCE:-}" ]]; then args+=(--since "$FEED_SINCE"); fi
 if [[ -n "${FEED_BASE_URL:-}" ]]; then args+=(--base-url "$FEED_BASE_URL"); fi
 if [[ "${FEED_NO_REPORTS:-}" == 1 ]]; then args+=(--no-reports); fi
 if [[ -n "${FEED_DEPTH:-}" ]]; then args+=(--depth "$FEED_DEPTH"); fi
+if [[ -n "${FEED_REVIEW_FROM:-}" ]]; then args+=(--review-from "$FEED_REVIEW_FROM"); fi
 
 exec node "$repo/products/release-feed/bin/release-feed.mjs" "${args[@]}"

@@ -136,7 +136,8 @@ and a read-only system apart from `/var/lib/rea-feed` and `rea`'s home.
 Edit `/var/lib/rea-feed/watchlist.json` to watch other packages, and the
 settings file for the rest: `FEED_SINCE` (on first sight, compare the
 stable release as of a day with the latest), `FEED_BASE_URL`,
-`FEED_ALERT_ON` and `RELEASE_FEED_WEBHOOK_URL`. A later run costs one
+`FEED_ALERT_ON`, `RELEASE_FEED_WEBHOOK_URL` and `FEED_REVIEW_FROM`, which
+turns on [review mode](../release-feed/README.md#review-mode). A later run costs one
 registry call per package unless a release is new.
 
 ### Serving the site

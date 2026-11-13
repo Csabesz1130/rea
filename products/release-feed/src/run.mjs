@@ -1,7 +1,8 @@
 // One run of the feed: ask the registry what each watched package's latest
-// release is, compare a release not seen before with the one it follows,
-// and record the outcome as an entry. A package whose latest release was
-// already seen costs one registry call.
+// release is, compare a release not seen before with the one it follows
+// (in review, with the release last accepted), and record the outcome as
+// an entry. A package whose latest release was already seen costs one
+// registry call.
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -19,6 +20,13 @@ import {
   stableAsOf,
   versionFacts,
 } from "./npm.mjs";
+import {
+  acceptance,
+  acceptedFields,
+  acceptedOf,
+  reviewed,
+  supersede,
+} from "./review.mjs";
 import { SCHEMA, readEntries, writeEntry, writeState } from "./state.mjs";
 
 // Failures that say nothing about the release: the next run tries again.
@@ -100,10 +108,22 @@ export const summaryOf = (report) => {
 };
 
 // The release a package's latest one is compared with, and why that one:
-// the release last seen; on first sight the stable release as of `since`,
-// else the release before it when `backfill` asks. Null with nothing to
-// compare.
-const baseOf = (facts, seen, { since, backfill }) => {
+// the release last seen, or in review the release last accepted, which
+// stays the base until a comparison is cleared or approved; on first sight
+// the stable release as of `since`, else the release before it when
+// `backfill` asks. Null with nothing to compare: in review also when the
+// latest release was already compared and waits for a person.
+const baseOf = (facts, seen, { since, backfill, review, now }) => {
+  if (seen && review) {
+    const baseline = acceptedOf(seen, now());
+    return baseline.version === facts.latest || seen.latest === facts.latest
+      ? null
+      : {
+          version: baseline.version,
+          basis: "the release last accepted",
+          integrity: baseline.integrity,
+        };
+  }
   if (seen)
     return seen.latest === facts.latest
       ? null
@@ -196,7 +216,8 @@ const check = async (name, context) => {
   const facts = await packageFacts(name, npm);
   if (!facts.ok) return unreachable(facts);
   const seen = state.packages[name];
-  const base = baseOf(facts, seen, context);
+  const review = state.review ?? null;
+  const base = baseOf(facts, seen, { ...context, review });
   const record = (extra) => {
     state.packages[name] = {
       ...seen,
@@ -207,7 +228,7 @@ const check = async (name, context) => {
     writeState(work, state);
   };
   if (seen && base === null) {
-    record({});
+    record(review ? acceptedFields(seen, acceptedOf(seen, now())) : {});
     return { name, outcome: "unchanged" };
   }
   const latestFacts = await versionFacts(name, facts.latest, npm);
@@ -220,7 +241,14 @@ const check = async (name, context) => {
   };
   const seenNow = { integrity: latest.integrity, published: latest.published };
   if (base === null) {
-    record(seenNow);
+    record(
+      review
+        ? {
+            ...seenNow,
+            ...acceptedFields(seen, acceptance(latest, "first sight", now())),
+          }
+        : seenNow,
+    );
     return { name, outcome: "baseline" };
   }
   if (base.integrity === null) {
@@ -260,9 +288,22 @@ const check = async (name, context) => {
     alert: null,
     ...outcome,
   };
-  writeEntry(work, entry);
-  record(seenNow);
-  return { name, outcome: outcome.status, entry };
+  if (!review) {
+    writeEntry(work, entry);
+    record(seenNow);
+    return { name, outcome: outcome.status, entry };
+  }
+  const at = entry.detected_at;
+  const result = reviewed(
+    entry,
+    seen,
+    seen ? acceptedOf(seen, at) : acceptance(entry.old, base.basis, at),
+    { from: review.from, at },
+  );
+  writeEntry(work, result.entry);
+  supersede(work, result.entry);
+  record({ ...seenNow, ...result.fields });
+  return { name, outcome: outcome.status, entry: result.entry };
 };
 
 const sizeOf = (directory) =>

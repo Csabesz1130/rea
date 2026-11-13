@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { escapeHtml } from "../../release-watch/src/report/html.mjs";
 import { severityRank } from "../../release-watch/src/rules/shared.mjs";
+import { examinedInPart, isOpen, stateText } from "./review.mjs";
 import { readEntries, writeJson } from "./state.mjs";
 
 const REPORT_FILES = ["report.html", "report.json", "report.md"];
@@ -34,11 +35,6 @@ const changesOf = (entry) =>
 const notesOf = (entry) =>
   (entry.findings ?? []).filter((finding) => finding.kind === "coverage");
 const highestOf = (entry) => entry.changes?.highest ?? "info";
-const examinedInPart = (entry) =>
-  entry.status === "compared" &&
-  (entry.verdict.errors > 0 ||
-    notesOf(entry).length > 0 ||
-    entry.coverage.old.length + entry.coverage.new.length > 0);
 
 // One line that says what an entry found, for a feed title or an alert.
 export const headlineOf = (entry) => {
@@ -127,7 +123,9 @@ const entryHtml = (entry, { reports }) => {
     entry.releases_between > 1
       ? `${entry.releases_between} releases in between`
       : null;
+  const review = stateText(entry);
   const meta = [
+    review ? `<b>${escapeHtml(review)}</b>` : null,
     `published ${escapeHtml(day(entry.new.published))}`,
     `compared with ${escapeHtml(entry.basis)}`,
     between,
@@ -174,7 +172,11 @@ const pageHtml = (entries, { title, watched, checkedAt, reports }) => {
 <ul class="facts">
 <li><b>${watched}</b> packages watched</li>
 <li><b>${compared.length}</b> releases compared</li>
-${flagged}
+${flagged}${
+    entries.some((entry) => entry.review)
+      ? `\n<li><b>${entries.filter(isOpen).length}</b> waiting for a decision</li>`
+      : ""
+  }
 <li>last checked ${escapeHtml(day(checkedAt))}</li>
 <li><a href="feed.xml">Atom</a> · <a href="feed.json">JSON Feed</a> · <a href="api/entries.json">all entries</a></li>
 </ul>

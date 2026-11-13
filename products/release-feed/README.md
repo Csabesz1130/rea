@@ -136,6 +136,69 @@ again with a larger heap.
    whatever the threshold. A delivery that fails is tried again on the
    next run. The URL is read from the environment and written nowhere.
 
+## Review mode
+
+A feed says what changed. A team that must approve what it installs needs
+more: which release it last accepted, whether a new one may go in, and who
+said so. `run --review` keeps that for a work directory from then on.
+
+- **The base is the release last accepted,** not the release last seen. A
+  release nobody approved does not become the base of the next
+  comparison, so a change cannot leave the picture because a later
+  release arrived. The later comparison replaces the earlier one.
+- **Every comparison has a standing**, and "no change found" is two of
+  them:
+
+  | Standing        | Meaning                                                                            | Accepted         |
+  | --------------- | ---------------------------------------------------------------------------------- | ---------------- |
+  | cleared         | No change at or above `--review-from`, and REA examined all the code of both sides | By the feed      |
+  | not established | No such change, but part of the code was not examined, so its absence is not shown | Only by a person |
+  | needs review    | A change at or above `--review-from` (default: low)                                | Only by a person |
+  | not compared    | The feed could not compare the release, and says why                               | Only by a person |
+
+- **A person's verdict is a record.** `approve` and `reject` take the
+  comparison's id, a name and a note. An approval makes the new release
+  the accepted one. Each verdict is appended to `decisions.jsonl` with the
+  two releases' integrity and the ids and digests of the REA Evidence the
+  comparison rests on.
+- **`gate` answers for a pipeline.** `gate <name>@<version>` exits 0 for a
+  release accepted on first sight, cleared or approved, and 3 otherwise,
+  with the reason as JSON.
+
+```bash
+node bin/release-feed.mjs run watchlists/agent-addons.json --work ~/feed --review
+node bin/release-feed.mjs review --work ~/feed            # what waits for a person
+node bin/release-feed.mjs approve "skills@1.7.4..1.8.1" --work ~/feed \
+  --by ana --note "moved calls only"
+node bin/release-feed.mjs gate skills@1.8.1 --work ~/feed  # exit status 0 or 3
+```
+
+On first sight a package's latest release is accepted as it is, or with
+`--since` the stable release as of that day: the feed records where a
+team starts, it does not vouch for it.
+
+### What review would have asked of a person
+
+The standing rule, applied to the 44 comparisons of the two first runs
+above (not a new run; the entries were made without review):
+
+| Watchlist            | Releases | Cleared | Needs review | Not established | Not compared |
+| -------------------- | -------- | ------- | ------------ | --------------- | ------------ |
+| Top 40 MCP servers   | 28       | 1       | 12           | 15              | 0            |
+| Coding agent add-ons | 16       | 2       | 8            | 5               | 1            |
+
+Three of 44 releases would have been accepted without a person. Twenty
+could not be cleared for lack of coverage alone, which makes coverage,
+not the rules, what decides how much work the feed saves. Fourteen of
+those twenty carry a Release Watch note: changed code REA did not
+examine, a library it does not model, or parts it saw on one side only.
+The other six carry none: for four REA reports only that its application
+graph is partial, and two had an analysis error. The feed holds those
+too, because it does not know that what was left out is unchanged.
+Raising `--review-from` to high moves fourteen releases from "needs
+review" to "not established" and one to "cleared": it changes why a
+person is asked, not how often.
+
 ## Quick start
 
 It needs what Release Watch needs: a built REA checkout
@@ -199,6 +262,14 @@ second one stops with exit status 1.
 
 ## What it does not establish
 
+- Review records decisions; it does not make them good. "Cleared" means
+  no rule matched in two releases REA examined in full, which is the
+  strongest thing this feed says and still not that a release is safe.
+  A release that swaps one capability for another of the same kind (a
+  tool for a tool) may match no rule.
+- `gate` knows releases by version. It does not check the integrity of
+  what a pipeline is about to install against the one the feed compared.
+
 - Everything Release Watch does not: findings are changes its rules
   recognise between two static readings. "New" means REA saw it only in
   the new release. No change found means no rule matched in the code REA
@@ -235,4 +306,10 @@ unpacks beyond the limit, and a version published again with other
 content; a held lock and a stale one; a watchlist entry that is an npm
 flag; hostile text escaped on the page and in the feeds; and the rules
 that choose which release to compare with and how many comparisons a
-machine runs. The two comparisons need REA built.
+machine runs. `test/review.test.mjs` follows one package through review
+on the same registry: its first release accepted, a release that changes
+nothing cleared, one with unexamined code held, the next compared with
+the accepted release and replacing the held one, an approval recorded
+with its Evidence, a rejection that leaves the accepted release in place,
+and what the gate lets through at each step. The comparisons need REA
+built.
