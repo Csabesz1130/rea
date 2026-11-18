@@ -1,0 +1,16 @@
+{
+  "name": "slicer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Index a REA application-graph Evidence record into a local call-graph and lexical index, and serve an agent minimal slices with provenance instead of the whole Evidence.",
+  "type": "module",
+  "bin": {
+    "slicer": "bin/slicer.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

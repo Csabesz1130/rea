@@ -195,10 +195,17 @@ describe(
         ["iife.js", 3],
         /^REA could not resolve the computed member name iife\.js reads on cp \(cp is imported from child_process\), so a process call through it may not be classified$/,
       );
-      assertGap(
-        report,
-        ["iife.js", 4],
-        /^REA classified no process call where iife\.js calls cp\.execSync \(cp is imported from child_process\)$/,
+      // The call itself REA classifies: a process finding, not a gap.
+      assert.deepEqual(
+        gapLines(report, "iife.js").map((item) => item.location.line),
+        [3],
+      );
+      assert.ok(
+        report.findings.some(
+          (finding) =>
+            finding.rule === "RW-P01" && finding.title.includes("iife.js"),
+        ),
+        JSON.stringify(report.findings.map((finding) => finding.title)),
       );
     });
   },
@@ -237,7 +244,7 @@ describe("compare: process libraries REA does not model", { skip }, () => {
         ],
         ["tools.js imports execa", "inferred"],
         [
-          "Release Watch lists packages that start processes; REA's child-process extraction models node:child_process calls only",
+          "Release Watch lists libraries that start processes; REA's child-process extraction models node:child_process calls only",
           "heuristic",
         ],
       ],
@@ -252,9 +259,10 @@ describe(
     it("names the process call, not a method called on its result", () => {
       const { result, report } = compare(OLD, {
         ...OLD,
-        "pods.mjs":
-          'import { execSync } from "child_process";\nexport const pods = (cmd) => execSync(cmd, { encoding: "utf8" }).trim().split(" ");\nexport const raw = (cmd) => execSync(cmd).toString().trim();\n',
-        // A minified bundle's renamed import.
+        // A lazily assigned require is a call REA does not classify.
+        "pods.cjs":
+          'let cp;\nexports.pods = (cmd) => { cp = require("child_process"); return cp.execSync(cmd, { encoding: "utf8" }).trim().split(" "); };\nexports.raw = (cmd) => { cp = require("child_process"); return cp.execSync(cmd).toString().trim(); };\n',
+        // A minified bundle's renamed import, which REA does classify.
         "cli.mjs":
           'import { exec as Vi, execSync as mo } from "child_process";\nexport const has = (cmd, name) => mo(cmd, { encoding: "utf8" }).includes(name);\n',
       });
@@ -262,13 +270,16 @@ describe(
       for (const line of [2, 3])
         assertGap(
           report,
-          ["pods.mjs", line],
-          /^REA classified no process call where pods\.mjs calls execSync \(execSync is imported from child_process\)$/,
+          ["pods.cjs", line],
+          /^REA classified no process call where pods\.cjs calls cp\.execSync \(cp is assigned require\("child_process"\)\)$/,
         );
-      assertGap(
-        report,
-        ["cli.mjs", 2],
-        /^REA classified no process call where cli\.mjs calls mo \(mo is child_process's execSync, imported under another name\)$/,
+      assert.deepEqual(gapLines(report, "cli.mjs"), []);
+      assert.ok(
+        report.findings.some(
+          (finding) =>
+            finding.rule === "RW-P01" && finding.title.includes("cli.mjs"),
+        ),
+        JSON.stringify(report.findings.map((finding) => finding.title)),
       );
       const claims = JSON.stringify(report.findings);
       for (const member of ["trim", "toString", "includes", "split"])
@@ -297,8 +308,8 @@ describe(
           // A side-effect import of a local module that holds child_process.
           "dist/load.mjs":
             'import "./cp.cjs";\nexport const ready = () => true;\n',
-          "dist/cli.mjs":
-            'import { execSync as Q } from "child_process";\nexport const token = () => Q("gh auth token", { encoding: "utf8" });\n',
+          "dist/cli.cjs":
+            'let cp;\nexports.token = () => { cp = require("child_process"); return cp.execSync("gh auth token", { encoding: "utf8" }); };\n',
         },
       );
       assert.equal(result.status, 2, result.stderr);
@@ -307,12 +318,12 @@ describe(
       );
       assert.match(
         coverage.summary,
-        /^In code that changed since v1\.0\.0, REA classified no process call for uses of child_process in dist\/cli\.mjs; findings in the unexamined part are missing\.$/,
+        /^In code that changed since v1\.0\.0, REA classified no process call for uses of child_process in dist\/cli\.cjs; findings in the unexamined part are missing\.$/,
       );
       assertGap(
         report,
-        ["dist/cli.mjs", 2],
-        /^REA classified no process call where dist\/cli\.mjs calls Q /,
+        ["dist/cli.cjs", 2],
+        /^REA classified no process call where dist\/cli\.cjs calls cp\.execSync /,
       );
       assert.ok(
         !JSON.stringify(report.findings).includes("ties no binding"),
@@ -363,7 +374,7 @@ describe("compare: loads REA shows no use of", { skip }, () => {
         ...OLD,
         ...chunks("hi"),
         "dist/cli.cjs":
-          "'use strict';\nconst { execSync: Q } = require('child_process');\nexports.token = () => Q('gh auth token', { encoding: 'utf8' }).trim();\n",
+          "'use strict';\nlet cp;\nexports.token = () => { cp = require('child_process'); return cp.execSync('gh auth token', { encoding: 'utf8' }).trim(); };\n",
       },
     );
     assert.equal(result.status, 2, result.stderr);
@@ -376,7 +387,7 @@ describe("compare: loads REA shows no use of", { skip }, () => {
     );
     assert.match(
       coverage.evidence[0].claim,
-      /^REA classified no process call where dist\/cli\.cjs calls Q /,
+      /^REA classified no process call where dist\/cli\.cjs calls cp\.execSync /,
     );
     assert.ok(
       coverage.evidence

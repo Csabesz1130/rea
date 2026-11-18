@@ -65,8 +65,34 @@ const evidenceLines = (model) =>
     return lines.length > 0 ? [`### ${text(row.label)}`, "", ...lines, ""] : [];
   });
 
-/** The map as a Markdown table, rows grouped as GROUPS orders them. */
+// Maps of more products than this read better with products as rows.
+const WIDE = 8;
+
+const LEGEND = `${Object.values(MARKS)
+  .map((entry) => `${entry.mark} ${entry.word} (${entry.hint})`)
+  .join(" · ")} · ⚠ a risk to users`;
+
+// Products as rows and traits as columns, in GROUPS order.
+const wideMapTable = (model) => {
+  const rows = GROUPS.flatMap((group) =>
+    model.rows.filter((row) => row.group === group.id),
+  );
+  return [
+    `| Product | ${rows.map((row) => `${text(row.label)}${row.kind === "risk" ? " ⚠" : ""}`).join(" | ")} |`,
+    `|---|${rows.map(() => ":-:").join("|")}|`,
+    ...model.products.map(
+      (product) =>
+        `| ${text(product.label)} | ${rows.map((row) => MARKS[row.cells[product.id].state].mark).join(" | ")} |`,
+    ),
+    "",
+    LEGEND,
+    "",
+  ];
+};
+
+/** The map as a Markdown table: traits as rows, or products as rows for a wide map. */
 export const mapTable = (model) => {
+  if (model.products.length > WIDE) return wideMapTable(model);
   const header = `| Trait | ${model.products.map((product) => text(product.label)).join(" | ")} |`;
   const rule = `|---|${model.products.map(() => ":-:").join("|")}|`;
   const lines = [header, rule];
@@ -81,14 +107,7 @@ export const mapTable = (model) => {
         `| ${text(row.label)}${row.kind === "risk" ? " ⚠" : ""} | ${model.products.map((product) => MARKS[row.cells[product.id].state].mark).join(" | ")} |`,
       );
   }
-  return [
-    ...lines,
-    "",
-    `${Object.values(MARKS)
-      .map((entry) => `${entry.mark} ${entry.word} (${entry.hint})`)
-      .join(" · ")} · ⚠ a risk to users`,
-    "",
-  ];
+  return [...lines, "", LEGEND, ""];
 };
 
 const openingLines = (model) =>

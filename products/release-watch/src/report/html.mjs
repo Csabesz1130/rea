@@ -5,12 +5,13 @@ import { printable } from "../redact.mjs";
 
 // Controls, line separators and bidirectional overrides become spaces, as
 // in terminal output, so release text cannot reorder what a reader sees.
-const escape = (value) =>
+export const escapeHtml = (value) =>
   printable(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+const escape = escapeHtml;
 
 const BASIS = {
   observed: "Observed",

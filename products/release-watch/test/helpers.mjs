@@ -52,6 +52,7 @@ export const app = (overrides = {}) => ({
   childProcesses: [],
   timers: [],
   configReads: [],
+  envPropertyReads: [],
   stringLiterals: [],
   urlLiterals: [],
   bindingReads: [],
@@ -61,6 +62,7 @@ export const app = (overrides = {}) => ({
   htmlSinks: [],
   memberCalls: [],
   dynamicEvaluation: [],
+  dynamicCalls: [],
   inlineScripts: 0,
   ...overrides,
 });

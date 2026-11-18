@@ -28,7 +28,28 @@ import {
   semanticProjectedBindingFacts,
 } from "./javascriptSemanticDataEffectHelpers.js";
 
-const CHILD_PROCESS_METHODS = ["spawn", "exec", "execFile", "fork"] as const;
+const CHILD_PROCESS_METHODS = [
+  "spawn",
+  "exec",
+  "execFile",
+  "fork",
+  "spawnSync",
+  "execSync",
+  "execFileSync",
+] as const;
+type ChildProcessMethod = (typeof CHILD_PROCESS_METHODS)[number];
+// These return the finished child's output, not a ChildProcess: a name the
+// result is bound to is no process handle.
+const SYNCHRONOUS_METHODS: ReadonlySet<ChildProcessMethod> = new Set([
+  "spawnSync",
+  "execSync",
+  "execFileSync",
+]);
+// These take a command line for a shell and no argument list.
+const COMMAND_LINE_METHODS: ReadonlySet<ChildProcessMethod> = new Set([
+  "exec",
+  "execSync",
+]);
 const CHILD_LISTENER_METHODS = ["on", "once", "addListener"] as const;
 
 interface ChildProcessAnalysis {
@@ -54,7 +75,7 @@ interface ChildInteractionContext {
   readonly spawnsByBinding: ReadonlyMap<string, readonly SpawnCandidate[]>;
 }
 
-/** Recover explicit asynchronous node:child_process ownership candidates. */
+/** Recover explicit node:child_process creation and ownership candidates. */
 export const collectJavaScriptSemanticChildProcesses = (
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -92,11 +113,9 @@ const collectSpawns = (
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const method = childProcessMethod(node.callee, state);
         if (method !== null) {
-          const projectedResultBindings = assignedSemanticResultBindings(
-            node,
-            ancestors,
-            state,
-          );
+          const projectedResultBindings = SYNCHRONOUS_METHODS.has(method)
+            ? []
+            : assignedSemanticResultBindings(node, ancestors, state);
           output.push({
             node,
             method,
@@ -304,17 +323,16 @@ const resolveChildCandidates = (
 const spawnOptions = (candidate: SpawnCandidate): t.ObjectExpression | null => {
   const args = candidate.node.arguments;
 
-  const value =
-    candidate.method === "exec"
+  const value = COMMAND_LINE_METHODS.has(candidate.method)
+    ? args[1]
+    : t.isObjectExpression(args[1])
       ? args[1]
-      : t.isObjectExpression(args[1])
-        ? args[1]
-        : args[2];
+      : args[2];
 
   return t.isObjectExpression(value) ? value : null;
 };
 const spawnArgvCount = (candidate: SpawnCandidate): number | null => {
-  if (candidate.method === "exec") return null;
+  if (COMMAND_LINE_METHODS.has(candidate.method)) return null;
   const args = candidate.node.arguments[1];
   return t.isArrayExpression(args) &&
     !args.elements.some((element) => t.isSpreadElement(element))

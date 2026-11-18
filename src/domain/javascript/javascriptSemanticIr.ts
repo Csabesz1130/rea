@@ -262,10 +262,21 @@ export interface JavaScriptSemanticTimerOperation {
   readonly resolution: "complete" | "partial" | "unresolved";
 }
 
-/** One explicit asynchronous node:child_process creation candidate. */
+/**
+ * One explicit node:child_process creation candidate. The synchronous
+ * methods return the finished child's output rather than a handle, so they
+ * carry no result bindings and link to no listener or signal.
+ */
 export interface JavaScriptSemanticChildProcessSpawn {
   readonly processId: string;
-  readonly method: "spawn" | "exec" | "execFile" | "fork";
+  readonly method:
+    | "spawn"
+    | "exec"
+    | "execFile"
+    | "fork"
+    | "spawnSync"
+    | "execSync"
+    | "execFileSync";
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;

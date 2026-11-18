@@ -1,0 +1,16 @@
+{
+  "name": "release-feed",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Watch npm packages and publish what each new release changed in what its code can do: Release Watch on every release, as a feed, a site and alerts.",
+  "type": "module",
+  "bin": {
+    "release-feed": "bin/release-feed.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Read(//home/rea/rea-work/**)",
+      "Edit(//home/rea/rea-work/claims/**)",
+      "Edit(//home/rea/rea-work/swarm-result.json)",
+      "Bash(node /home/rea/rea/products/proof-swarm/bin/proof-swarm.mjs *)",
+      "Workflow"
+    ],
+    "deny": ["WebFetch", "WebSearch", "Monitor"],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "network": { "allowedDomains": [] }
+  }
+}

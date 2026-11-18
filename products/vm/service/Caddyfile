@@ -1,0 +1,13 @@
+# Serves Release Feed's site. Replace feed.example.com with your domain:
+# Caddy obtains and renews its certificate once the domain's DNS points at
+# this server and ports 80 and 443 are open.
+feed.example.com {
+	root * /var/lib/rea-feed/site
+	encode zstd gzip
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	}
+}

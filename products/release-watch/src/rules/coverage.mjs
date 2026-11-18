@@ -28,6 +28,7 @@ import {
   packResult,
   reported,
 } from "./shared.mjs";
+import { nativeCoverage } from "./native.mjs";
 
 const COMPONENT = "Release Watch";
 const FUSE_SOURCE = "REA inspect_electron_fuses";
@@ -389,6 +390,7 @@ export const coveragePack = (context) => {
     ...oneSided(context),
     ...fuseCoverage(context),
     ...helperCoverage(context),
+    ...nativeCoverage(context),
     ...unmodeledClients(context),
   ]);
 };

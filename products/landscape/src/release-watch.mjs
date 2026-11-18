@@ -14,8 +14,8 @@ export {
   aiProviderOf,
   credentialOf,
   isAiEnvironmentKey,
-  isProcessLibrary,
   packageNameOf,
+  processLibraryOf,
 } from "../../release-watch/src/catalog.mjs";
 export {
   examinedInPart,
@@ -29,12 +29,14 @@ export {
   contactSchemes,
   destinationsOf,
   isGuessSource,
+  sourceModule,
 } from "../../release-watch/src/rules/destinations.mjs";
 export { packagesOf } from "../../release-watch/src/rules/dependencies.mjs";
 export { shippedTokens } from "../../release-watch/src/rules/ai.mjs";
 export { browserSdkUses } from "../../release-watch/src/rules/ai-placement.mjs";
 export { toolConnections } from "../../release-watch/src/rules/mcp.mjs";
 export {
+  bundledToolDispatchers,
   registrationClaim,
   toolRegistrations,
 } from "../../release-watch/src/rules/mcp-registrations.mjs";

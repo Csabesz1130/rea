@@ -7,8 +7,10 @@ import { browserSdkUses } from "./rules/ai-placement.mjs";
 import { coveragePack } from "./rules/coverage.mjs";
 import { dependencyPack, packagesOf } from "./rules/dependencies.mjs";
 import { electronPack } from "./rules/electron.mjs";
+import { filePack } from "./rules/files.mjs";
 import { goPack } from "./rules/go.mjs";
 import { mcpPack } from "./rules/mcp.mjs";
+import { nativePack } from "./rules/native.mjs";
 import {
   browserGuessedHosts,
   browserHosts,
@@ -39,6 +41,8 @@ const PACKS = [
   webPack,
   runtimePack,
   goPack,
+  nativePack,
+  filePack,
   processPack,
   networkPack,
   dependencyPack,

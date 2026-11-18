@@ -41,6 +41,7 @@ node bin/release-watch.mjs compare OLD NEW --vendor-domain vendor.example --out 
 | Electron distribution     | `resources/app.asar` or `resources/app/`                          |
 | JavaScript app or package | `package.json`                                                    |
 | Built web app             | `index.html`, or `dist/`, `build/`, `out/`, `public/` holding one |
+| Directory of native files | none of the above, and files that start like ELF, Mach-O or PE    |
 | ASAR archive              | `.asar` file                                                      |
 | Browser capture           | `.har` file                                                       |
 | Several components        | a `release-watch.json` manifest                                   |
@@ -159,6 +160,7 @@ node demo/video/record-video.mjs --releases "$dir" \
 | API surface       | `inspect-analysis-view`          | REA's grouping of a capture's API endpoints                                                                   |
 | Runtime           | `inspect-electron-fuses`         | Fuse states and their runtime implications                                                                    |
 | Helpers           | `inspect-go-binary`              | Go version, modules, checksums, build settings                                                                |
+| Native files      | `inspect-rust-binary`            | What each native executable or library is: digest, format, architecture, and the rustc commit of a Rust build |
 | Source lines      | `extract-artifact`               | Display only; a line is marked verified when the file's SHA-256 matches REA's digest                          |
 
 Facts are keyed so that moving code does not invent changes: requests by
@@ -295,20 +297,44 @@ reaches every process site of that module, and the finding says so.
 | RW-G01 | high                | A Go helper's `-ldflags` sets a URL on a new third-party host, also for a new or newly identified helper                                                                                                                                                                                                                                   |
 | RW-G02 | medium              | A new Go module dependency, noting a missing checksum                                                                                                                                                                                                                                                                                      |
 | RW-G03 | low                 | A Go helper lost `-trimpath`                                                                                                                                                                                                                                                                                                               |
+| RW-B01 | high                | Native executables or libraries whose content the old release did not ship under any path                                                                                                                                                                                                                                                  |
 | RW-G04 | medium              | A new helper executable                                                                                                                                                                                                                                                                                                                    |
+| RW-F01 | high                | Code reads or names a credential store (AWS, SSH keys, kube config, browser logins, keychain and the like) no code of the old release named                                                                                                                                                                                                |
 | RW-D01 | low                 | New third-party packages imported, one finding per component                                                                                                                                                                                                                                                                               |
 | RW-C01 | high / medium       | REA examined only part of the new release (truncation, node ceilings, failed or unparsed files, a use of child_process REA classified no process call for, such as `promisify(exec)`); high when that code changed, unless its source map names no changed original source                                                                 |
 | RW-C02 | low                 | A component, its application code, a capture or a module pairing available on one side only                                                                                                                                                                                                                                                |
 | RW-C03 | medium              | The old release's fuses were readable and the new release's are not                                                                                                                                                                                                                                                                        |
 | RW-C04 | medium              | A helper REA identified before is not identified now                                                                                                                                                                                                                                                                                       |
 | RW-C05 | medium / low        | New or changed modules use an HTTP client library and REA recognised no request site in them, or import or are imported by such a module (low); low when a capture covers the release                                                                                                                                                      |
-| RW-C06 | high / medium       | Changed modules import a library that starts processes (execa, cross-spawn, shelljs, zx, node-pty and the like), whose calls REA does not classify; high when a module imports it for the first time, medium when every such module imported it before                                                                                     |
+| RW-C06 | high / medium       | Changed modules import a library that starts processes (execa, cross-spawn, shelljs, zx, node-pty and the like, or the MCP SDK's stdio client transport), whose calls REA does not classify; high when a module imports it for the first time, medium when every such module imported it before                                            |
+| RW-C07 | high                | A native file whose content changed, or one REA could not inspect: what the release's native code does was not compared                                                                                                                                                                                                                    |
 
 Coverage findings exist because a rule that found nothing only means
 something for code REA examined; a truncated analysis is reviewed rather than
 passed.
 
 ## What the report does not claim
+
+- RW-F01 rests on two things REA reports: a file read whose path is a
+  literal, and a string literal a variable or property holds. It says a
+  release reads or names a credential store, not where the content goes.
+  REA does not report a literal passed straight to a call, so a path built
+  inline, as in `path.join(homedir(), ".aws", "credentials")`, is not
+  seen; that is the usual way such a path is written, and the rule misses
+  it. The stores are a fixed list in `src/catalog.mjs`.
+
+- Native code is compared by content, not by behavior. In any directory
+  release, every file that starts like an ELF, Mach-O or PE file is a
+  candidate, wherever it is and whatever it is called; REA then says what
+  it is. A file with content the old release did not ship is new native
+  code (RW-B01) at a new path, and changed code that was not examined
+  (RW-C07) at an old one; a file that moved unchanged is neither. Release
+  Watch does not read what native code does: not its imports, its strings
+  or the hosts it contacts. So a release whose native code changed is
+  never one this report passes, and that is all it says about it. Up to
+  64 native files of a side are inspected and up to 400 named; more are
+  counted in RW-C07. Go build information is read for an Electron
+  distribution's helper executables only.
 
 - A fact seen only in the new release is "added" only when REA's coverage of
   the old release is complete. Otherwise it is "not observed in" the old
@@ -857,4 +883,5 @@ npm test    # from products/release-watch
 ```
 
 The CLI tests run the real REA build against the fixtures and are skipped when
-REA has not been built.
+REA has not been built. `cli-native.test.mjs` compiles its native files
+from a few lines of C and is skipped without a C compiler.

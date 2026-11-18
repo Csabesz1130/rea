@@ -433,6 +433,19 @@ const sideSummary = (side) => ({
     evidence_id: helper.go?.evidence_id ?? null,
     evidence_file: localPath(helper.file),
   })),
+  natives: (side.natives ?? []).map((native) => ({
+    relative: localPath(native.relative),
+    format: native.format,
+    architecture: native.architecture,
+    bytes: native.bytes,
+    sha256: native.sha256,
+    rustc: native.rustc,
+    evidence_id: native.evidence_id ?? null,
+    evidence_file: native.file === null ? null : localPath(native.file),
+  })),
+  natives_not_inspected:
+    (side.nativeStatus?.uninspected.length ?? 0) +
+    (side.nativeStatus?.unnamed ?? 0),
   capture: side.capture
     ? {
         name: localPath(side.capture.name),

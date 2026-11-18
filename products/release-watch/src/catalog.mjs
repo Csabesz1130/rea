@@ -20,6 +20,13 @@ const AI_PROVIDERS = [
     pattern: /^([a-z0-9-]+-)?aiplatform\.googleapis\.com$/,
     provider: "Google Vertex AI",
   },
+  // Vertex AI's regional endpoints (aiplatform.us.rep.googleapis.com).
+  {
+    pattern: /^aiplatform\.[a-z0-9-]+\.rep\.googleapis\.com$/,
+    provider: "Google Vertex AI",
+  },
+  // The Code Assist API Gemini CLI calls models through for Google accounts.
+  { host: "cloudcode-pa.googleapis.com", provider: "Gemini Code Assist" },
   { suffix: ".openai.azure.com", provider: "Azure OpenAI" },
   {
     pattern: /^bedrock-runtime(-fips)?\.[a-z0-9-]+\.amazonaws\.com$/,
@@ -240,6 +247,100 @@ const AI_ENVIRONMENT = new Set([
 /** True when an environment variable name is a documented AI provider setting. */
 export const isAiEnvironmentKey = (key) => AI_ENVIRONMENT.has(key);
 
+// Where other programs keep credentials. `path` matches one literal that
+// holds the store's path, with either separator; `parts` are the literals a
+// path built piece by piece holds, a directory and then a file name.
+const SEP = "[\\\\/]";
+const tail = (body) => new RegExp(`(^|${SEP})${body}$`);
+const CREDENTIAL_STORES = [
+  {
+    store: "AWS credentials",
+    path: tail(`\\.aws${SEP}credentials`),
+    parts: [".aws", /^credentials$/],
+  },
+  {
+    store: "SSH private keys",
+    path: tail(`\\.ssh${SEP}id_(rsa|dsa|ecdsa|ed25519)`),
+    parts: [".ssh", /^id_(rsa|dsa|ecdsa|ed25519)$/],
+  },
+  { store: "Git credentials", path: tail("\\.git-credentials") },
+  { store: "netrc credentials", path: tail("[._]netrc") },
+  {
+    store: "Docker registry credentials",
+    path: tail(`\\.docker${SEP}config\\.json`),
+    parts: [".docker", /^config\.json$/],
+  },
+  {
+    store: "Kubernetes credentials",
+    path: tail(`\\.kube${SEP}config`),
+    parts: [".kube", /^config$/],
+  },
+  {
+    store: "Google Cloud credentials",
+    path: tail(
+      "(application_default_credentials\\.json|access_tokens\\.db|credentials\\.db)",
+    ),
+  },
+  {
+    store: "Azure CLI tokens",
+    path: tail(
+      `\\.azure${SEP}(accessTokens\\.json|msal_token_cache\\.(json|bin))`,
+    ),
+  },
+  { store: "GitHub CLI token", path: tail(`gh${SEP}hosts\\.yml`) },
+  {
+    store: "GnuPG private keys",
+    path: tail(`\\.gnupg(${SEP}(private-keys-v1\\.d|secring\\.gpg))?`),
+  },
+  {
+    store: "browser logins and cookies",
+    path: new RegExp(
+      `(^|${SEP})(Login Data|logins\\.json|key[34]\\.db|cookies\\.sqlite)$|${SEP}User Data${SEP}.*${SEP}Cookies$`,
+    ),
+  },
+  {
+    store: "macOS keychain",
+    path: new RegExp(
+      `(^|${SEP})Library${SEP}Keychains(${SEP}|$)|login\\.keychain(-db)?$`,
+    ),
+  },
+  {
+    store: "cryptocurrency wallet",
+    path: new RegExp(
+      `(^|${SEP})wallet\\.dat$|${SEP}solana${SEP}id\\.json$|${SEP}Ethereum${SEP}keystore(${SEP}|$)`,
+    ),
+  },
+  { store: "system password file", path: /^\/etc\/shadow$/ },
+];
+
+/**
+ * The credential stores a module's string literals name: `[{ store, how,
+ * values }]`, `how` "path" when one literal holds a store's path and
+ * "parts" when the module holds, as separate literals, the directory and
+ * the file name a path is built from. `values` are the literals that
+ * matched.
+ */
+export const credentialStoresIn = (literals) => {
+  const values = literals.filter((value) => typeof value === "string");
+  const whole = new Set(values);
+  return CREDENTIAL_STORES.flatMap((entry) => {
+    const paths = values.filter((value) => entry.path.test(value));
+    if (paths.length > 0)
+      return [{ store: entry.store, how: "path", values: [...new Set(paths)] }];
+    if (!entry.parts || !whole.has(entry.parts[0])) return [];
+    const files = values.filter((value) => entry.parts[1].test(value));
+    return files.length > 0
+      ? [
+          {
+            store: entry.store,
+            how: "parts",
+            values: [entry.parts[0], ...new Set(files)],
+          },
+        ]
+      : [];
+  });
+};
+
 // Documented credential formats: a pattern body, the label, and how many
 // leading characters are a public prefix that may be shown.
 const CREDENTIALS = [
@@ -388,8 +489,24 @@ const PROCESS_LIBRARIES = new Set([
   "foreground-child",
 ]);
 
-/** True when a package name is a library that starts processes. */
-export const isProcessLibrary = (name) => PROCESS_LIBRARIES.has(name);
+// Entry points that start processes in packages that otherwise do not: the
+// MCP SDKs' stdio client transport spawns the server command it is given
+// through cross-spawn (@modelcontextprotocol/sdk 1.32.2 and
+// @modelcontextprotocol/client 2.3.1, read in their published files).
+const PROCESS_ENTRY_POINT =
+  /^(@modelcontextprotocol\/(?:sdk\/client|client)\/stdio)(?:\.js)?$/;
+
+/**
+ * The library an import specifier loads that starts processes for its
+ * caller: the package name of a process library, or the entry point of a
+ * package that starts processes only there. Null for any other specifier.
+ */
+export const processLibraryOf = (specifier) => {
+  const name = packageNameOf(specifier);
+  if (name === null) return null;
+  if (PROCESS_LIBRARIES.has(name)) return name;
+  return PROCESS_ENTRY_POINT.exec(specifier)?.[1] ?? null;
+};
 
 // Node's child_process module, by either specifier.
 const PROCESS_MODULE = /^(?:node:)?child_process$/;
