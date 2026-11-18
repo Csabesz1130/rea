@@ -41,7 +41,7 @@ const compactProperties = (properties) => {
 // One node as the index stores it: REA's id and kind, where it is, its
 // label, the function that owns it, and the few properties above. The id is
 // REA's own, so a slice can be matched back to the Evidence.
-const compactNode = (node) => ({
+export const compactNode = (node) => ({
   id: node.node_id,
   kind: node.kind,
   module: moduleOf(node),
@@ -54,7 +54,7 @@ const compactNode = (node) => ({
 });
 
 // One relation as the index stores it: its endpoints, kind and resolution.
-const compactRelation = (relation) => ({
+export const compactRelation = (relation) => ({
   source: relation.source_node_id,
   target: relation.target_node_id,
   relation: relation.relation,

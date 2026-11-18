@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 721; runtime: 177.
+Locked package entries: 722; runtime: 178.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -2200,6 +2200,11 @@ gopd@1.2.0 | runtime | MIT
   Package: https://www.npmjs.com/package/gopd/v/1.2.0
   Archive: https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz
   Integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==
+gpt-tokenizer@3.4.0 | runtime | MIT
+  Lockfile path: node_modules/gpt-tokenizer
+  Package: https://www.npmjs.com/package/gpt-tokenizer/v/3.4.0
+  Archive: https://registry.npmjs.org/gpt-tokenizer/-/gpt-tokenizer-3.4.0.tgz
+  Integrity: sha512-wxFLnhIXTDjYebd9A9pGl3e31ZpSypbpIJSOswbgop5jLte/AsZVDvjlbEuVFlsqZixVKqbcoNmRlFDf6pz/UQ==
 har-schema@2.0.0 | runtime | ISC
   Lockfile path: node_modules/har-schema
   Package: https://www.npmjs.com/package/har-schema/v/2.0.0

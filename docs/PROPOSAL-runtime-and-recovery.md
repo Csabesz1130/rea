@@ -1,6 +1,6 @@
 # Proposal: runtime instrumentation bridge and protection recovery
 
-Status: **proposal only. Nothing here is implemented or authorized.** This
+**Process attachment and protection recovery are proposals.** This
 document exists to seek the explicit maintainer scope decision that
 [CONTRIBUTING.md#fail-closed-integration](../CONTRIBUTING.md#contribution-scope)
 requires before substantial implementation of a capability involving target
@@ -29,7 +29,7 @@ excluded workflows so each is decided on its own. For these two ideas:
 | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Reading what a native file or bundle **is** (format, sections, packer markers, minification), read-only                                        | Supported: format inspection, static protection detection | **Built** — see `products/obfuscation`, `products/release-watch` native comparison                            |
 | Serving an agent **slices** of REA's existing static Evidence                                                                                  | Supported: evidence reporting                             | **Built** — see `products/slicer`                                                                             |
-| General **static** deobfuscation that does not execute the target (e.g. constant folding, scope-based renaming of a bundle REA already parsed) | Supported: general static deobfuscation                   | Not built; in scope to propose as a static pass                                                               |
+| General **static** deobfuscation that does not execute the target (e.g. constant folding, scope-based renaming of a bundle REA already parsed) | Supported: general static deobfuscation                   | Literal-expression folding and build-map lookup are implemented in [REA Pro](../products/pro/README.md)       |
 | **Launching or attaching** to a process, reading its memory/registers, **injecting** instrumentation, running scripts in it                    | Needs explicit boundaries and a scope decision            | **Gated — this proposal**                                                                                     |
 | Intercepting a process's traffic **before encryption**, or defeating certificate pinning                                                       | Review required; adjacent to access-control bypass        | **Gated — this proposal**                                                                                     |
 | Purpose-built **unpacking of packed/virtualized code to recover the original**, or symbolic execution aimed at protection recovery             | Not integrated or distributed by REA                      | **Excluded** by the current rule; a decision would be needed to revisit it, and this proposal does not ask to |
@@ -96,7 +96,9 @@ enable, or distribute.** The decision is the maintainers'.
    proposing separately, given `products/slicer` already slices the static
    graph?
 
-## What exists instead
+## Related implementations
+
+[REA Pro](../products/pro/README.md) accepts application-emitted telemetry and local build mappings. Its collector records first-party spans, and its archive command extracts ordinary container members.
 
 The in-scope, read-only parts of this space are built and shipped as prototypes:
 

@@ -75,6 +75,10 @@ focus. Start with `products/README.md` for the commands and product guides.
 The `improve_application` and `investigate_device_task` MCP prompts connect
 user goals to explicit outcome checks and evidence-backed next steps.
 
+REA Pro adds SQLite graph search and budgeted MCP slices, live app-emitted
+telemetry, source-map and Android mapping lookup, and subscription login.
+See `products/pro/README.md` for the commands and issuer setup.
+
 Build this checkout with `npm ci && npm run build:cached` to use its changes.
 The public `rea-agents` npm release does not contain these fork prototypes.
 Device Tasks is exploratory and uses an already connected device plus your
