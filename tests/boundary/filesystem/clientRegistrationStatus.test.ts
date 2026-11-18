@@ -120,7 +120,7 @@ describe("client registration launcher identity", () => {
     await mkdir(join(home, ".codex"));
     await writeFile(
       join(home, ".codex/config.toml"),
-      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents", "mcp"]\n',
+      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "@csabesz1130/rea-pro", "mcp"]\n',
     );
 
     const statuses = await readClientRegistrationStatuses(home);
@@ -128,7 +128,7 @@ describe("client registration launcher identity", () => {
     expect(statuses).toEqual([
       expect.objectContaining({
         client: "codex",
-        command: ["npx", "-y", "rea-agents", "mcp"],
+        command: ["npx", "-y", "@csabesz1130/rea-pro", "mcp"],
         state: "stale",
       }),
     ]);
@@ -140,7 +140,7 @@ describe("client registration launcher identity", () => {
       join(home, ".claude.json"),
       JSON.stringify({
         mcpServers: {
-          rea: { command: "bunx", args: ["rea-agents", "mcp"] },
+          rea: { command: "bunx", args: ["@csabesz1130/rea-pro", "mcp"] },
         },
       }),
     );
@@ -149,7 +149,7 @@ describe("client registration launcher identity", () => {
 
     expect(status).toMatchObject({
       client: "claude_code",
-      command: ["bunx", "rea-agents", "mcp"],
+      command: ["bunx", "@csabesz1130/rea-pro", "mcp"],
       state: "stale",
     });
   });
@@ -229,7 +229,7 @@ describe("client registration launcher identity", () => {
       "rea-registration-version-drift-",
     );
     await mkdir(join(home, ".codex"));
-    const command = ["npx", "-y", "rea-agents@4.1.0", "mcp"];
+    const command = ["npx", "-y", "@csabesz1130/rea-pro@4.1.0", "mcp"];
     await writeFile(
       join(home, ".codex/config.toml"),
       `[mcp_servers.rea]\ncommand = "${command[0]}"\nargs = ["${command[1]}", "${command[2]}", "${command[3]}"]\n`,
@@ -240,7 +240,7 @@ describe("client registration launcher identity", () => {
     expect(status).toMatchObject({
       client: "codex",
       command,
-      package_reference: "rea-agents@4.1.0",
+      package_reference: "@csabesz1130/rea-pro@4.1.0",
       state: "stale",
       remediation: expect.stringContaining(
         `current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}`,

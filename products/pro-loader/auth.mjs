@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { readLocal } from "./files.mjs";
 
-const state = () =>
+export const state = () =>
   process.env.REA_PRO_HOME ??
   join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "rea-pro");
 const session = () => join(state(), "session.jwt");
@@ -16,7 +16,7 @@ function https(raw) {
     throw new Error("Expected an HTTPS issuer URL");
   return url.href;
 }
-function config() {
+export function config() {
   const path = process.env.REA_PRO_CONFIG ?? join(state(), "issuer.json");
   let cfg;
   try {
@@ -35,7 +35,7 @@ function config() {
   return { ...cfg, key };
 }
 const now = () => Math.floor(Date.now() / 1000);
-function verifyGrant(token, cfg) {
+function signedClaims(token, cfg) {
   if (
     typeof token !== "string" ||
     token.length > 16384 ||
@@ -56,12 +56,16 @@ function verifyGrant(token, cfg) {
     JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
   const h = decode(header),
     c = decode(body);
+  if (h.alg !== "EdDSA" || h.crit !== undefined)
+    throw new Error("Invalid entitlement signing header");
+  return c;
+}
+function verifyGrant(token, cfg, audience = "rea-pro") {
+  const c = signedClaims(token, cfg);
   const aud = Array.isArray(c.aud) ? c.aud : [c.aud];
   if (
-    h.alg !== "EdDSA" ||
-    h.crit !== undefined ||
     c.iss !== cfg.issuer ||
-    !aud.includes("rea-pro") ||
+    !aud.includes(audience) ||
     typeof c.sub !== "string" ||
     !c.sub ||
     !Number.isSafeInteger(c.exp) ||
@@ -72,6 +76,10 @@ function verifyGrant(token, cfg) {
     throw new Error(
       "Entitlement is expired, inactive or for another issuer or audience",
     );
+  if (audience === "rea-account") {
+    if (c.scope !== "rea:account") throw new Error("Invalid account scope");
+    return { subject: c.sub, expires: c.exp };
+  }
   const granted = features.filter((f) =>
     c.scope.split(" ").includes(`rea:${f}`),
   );
@@ -90,28 +98,42 @@ function save(token, cfg) {
   }
   return account;
 }
-export function account(feature) {
+export function credentials(feature) {
   let token;
   try {
     token = readLocal(session(), 16384).text;
   } catch (error) {
-    if (error.code === "ENOENT") throw new Error("Sign in with rea login");
+    if (error.code === "ENOENT")
+      throw Object.assign(new Error("Sign in with rea login"), {
+        code: "REA_SIGN_IN_REQUIRED",
+      });
     throw error;
   }
   const signed = verifyGrant(token, config());
   if (feature && !signed.features.includes(feature))
     throw new Error(`Subscription does not include ${feature}`);
-  return signed;
+  return { signed, token };
+}
+export function account(feature) {
+  return credentials(feature).signed;
+}
+export function status() {
+  try {
+    return { signed_in: true, ...account() };
+  } catch (error) {
+    if (error.code === "REA_SIGN_IN_REQUIRED") return { signed_in: false };
+    throw error;
+  }
 }
 export function logout() {
   rmSync(session(), { force: true });
   return { signed_in: false };
 }
 
-async function postForm(url, fields, timeoutMs, request) {
+async function post(url, options, timeoutMs, request) {
   const response = await request(https(url), {
     method: "POST",
-    body: new URLSearchParams(fields),
+    ...options,
     redirect: "error",
     signal: AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, 15000))),
   });
@@ -127,31 +149,42 @@ async function postForm(url, fields, timeoutMs, request) {
     throw new Error(`Issuer returned HTTP ${response.status}`);
   return json;
 }
-// Device authorization is interactive only in the CLI. MCP never sees a token or an issuer URL.
-export async function login({
-  token,
-  notify,
-  subscribe = false,
-  request = fetch,
-  sleep = delay,
-} = {}) {
-  const cfg = config();
-  if (token !== undefined) return save(token.trim(), cfg);
+const postForm = (url, fields, timeoutMs, request) =>
+  post(url, { body: new URLSearchParams(fields) }, timeoutMs, request);
+async function startDevice(cfg, { subscribe, plan, request }) {
   if (!cfg.device_endpoint || !cfg.token_endpoint || !cfg.client_id)
     throw new Error(
       "Configure device_endpoint, token_endpoint and client_id, or use login --token-stdin",
     );
+  if (
+    plan &&
+    (!subscribe || !cfg.checkout_endpoint || !["indie", "team"].includes(plan))
+  )
+    throw new Error(
+      "Select indie or team and configure a checkout_endpoint for the issuer",
+    );
+  if (
+    plan &&
+    new URL(https(cfg.checkout_endpoint)).origin !== new URL(cfg.issuer).origin
+  )
+    throw new Error("Checkout endpoint must use the configured issuer origin");
   const dev = await postForm(
     cfg.device_endpoint,
     {
       client_id: cfg.client_id,
-      scope: subscribe
-        ? "rea:subscribe"
-        : features.map((f) => `rea:${f}`).join(" "),
+      scope: plan
+        ? "rea:account"
+        : subscribe
+          ? "rea:subscribe"
+          : features.map((f) => `rea:${f}`).join(" "),
     },
     15000,
     request,
   );
+  return dev;
+}
+
+function validateDevice(dev) {
   if (
     typeof dev.device_code !== "string" ||
     !dev.device_code ||
@@ -163,6 +196,10 @@ export async function login({
       (!Number.isSafeInteger(dev.interval) || dev.interval < 1))
   )
     throw new Error("Invalid device authorization response");
+}
+
+async function pollGrant(cfg, dev, { notify, request, sleep }) {
+  validateDevice(dev);
   const end = Date.now() + Math.min(dev.expires_in, 3600) * 1000;
   let interval = (dev.interval ?? 5) * 1000;
   notify(`Open ${https(dev.verification_uri)} and enter ${dev.user_code}`);
@@ -208,8 +245,45 @@ export async function login({
           ? `Device authorization: ${result.error}`
           : "Issuer rejected device authorization",
       );
-    if (subscribe) return { checkout_url: https(result.checkout_url) };
-    return save(result.access_token, cfg);
+    return { result, remaining };
   }
   throw new Error("Device authorization expired");
+}
+
+// Device authorization is interactive only in the CLI. MCP never sees a token or an issuer URL.
+export async function login({
+  token,
+  notify,
+  subscribe = false,
+  plan,
+  request = fetch,
+  sleep = delay,
+} = {}) {
+  const cfg = config();
+  if (token !== undefined) return save(token.trim(), cfg);
+  const dev = await startDevice(cfg, { subscribe, plan, request });
+  const { result, remaining } = await pollGrant(cfg, dev, {
+    notify,
+    request,
+    sleep,
+  });
+  if (plan) {
+    verifyGrant(result.access_token, cfg, "rea-account");
+    const checkout = await post(
+      cfg.checkout_endpoint,
+      {
+        headers: {
+          Authorization: "Bearer " + result.access_token,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ plan }),
+      },
+      remaining,
+      request,
+    );
+    if (checkout.error) throw new Error("Issuer rejected the checkout request");
+    return { checkout_url: https(checkout.checkout_url) };
+  }
+  if (subscribe) return { checkout_url: https(result.checkout_url) };
+  return save(result.access_token, cfg);
 }

@@ -6,11 +6,11 @@ import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
-import { tokens } from "./src/graph.mjs";
+import { tokens } from "./graph/store.mjs";
 
 const [evidence, store] = process.argv.slice(2);
 if (!evidence || !store)
-  throw new Error("Usage: node products/pro/benchmark.mjs EVIDENCE STORE");
+  throw new Error("Usage: node products/pro-loader/benchmark.mjs EVIDENCE STORE");
 const raw = JSON.parse(readFileSync(evidence, "utf8")),
   g = raw.normalized_result.semantic_graph;
 const expected = g.nodes.find(

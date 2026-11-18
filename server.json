@@ -1,11 +1,11 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.morluto/rea",
-  "title": "REA",
+  "name": "io.github.Csabesz1130/rea",
+  "title": "REA with Semantic Graph Slicer",
   "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
-  "websiteUrl": "https://github.com/morluto/rea",
+  "websiteUrl": "https://github.com/Csabesz1130/rea",
   "repository": {
-    "url": "https://github.com/morluto/rea",
+    "url": "https://github.com/Csabesz1130/rea",
     "source": "github"
   },
   "version": "6.5.0",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "rea-agents",
+      "identifier": "@csabesz1130/rea-pro",
       "version": "6.5.0",
       "runtimeHint": "npx",
       "transport": {

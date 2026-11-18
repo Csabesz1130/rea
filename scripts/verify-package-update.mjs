@@ -20,8 +20,7 @@ export async function verifyPackageUpdate({
   const entry = join(packageRoot, "scripts", "rea.mjs");
   const home = join(workspace, "update-home");
   const codexPath = join(home, ".codex", "config.toml");
-  const originalConfig =
-    '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@0.0.0", "mcp"]\n';
+  const originalConfig = `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${metadata.name}@0.0.0", "mcp"]\n`;
   await mkdir(dirname(codexPath), { recursive: true });
   await writeFile(codexPath, originalConfig);
   const server = createServer((request, response) => {
@@ -33,7 +32,7 @@ export async function verifyPackageUpdate({
   let registry;
   async function serveRegistry(request, response) {
     const pathname = new URL(request.url, registry).pathname;
-    if (pathname === "/rea-agents") {
+    if (decodeURIComponent(pathname) === "/" + metadata.name) {
       response.setHeader("Content-Type", "application/json");
       response.end(
         JSON.stringify({

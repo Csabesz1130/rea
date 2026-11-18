@@ -36,8 +36,16 @@ export async function verifyPackagePack({ root, workspace }) {
     packedManifest.bin?.["rea-agents"] !== "scripts/rea.mjs"
   )
     throw new Error("package did not expose both rea command entry points");
-  if (packedManifest.mcpName !== "io.github.morluto/rea")
+  if (packedManifest.mcpName !== "io.github.Csabesz1130/rea")
     throw new Error("package did not retain its MCP Registry ownership marker");
+  if (
+    packedManifest.name !== "@csabesz1130/rea-pro" ||
+    !packedFiles.includes("package/products/pro-loader/cli.mjs") ||
+    packedFiles.some((path) => path.startsWith("package/products/pro/"))
+  )
+    throw new Error(
+      "Expected the scoped public package with the plugin loader",
+    );
   if (packedFiles.some((path) => path.startsWith("package/.agents/")))
     throw new Error(
       "package included authored skill sources instead of only the generated bundle",

@@ -1,6 +1,6 @@
 # Obfuscation and Packer Detection
 
-For static JavaScript expression values, build-map lookups and ordinary archive extraction, see [REA Pro](../pro/README.md).
+For static JavaScript expression values, build-map lookups and ordinary archive extraction, see [REA Pro](../pro-loader/README.md).
 
 Before you spend analysis on a file, it helps to know how its contents are
 shaped: a minified bundle is read differently from readable source, a packed

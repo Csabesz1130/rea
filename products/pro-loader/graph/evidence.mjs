@@ -17,7 +17,12 @@ const levels = Symbol("native graph levels");
 const MAX_RECORD = 8 * 1024 * 1024;
 const MAX_DEPTH = 256;
 
-export async function visitEvidence(path, onNode, onEdge) {
+export async function visitEvidence(
+  path,
+  onNode,
+  onEdge,
+  { projectNode = compactNode, extensionCoverage } = {},
+) {
   const meta = {};
   const shapes = new Set();
   const limitations = [];
@@ -33,6 +38,7 @@ export async function visitEvidence(path, onNode, onEdge) {
     evidence_id: set("evidence_id"),
     subject: {
       name: set("subject"),
+      format: set("subject_format"),
       digest: { sha256: set("subject_sha256") },
     },
     parameters: { direction: set("direction") },
@@ -50,7 +56,7 @@ export async function visitEvidence(path, onNode, onEdge) {
           omitted_nodes: set("source_omitted_nodes"),
           omitted_relations: set("source_omitted_relations"),
         },
-        nodes: collection("nodes", (row) => onNode(compactNode(row))),
+        nodes: collection("nodes", (row) => onNode(projectNode(row))),
         relations: collection("relations", (row) =>
           onEdge({ ...compactRelation(row), ref: row.relation_id }),
         ),
@@ -215,13 +221,18 @@ export async function visitEvidence(path, onNode, onEdge) {
       shapes.has("native-level") &&
       !shapes.has("nodes") &&
       ["forward", "backward"].includes(meta.direction ?? "forward");
-    if (!js && !native)
+    const coverage = js
+      ? "unknown"
+      : native
+        ? "per-procedure"
+        : extensionCoverage?.(meta, shapes);
+    if (!coverage)
       throw new Error(
         "Expected JavaScript application or native get_call_graph Evidence",
       );
     return {
       ...meta,
-      coverage: meta.coverage ?? (native ? "per-procedure" : "unknown"),
+      coverage: meta.coverage ?? coverage,
       ...(limitationCount
         ? { limitations, limitation_count: limitationCount }
         : {}),

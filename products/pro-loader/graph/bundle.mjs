@@ -2,9 +2,9 @@ import { createWriteStream } from "node:fs";
 import { link, mkdtemp, rm } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { buildGraph } from "./graph.mjs";
+import { buildFreeGraph } from "./index.mjs";
 
-export async function indexBundle(target, store, output, controls = {}) {
+export async function indexFreeBundle(target, store, output, controls = {}) {
   const { runCliJavaScriptApplicationAnalysis } =
     await import("../../../dist/cli/javascriptApplicationAnalysis.js");
   const { jsonParts, bufferedJsonParts } =
@@ -25,7 +25,7 @@ export async function indexBundle(target, store, output, controls = {}) {
       createWriteStream(staged, { flags: "wx", mode: 0o600 }),
     );
     await link(staged, output);
-    return await buildGraph(store, output);
+    return await buildFreeGraph(store, output);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 # Semantic Graph Slicer
 
-This page documents the open-core JSON index. The fork also provides persistent SQLite vectors, native call graphs, exact slice budgets and a stdio MCP server. [REA Pro](../pro/README.md)
+This page documents the open-core JSON index. The fork also provides persistent SQLite vectors, native call graphs, exact slice budgets and a stdio MCP server. [REA Pro](../pro-loader/README.md)
 
 REA's `analyze_javascript_application` produces a semantic graph as one
 Evidence record. For a real bundle that record is large: the right side of

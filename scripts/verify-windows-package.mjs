@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import packageManifest from "../package.json" with { type: "json" };
 
 import { execFile } from "node:child_process";
 import {
@@ -70,7 +71,7 @@ try {
   const entry = join(
     prefix,
     "node_modules",
-    "rea-agents",
+    packageManifest.name,
     "scripts",
     "rea.mjs",
   );
@@ -217,8 +218,8 @@ try {
     prefix,
     packageRoot:
       process.platform === "win32"
-        ? join(prefix, "node_modules", "rea-agents")
-        : join(prefix, "lib", "node_modules", "rea-agents"),
+        ? join(prefix, "node_modules", packageManifest.name)
+        : join(prefix, "lib", "node_modules", packageManifest.name),
     tarball,
     workspace,
     environment,
