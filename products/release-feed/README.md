@@ -199,6 +199,42 @@ Raising `--review-from` to high moves fourteen releases from "needs
 review" to "not established" and one to "cleared": it changes why a
 person is asked, not how often.
 
+### After native files, synchronous process calls and credential stores
+
+On 18 November 2026 Release Watch began comparing native files (RW-B01,
+RW-C07) and reporting credential stores (RW-F01), and REA began
+classifying `execSync`, `execFileSync` and `spawnSync`. The feed then ran
+in review, with `--since 2026-10-20`, on 14 packages: 12 of the add-ons
+above and two packages that ship one native binary. It ran once before
+the change to REA and once after; each run took 7.4 minutes.
+
+| Run                         | Compared | Cleared | Needs review | Not established |
+| --------------------------- | -------- | ------- | ------------ | --------------- |
+| Before REA's change         | 11       | 2       | 4            | 5               |
+| After, on the same releases | 11       | 2       | 5            | 4               |
+
+- @ai-sdk/harness-claude-code 1.0.162 → 1.0.191 moved from "not
+  established" to "needs review": what had been a note that process calls
+  were not classified is now two high findings, new `execSync()` calls in
+  `dist/index.js` and `src/claude-code-auth.ts`.
+- @biomejs/cli-linux-x64 2.5.15 → 2.6.8, a package of one Rust binary, is
+  "not established" because its native code changed. Release Watch read
+  no native file before, so it had nothing to say about that binary.
+- RW-F01 fired on none of the 11.
+
+What still holds the four: a bundle beyond REA's global node limit
+(cc-safety-net), module pairing skipped for Evidence above 64 MB together
+with a partial application graph (acpx), a process call through
+`promisify(execFile)` (@intellectronica/ruler), and the native binary.
+`--depth deep` is not the answer for the bundle: on cc-safety-net it took
+243 s instead of 93 s and still left changed files unexamined.
+
+The pr-shepherd comparison that failed above was run again with an 11 GB
+heap: REA's two analyses ended within 90 seconds, and Release Watch's own
+process then grew to 9.7 GB over the next ten minutes without finishing,
+and was stopped. Which step of Release Watch holds that memory was not
+found.
+
 ## Quick start
 
 It needs what Release Watch needs: a built REA checkout
