@@ -104,12 +104,16 @@ export const SERVER_WITH_SYNC = [
   "};",
   'server.registerTool("sync", {}, sync);',
 ].join("\n");
-// A process call REA does not classify: Release Watch notes it as code it
-// could not examine, beside one more tool registration.
+// A process call REA does not classify, through a module loaded when the
+// tool runs: Release Watch notes it as code it could not examine, beside
+// one more tool registration.
 export const SERVER_WITH_SHELL = [
-  'import { execSync } from "node:child_process";',
   SERVER,
-  'server.registerTool("run", {}, async ({ command }) => execSync(command).toString());',
+  "let cp;",
+  'server.registerTool("run", {}, async ({ command }) => {',
+  '  cp = require("node:child_process");',
+  "  return cp.execSync(command).toString();",
+  "});",
 ].join("\n");
 export const release = (name, version, code = SERVER) =>
   tarball({ "package.json": manifest(name, version), "index.js": code });

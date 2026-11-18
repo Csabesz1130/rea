@@ -24,9 +24,12 @@ const SERVER_LABELLED = `${SERVER}\nexport const label = "notes";`;
 // A process call REA does not classify, outside any tool: a note on code
 // that was not examined, and no change.
 const SERVER_WITH_HELPER = [
-  'import { execSync } from "node:child_process";',
   SERVER,
-  "export const run = (command) => execSync(command).toString();",
+  "let cp;",
+  "export const run = (command) => {",
+  '  cp = require("node:child_process");',
+  "  return cp.execSync(command).toString();",
+  "};",
 ].join("\n");
 
 // One feed for the whole story: each case starts where the last one ended.

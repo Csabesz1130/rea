@@ -95,3 +95,79 @@ describe("child-process options detection", () => {
     expect(ir.childProcessSpawns).toHaveLength(3);
   });
 });
+
+describe("synchronous child-process calls", () => {
+  it("classifies the synchronous forms, whose result is no process handle", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      import { execSync, execFileSync, spawnSync } from "node:child_process";
+      const cp = require("child_process");
+
+      const version = execSync("git --version", { env: { A: "1" } });
+      execFileSync("git", ["status", "--short"], { stdio: "inherit" });
+      const run = spawnSync("tool", ["a", "b", "c"]);
+      run.stdout.on("data", () => {});
+      cp.execSync(command);
+    `);
+
+    expect(
+      ir.childProcessSpawns.map(
+        ({
+          method,
+          command,
+          argvCount,
+          environmentSupplied,
+          stdioMode,
+          resultBindingId,
+          resolution,
+        }) => ({
+          method,
+          command,
+          argvCount,
+          environmentSupplied,
+          stdioMode,
+          resultBindingId,
+          resolution,
+        }),
+      ),
+    ).toEqual([
+      {
+        method: "execSync",
+        command: "git --version",
+        argvCount: null,
+        environmentSupplied: true,
+        stdioMode: "default",
+        resultBindingId: null,
+        resolution: "complete",
+      },
+      {
+        method: "execFileSync",
+        command: "git",
+        argvCount: 2,
+        environmentSupplied: false,
+        stdioMode: "inherit",
+        resultBindingId: null,
+        resolution: "complete",
+      },
+      {
+        method: "spawnSync",
+        command: "tool",
+        argvCount: 3,
+        environmentSupplied: false,
+        stdioMode: "default",
+        resultBindingId: null,
+        resolution: "complete",
+      },
+      {
+        method: "execSync",
+        command: null,
+        argvCount: null,
+        environmentSupplied: false,
+        stdioMode: "default",
+        resultBindingId: null,
+        resolution: "partial",
+      },
+    ]);
+    // Output read from a finished child is no listener on a live one.
+    expect(ir.childProcessInteractions).toEqual([]);
+  });
+});
