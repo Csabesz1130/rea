@@ -1,4 +1,5 @@
-// Projects REA binary Evidence: Electron fuse wires and Go build information.
+// Projects REA binary Evidence: Electron fuse wires, Go build information
+// and what a native file is.
 
 /**
  * Fuse states from one `inspect_electron_fuses` Evidence record. Null when
@@ -55,5 +56,22 @@ export const goFacts = (evidence) => {
     settings: Object.fromEntries(
       (module?.settings ?? []).map((setting) => [setting.key, setting.value]),
     ),
+  };
+};
+
+/**
+ * What one native file is, from an `inspect_rust_binary` Evidence record:
+ * its digest, format and architecture, which REA reports for any native
+ * file, and the rustc commits its read-only data names when Rust built it.
+ */
+export const nativeFacts = (evidence) => {
+  const result = evidence.normalized_result;
+  return {
+    evidence_id: evidence.evidence_id,
+    sha256: result.artifact?.sha256 ?? evidence.subject?.digest?.sha256 ?? null,
+    bytes: result.artifact?.bytes ?? null,
+    format: result.format ?? null,
+    architecture: result.architecture ?? null,
+    rustc: (result.rustc_commit?.hashes ?? []).map((item) => item.hash),
   };
 };

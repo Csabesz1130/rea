@@ -1,11 +1,19 @@
 // Runs the REA operations that apply to one side of one component and
 // projects their Evidence into facts. REA's output bytes are saved under
 // evidence/ exactly as REA wrote them.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import { applicationFacts } from "./facts/application.mjs";
-import { fuseFacts, goFacts } from "./facts/binaries.mjs";
+import { fuseFacts, goFacts, nativeFacts } from "./facts/binaries.mjs";
 import { captureFacts } from "./facts/capture.mjs";
 import { reaAnalysisArguments } from "./limits.mjs";
 
@@ -112,6 +120,90 @@ const inspectHelpers = async (scope) => {
   return helpers;
 };
 
+/** How many native files of one side REA inspects; the rest are named as not inspected. */
+export const MAX_NATIVE_FILES = 64;
+
+const DIGEST_CHUNK = 1 << 20;
+
+// A file's size and SHA-256, read in pieces, for a native file REA could
+// not inspect: whether its content changed is still known. Null when the
+// file cannot be read.
+const digestOf = (file) => {
+  const hash = createHash("sha256");
+  const chunk = Buffer.alloc(DIGEST_CHUNK);
+  let bytes = 0;
+  try {
+    const descriptor = openSync(file, "r");
+    try {
+      for (;;) {
+        const read = readSync(descriptor, chunk, 0, DIGEST_CHUNK, null);
+        if (read === 0) break;
+        hash.update(chunk.subarray(0, read));
+        bytes += read;
+      }
+    } finally {
+      closeSync(descriptor);
+    }
+  } catch {
+    return null;
+  }
+  return { sha256: hash.digest("hex"), bytes };
+};
+
+/**
+ * What each native candidate of the side is: `{ natives, status }`.
+ * `natives` are `{ relative, sha256, bytes, format, architecture, rustc,
+ * file, error }`. When REA could not inspect a file, `error` says why,
+ * format and architecture are null and the digest is Release Watch's own
+ * (null when the file cannot be read). `status` counts the candidates and
+ * names those left uninspected.
+ */
+const inspectNatives = async (scope) => {
+  const { files, more } = scope.target.natives;
+  const natives = [];
+  for (const [index, native] of files.slice(0, MAX_NATIVE_FILES).entries()) {
+    const relativePath = path.relative(scope.target.root, native);
+    const file = evidencePath(
+      scope,
+      `native-${index + 1}-${fileSafe(path.basename(native))}`,
+    );
+    const result = await scope.rea.run("inspect-rust-binary", [native], {
+      label: `native ${scope.label} ${relativePath}`,
+      saveTo: file,
+    });
+    natives.push(
+      result.ok
+        ? {
+            relative: relativePath,
+            ...nativeFacts(result.evidence),
+            file: relative(scope, file),
+            error: null,
+          }
+        : {
+            relative: relativePath,
+            sha256: null,
+            bytes: null,
+            ...digestOf(native),
+            format: null,
+            architecture: null,
+            rustc: [],
+            file: null,
+            error: result.error,
+          },
+    );
+  }
+  return {
+    natives,
+    status: {
+      candidates: files.length + more,
+      uninspected: files
+        .slice(MAX_NATIVE_FILES)
+        .map((native) => path.relative(scope.target.root, native)),
+      unnamed: more,
+    },
+  };
+};
+
 // REA's api-surface view takes the capture Evidence inline; the request is
 // assembled from REA's saved bytes rather than re-serialized.
 const apiSurface = async (scope, captureFile) => {
@@ -213,12 +305,23 @@ export const collectSide = async ({
     });
     return emptyCollection(target);
   }
+  // A directory of native files has no application to analyze, which is
+  // no error: its files are what the release is compared by.
+  if (target.kind === "native") {
+    const native = await inspectNatives(scope);
+    return {
+      ...emptyCollection(target),
+      natives: native.natives,
+      nativeStatus: native.status,
+    };
+  }
   const electron = target.kind === "electron-dist";
-  const [app, fuses, helpers, capture] = await Promise.all([
+  const [app, fuses, helpers, capture, native] = await Promise.all([
     analyzeApp(scope),
     electron ? inspectFuses(scope) : null,
     electron ? inspectHelpers(scope) : [],
     inspectCapture(scope),
+    inspectNatives(scope),
   ]);
   if (
     app === null &&
@@ -242,6 +345,8 @@ export const collectSide = async ({
     runtimes: fuses?.runtimes ?? [],
     runtimeStatus: fuses?.status ?? { candidates: 0, failures: [] },
     helpers,
+    natives: native.natives,
+    nativeStatus: native.status,
     capture,
   };
 };
@@ -255,5 +360,7 @@ export const emptyCollection = (target = null) => ({
   runtimes: [],
   runtimeStatus: { candidates: 0, failures: [] },
   helpers: [],
+  natives: [],
+  nativeStatus: { candidates: 0, uninspected: [], unnamed: 0 },
   capture: null,
 });

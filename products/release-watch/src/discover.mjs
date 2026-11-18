@@ -1,7 +1,15 @@
 // Locates the parts of a release that Release Watch hands to REA. It only
-// lists files and reads the release manifest; REA decides what each selected
-// file is.
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+// lists files, reads the release manifest and looks at how a file starts
+// to pick native candidates; REA decides what each selected file is.
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import path from "node:path";
 
 import { withoutHash } from "./facts/modules.mjs";
@@ -34,6 +42,74 @@ const executablesIn = (directory, depth, skip) => {
   return found.sort();
 };
 
+// How a native executable or library starts: ELF, Mach-O of either byte
+// order and width, and a fat Mach-O (whose architecture count is small; a
+// Java class file starts with the same four bytes and a version of 45 up).
+const ELF = 0x7f454c46;
+const MACH_O = new Set([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe]);
+const FAT_MACH_O = 0xcafebabe;
+const MAX_FAT_ARCHITECTURES = 44;
+const HEADER_BYTES = 1024;
+const NATIVE_SEARCH_DEPTH = 12;
+/** How many native candidates one component lists; more are counted, not named. */
+export const MAX_NATIVE_CANDIDATES = 400;
+
+// A PE file: an MZ header whose e_lfanew points at "PE\0\0". A header
+// that points beyond the bytes read is taken as one.
+const isPe = (header) => {
+  if (header.length < 0x40 || header.readUInt16LE(0) !== 0x5a4d) return false;
+  const offset = header.readUInt32LE(0x3c);
+  return offset + 4 > header.length || header.readUInt32LE(offset) === 0x4550;
+};
+
+// True when a file starts like native code. This only selects candidates;
+// REA says what each one is.
+const looksNative = (file) => {
+  const header = Buffer.alloc(HEADER_BYTES);
+  let length = 0;
+  try {
+    const descriptor = openSync(file, "r");
+    try {
+      length = readSync(descriptor, header, 0, HEADER_BYTES, 0);
+    } finally {
+      closeSync(descriptor);
+    }
+  } catch {
+    return false;
+  }
+  if (length < 8) return false;
+  const magic = header.readUInt32BE(0);
+  return (
+    magic === ELF ||
+    MACH_O.has(magic) ||
+    (magic === FAT_MACH_O && header.readUInt32BE(4) <= MAX_FAT_ARCHITECTURES) ||
+    isPe(header.subarray(0, length))
+  );
+};
+
+/**
+ * The files under `directory` that start like native executables or
+ * libraries, sorted, at most MAX_NATIVE_CANDIDATES of them: `{ files,
+ * more }`, `more` the number left unnamed.
+ */
+const nativeCandidatesIn = (directory) => {
+  const files = [];
+  const walk = (current, depth) => {
+    if (depth < 0) return;
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(full, depth - 1);
+      else if (entry.isFile() && looksNative(full)) files.push(full);
+    }
+  };
+  walk(directory, NATIVE_SEARCH_DEPTH);
+  files.sort();
+  return {
+    files: files.slice(0, MAX_NATIVE_CANDIDATES),
+    more: Math.max(0, files.length - MAX_NATIVE_CANDIDATES),
+  };
+};
+
 const target = (root, kind, reason, inputs = {}) => ({
   root,
   kind,
@@ -42,6 +118,10 @@ const target = (root, kind, reason, inputs = {}) => ({
   capture: inputs.capture ?? null,
   runtimeCandidates: inputs.runtimeCandidates ?? [],
   helpers: inputs.helpers ?? [],
+  // Native files anywhere in a directory release, whatever else it holds.
+  natives: statSync(root, { throwIfNoEntry: false })?.isDirectory()
+    ? nativeCandidatesIn(root)
+    : { files: [], more: 0 },
 });
 
 const electronTarget = (root) => {
@@ -78,10 +158,25 @@ const webTarget = (root) => {
   return null;
 };
 
+// A directory with no application REA analyzes: "native" when it holds
+// native files, which are still listed and compared, else "unknown".
+const nativeTarget = (root) => {
+  const none = target(
+    root,
+    "unknown",
+    "no package.json, index.html, Electron resources or native files",
+  );
+  const count = none.natives.files.length + none.natives.more;
+  return count === 0
+    ? none
+    : { ...none, kind: "native", reason: `found ${count} native file(s)` };
+};
+
 /**
  * Describe one release component: an Electron distribution directory, a
- * JavaScript app directory, a built web app, an .asar file or a HAR capture.
- * `kind` is "unknown" when nothing analyzable was found.
+ * JavaScript app directory, a built web app, a directory of native files,
+ * an .asar file or a HAR capture. `kind` is "unknown" when nothing
+ * analyzable was found.
  */
 export const discoverTarget = (input, { capture = null } = {}) => {
   const root = path.resolve(input);
@@ -105,11 +200,7 @@ export const discoverTarget = (input, { capture = null } = {}) => {
       ? target(root, "js-app", "found package.json", { app: root })
       : null) ??
     webTarget(root) ??
-    target(
-      root,
-      "unknown",
-      "no package.json, index.html or Electron resources",
-    );
+    nativeTarget(root);
   return withCapture(found);
 };
 

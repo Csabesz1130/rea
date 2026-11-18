@@ -9,6 +9,7 @@ import { dependencyPack, packagesOf } from "./rules/dependencies.mjs";
 import { electronPack } from "./rules/electron.mjs";
 import { goPack } from "./rules/go.mjs";
 import { mcpPack } from "./rules/mcp.mjs";
+import { nativePack } from "./rules/native.mjs";
 import {
   browserGuessedHosts,
   browserHosts,
@@ -39,6 +40,7 @@ const PACKS = [
   webPack,
   runtimePack,
   goPack,
+  nativePack,
   processPack,
   networkPack,
   dependencyPack,
