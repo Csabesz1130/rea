@@ -299,6 +299,7 @@ reaches every process site of that module, and the finding says so.
 | RW-G03 | low                 | A Go helper lost `-trimpath`                                                                                                                                                                                                                                                                                                               |
 | RW-B01 | high                | Native executables or libraries whose content the old release did not ship under any path                                                                                                                                                                                                                                                  |
 | RW-G04 | medium              | A new helper executable                                                                                                                                                                                                                                                                                                                    |
+| RW-F01 | high                | Code reads or names a credential store (AWS, SSH keys, kube config, browser logins, keychain and the like) no code of the old release named                                                                                                                                                                                                |
 | RW-D01 | low                 | New third-party packages imported, one finding per component                                                                                                                                                                                                                                                                               |
 | RW-C01 | high / medium       | REA examined only part of the new release (truncation, node ceilings, failed or unparsed files, a use of child_process REA classified no process call for, such as `promisify(exec)`); high when that code changed, unless its source map names no changed original source                                                                 |
 | RW-C02 | low                 | A component, its application code, a capture or a module pairing available on one side only                                                                                                                                                                                                                                                |
@@ -313,6 +314,14 @@ something for code REA examined; a truncated analysis is reviewed rather than
 passed.
 
 ## What the report does not claim
+
+- RW-F01 rests on two things REA reports: a file read whose path is a
+  literal, and a string literal a variable or property holds. It says a
+  release reads or names a credential store, not where the content goes.
+  REA does not report a literal passed straight to a call, so a path built
+  inline, as in `path.join(homedir(), ".aws", "credentials")`, is not
+  seen; that is the usual way such a path is written, and the rule misses
+  it. The stores are a fixed list in `src/catalog.mjs`.
 
 - Native code is compared by content, not by behavior. In any directory
   release, every file that starts like an ELF, Mach-O or PE file is a
