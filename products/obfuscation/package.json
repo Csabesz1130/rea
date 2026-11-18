@@ -1,0 +1,16 @@
+{
+  "name": "obfuscation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only detection of how a file's contents are shaped: minified or bundled JavaScript, a packer's markers in a native binary, or an archive another tool must open.",
+  "type": "module",
+  "bin": {
+    "obfuscation": "bin/obfuscation.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
