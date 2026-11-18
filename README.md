@@ -66,6 +66,21 @@ Setup registers REA with your agent and installs matching workflow instructions.
 
 > **[Visit the REA website](https://rea.tools/)** for setup instructions, illustrated guides, and real case studies.
 
+## Task workflows in this fork
+
+This fork adds product prototypes on REA's existing Evidence workflows:
+Release Watch reviews updates, Landscape maps product categories, and Device
+Tasks inspects a selected Android device or launches an app and verifies its
+focus. Start with `products/README.md` for the commands and product guides.
+The `improve_application` and `investigate_device_task` MCP prompts connect
+user goals to explicit outcome checks and evidence-backed next steps.
+
+Build this checkout with `npm ci && npm run build:cached` to use its changes.
+The public `rea-agents` npm release does not contain these fork prototypes.
+Device Tasks is exploratory and uses an already connected device plus your
+existing ADB client. Its reports distinguish launch, observed foreground focus,
+and goals such as playback that remain unverified.
+
 ## Quick start
 
 On Linux, Ghidra, JADX, firmware tool launches and static JavaScript/Electron
