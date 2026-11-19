@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import packageManifest from "../package.json" with { type: "json" };
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
@@ -42,7 +43,7 @@ try {
     ...(process.platform === "win32"
       ? ["node_modules"]
       : ["lib", "node_modules"]),
-    "rea-agents",
+    packageManifest.name,
     "scripts",
     "rea.mjs",
   );

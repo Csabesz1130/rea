@@ -1,0 +1,97 @@
+name: Publish scoped REA package
+
+on:
+  workflow_dispatch:
+
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-scoped-rea
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: github.repository == 'Csabesz1130/rea' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run metadata:check && npm run mcp-registry:check
+      - run: npm run build:cached
+      - name: Include the packaged Windows runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+          npm run build:windows-native
+          npm run verify:windows-native:artifact
+      - name: Qualify the public tarball
+        env:
+          REALIZATIONS_ISSUER_PINS: ${{ vars.REALIZATIONS_ISSUER_PINS }}
+        run: |
+          node --test products/pro-loader/test/*.test.mjs
+          node scripts/ci/prepare-commercial-profile.mjs
+          node --input-type=module <<'JS'
+          import { mkdtemp, copyFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { verifyPackagePack } from './scripts/verify-package-pack.mjs';
+          const workspace = await mkdtemp(join(process.env.RUNNER_TEMP, 'rea-pack-'));
+          const { tarball } = await verifyPackagePack({ root: process.cwd(), workspace });
+          await copyFile(tarball, join(process.env.RUNNER_TEMP, 'package.tgz'));
+          JS
+          tar -xOf "$RUNNER_TEMP/package.tgz" package/products/pro-loader/commercial-profile.json | cmp - products/pro-loader/commercial-profile.json
+          node scripts/verify-release-artifact.mjs "$RUNNER_TEMP/package.tgz" "$(node -p 'require("./package.json").version')"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scoped-package
+          path: ${{ runner.temp }}/package.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: qualify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: scoped-package
+          path: ${{ runner.temp }}/qualified
+      - run: npm ci --ignore-scripts
+      - name: Check intended npm package and existing release
+        id: registry
+        run: |
+          tar -xOf "$RUNNER_TEMP/qualified/package.tgz" package/package.json > "$RUNNER_TEMP/packed.json"
+          node -e 'const assert=require("node:assert/strict"), packed=require(process.argv[1]); assert.equal(packed.name, "@realizations/rea"); assert.equal(packed.version,require("./package.json").version);' "$RUNNER_TEMP/packed.json"
+          version=$(node -p 'require("./package.json").version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          node scripts/ci/npm-release.mjs inspect "$RUNNER_TEMP/qualified/package.tgz" "$version"
+      - name: Publish qualified tarball with npm trusted publishing
+        if: steps.registry.outputs.published == 'false'
+        env:
+          VERSION: ${{ steps.registry.outputs.version }}
+        run: |
+          tag=$(node scripts/release-npm-tag.mjs "$VERSION")
+          npm publish "$RUNNER_TEMP/qualified/package.tgz" --registry=https://registry.npmjs.org --access public --tag "$tag" --ignore-scripts
+      - name: Verify npm integrity before MCP registration
+        env:
+          VERSION: ${{ steps.registry.outputs.version }}
+        run: node scripts/ci/npm-release.mjs verify "$RUNNER_TEMP/qualified/package.tgz" "$VERSION"
+      - uses: ./.github/actions/publish-mcp

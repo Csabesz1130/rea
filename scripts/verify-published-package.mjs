@@ -1,3 +1,4 @@
+import packageManifest from "../package.json" with { type: "json" };
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,7 +35,7 @@ let surface;
 let update;
 try {
   const publishedRoot = await installCanaryPackage(
-    `rea-agents@${version}`,
+    `${packageManifest.name}@${version}`,
     canaryRoot,
     serverEnvironment,
   );
@@ -53,7 +54,7 @@ try {
   await rm(canaryRoot, { recursive: true, force: true });
 }
 process.stdout.write(
-  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "rea-agents", version, ...surface, update })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: packageManifest.name, version, ...surface, update })}\n`,
 );
 
 async function verifyPublishedUpdate({
@@ -94,6 +95,12 @@ async function verifyPublishedUpdate({
     environment,
   );
 
+  if (previousVersion === undefined)
+    return {
+      status: "no-previous-stable-version",
+      latestVersion: updateVersion,
+    };
+
   await execFileAsync(
     "npm",
     [
@@ -102,7 +109,7 @@ async function verifyPublishedUpdate({
       "--ignore-scripts",
       "--prefix",
       prefix,
-      `rea-agents@${previousVersion}`,
+      `${packageManifest.name}@${previousVersion}`,
     ],
     { cwd: canaryRoot, env: environment, maxBuffer: 16 * 1024 * 1024 },
   );
@@ -121,7 +128,7 @@ async function verifyPublishedUpdate({
     `
 import { runUpdate } from ${JSON.stringify(pathToFileURL(join(updaterRoot, "dist/application/Update.js")).href)};
 import { systemUpdateHost } from ${JSON.stringify(pathToFileURL(join(updaterRoot, "dist/application/UpdateRuntime.js")).href)};
-const result = await runUpdate(${JSON.stringify(previousVersion)}, systemUpdateHost(${JSON.stringify(join(npmRoot, "rea-agents"))}, ${JSON.stringify(home)}), "structured");
+const result = await runUpdate(${JSON.stringify(previousVersion)}, systemUpdateHost(${JSON.stringify(join(npmRoot, packageManifest.name))}, ${JSON.stringify(home)}), "structured");
 process.stdout.write(JSON.stringify(result));
 if (result.status === "failed") process.exitCode = 1;
 `,
@@ -137,14 +144,14 @@ if (result.status === "failed") process.exitCode = 1;
     result.previousVersion !== previousVersion ||
     result.latestVersion !== updateVersion ||
     result.installedVersion !== updateVersion ||
-    result.command.at(-1) !== `rea-agents@${updateVersion}`
+    result.command.at(-1) !== `${packageManifest.name}@${updateVersion}`
   )
     throw new Error(
       `Published REA updater did not update ${previousVersion} to stable ${updateVersion}: ${stdout}`,
     );
 
   const installed = JSON.parse(
-    await readFile(join(npmRoot, "rea-agents", "package.json"), "utf8"),
+    await readFile(join(npmRoot, packageManifest.name, "package.json"), "utf8"),
   );
   if (installed.version !== updateVersion)
     throw new Error(
@@ -173,10 +180,15 @@ if (result.status === "failed") process.exitCode = 1;
 async function findPreviousPublishedVersion(targetVersion, cwd, environment) {
   const { stdout } = await execFileAsync(
     "npm",
-    ["view", "rea-agents", "versions", "--json"],
+    ["view", packageManifest.name, "versions", "--json"],
     { cwd, env: environment, maxBuffer: 16 * 1024 * 1024 },
   );
-  const versions = JSON.parse(stdout);
+  const listed = JSON.parse(stdout);
+  const versions = typeof listed === "string" ? [listed] : listed;
+  if (!Array.isArray(versions) || !versions.includes(targetVersion))
+    throw new Error(
+      "npm version history is missing the selected stable release",
+    );
   const previous = versions
     .filter(
       (candidate) =>
@@ -186,9 +198,5 @@ async function findPreviousPublishedVersion(targetVersion, cwd, environment) {
         lt(candidate, targetVersion),
     )
     .sort(rcompare)[0];
-  if (previous === undefined)
-    throw new Error(
-      `No published rea-agents version precedes ${targetVersion}`,
-    );
   return previous;
 }

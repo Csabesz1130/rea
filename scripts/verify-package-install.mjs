@@ -1,3 +1,4 @@
+import packageManifest from "../package.json" with { type: "json" };
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -32,7 +33,9 @@ export async function verifyPackageInstall({
   const processCaptureCapabilityUrl = pathToFileURL(
     join(
       prefix,
-      "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
+      "lib/node_modules",
+      packageManifest.name,
+      "dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
   const processCaptureCapability = json(
@@ -70,7 +73,9 @@ export async function verifyPackageInstall({
   await rm(
     join(
       noOptionalPrefix,
-      "lib/node_modules/rea-agents/node_modules/@lydell",
+      "lib/node_modules",
+      packageManifest.name,
+      "node_modules/@lydell",
       `node-pty-${process.platform}-${process.arch}`,
     ),
     { recursive: true, force: true },
@@ -78,7 +83,9 @@ export async function verifyPackageInstall({
   const noOptionalCapabilityUrl = pathToFileURL(
     join(
       noOptionalPrefix,
-      "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
+      "lib/node_modules",
+      packageManifest.name,
+      "dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
   const noOptionalCapability = json(
@@ -106,7 +113,11 @@ export async function verifyPackageInstall({
 }
 
 const verifyInstalledPackageCanRepack = async (prefix, environment) => {
-  const installedPackageRoot = join(prefix, "lib/node_modules/rea-agents");
+  const installedPackageRoot = join(
+    prefix,
+    "lib/node_modules",
+    packageManifest.name,
+  );
   const repackedTarball = (
     await exec("npm", ["pack", "--silent"], {
       cwd: installedPackageRoot,

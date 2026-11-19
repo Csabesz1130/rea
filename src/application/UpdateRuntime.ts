@@ -120,10 +120,13 @@ export const detectNpmInstallation = async (
     // The curl installer uses a Unix prefix that may differ from npm's current default.
     void cause;
   }
-  const nodeModules = dirname(canonicalPackageRoot);
+  // A scoped npm package has two path components beneath node_modules.
+  const nodeModules = PRODUCT_IDENTITY.packageName
+    .split("/")
+    .reduce((directory) => dirname(directory), canonicalPackageRoot);
   const library = dirname(nodeModules);
   if (
-    basename(canonicalPackageRoot) !== PRODUCT_IDENTITY.packageName ||
+    join(nodeModules, PRODUCT_IDENTITY.packageName) !== canonicalPackageRoot ||
     basename(nodeModules) !== "node_modules" ||
     basename(library) !== "lib"
   )

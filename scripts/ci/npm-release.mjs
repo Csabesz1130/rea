@@ -1,3 +1,4 @@
+import packageManifest from "../../package.json" with { type: "json" };
 import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,19 +11,22 @@ import { verifyPublishedPackageIntegrity } from "./verified-package.mjs";
 /** Parse one npm metadata snapshot; errors and malformed records are never absence. */
 export async function readNpmRelease(version, request = fetch) {
   const tag = releaseNpmTag(version);
-  const response = await request("https://registry.npmjs.org/rea-agents", {
-    headers: {
-      Accept: "application/vnd.npm.install-v1+json",
-      "Cache-Control": "no-cache",
+  const response = await request(
+    `https://registry.npmjs.org/${encodeURIComponent(packageManifest.name)}`,
+    {
+      headers: {
+        Accept: "application/vnd.npm.install-v1+json",
+        "Cache-Control": "no-cache",
+      },
+      signal: AbortSignal.timeout(30_000),
     },
-    signal: AbortSignal.timeout(30_000),
-  });
+  );
   if (response.status === 404) return { status: "absent" };
   if (!response.ok)
     throw new Error(`npm registry lookup failed: HTTP ${response.status}`);
   const metadata = z
     .object({
-      name: z.literal("rea-agents"),
+      name: z.literal(packageManifest.name),
       versions: z.record(z.string(), z.unknown()),
       "dist-tags": z.record(z.string(), z.string()),
     })
@@ -30,7 +34,7 @@ export async function readNpmRelease(version, request = fetch) {
   if (!Object.hasOwn(metadata.versions, version)) return { status: "absent" };
   const published = z
     .object({
-      name: z.literal("rea-agents"),
+      name: z.literal(packageManifest.name),
       version: z.literal(version),
       dist: z.object({ integrity: z.string().min(1) }),
     })
@@ -63,7 +67,7 @@ export function stableUpdateVersion(version, published) {
 /** Validate content before accepting a previously published or newly visible version. */
 export async function requireMatchingNpmRelease(tarball, version, published) {
   if (published.status !== "published")
-    throw new Error(`rea-agents@${version} is not published`);
+    throw new Error(`${packageManifest.name}@${version} is not published`);
   await verifyPublishedPackageIntegrity(tarball, published.integrity);
   if (published.taggedVersion !== version)
     throw new Error(
@@ -84,7 +88,7 @@ export async function waitForNpmRelease(
     if (attempt < attempts) await pause(15_000);
   }
   throw new Error(
-    `rea-agents@${version} was not visible on npm after 120 attempts over 30 minutes`,
+    `${packageManifest.name}@${version} was not visible on npm after 120 attempts over 30 minutes`,
   );
 }
 
@@ -113,7 +117,7 @@ async function main() {
   } else if (process.env.GITHUB_STEP_SUMMARY !== undefined) {
     await appendFile(
       process.env.GITHUB_STEP_SUMMARY,
-      `npm: rea-agents@${version} is published, matches the qualified tarball, and is selected by ${published.tag}.\n`,
+      `npm: ${packageManifest.name}@${version} is published, matches the qualified tarball, and is selected by ${published.tag}.\n`,
     );
   }
   process.stdout.write(`${JSON.stringify({ version, ...published })}\n`);

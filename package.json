@@ -1,16 +1,16 @@
 {
-  "name": "rea-agents",
-  "mcpName": "io.github.morluto/rea",
+  "name": "@realizations/rea",
+  "mcpName": "io.github.Csabesz1130/rea",
   "version": "6.5.0",
-  "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+  "description": "Local REA analysis with indexed graph evidence, bounded MCP neighborhoods, and a signed plugin loader.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/morluto/rea.git"
+    "url": "git+https://github.com/Csabesz1130/rea.git"
   },
-  "homepage": "https://github.com/morluto/rea#readme",
+  "homepage": "https://github.com/Csabesz1130/rea#readme",
   "bugs": {
-    "url": "https://github.com/morluto/rea/issues"
+    "url": "https://github.com/Csabesz1130/rea/issues"
   },
   "keywords": [
     "reverse-engineering",
@@ -47,6 +47,11 @@
   "packageManager": "npm@11.16.0",
   "files": [
     "dist",
+    "products/pro-loader/*.mjs",
+    "products/pro-loader/commercial-profile.json",
+    "products/pro-loader/graph/*.mjs",
+    "products/pro-loader/README.md",
+    "products/slicer/src/index-evidence.mjs",
     "install.sh",
     "bridge/hopper_bridge.py",
     "bridge/cutter/rea_bridge.py",
@@ -98,6 +103,7 @@
     "licenses"
   ],
   "scripts": {
+    "test:pro": "node --test products/pro-loader/test/*.test.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "deps:check": "node scripts/check-dependency-install.mjs",
     "metadata:generate": "node scripts/run-exclusive.mjs artifacts node scripts/generate-package-metadata.mjs",
@@ -136,6 +142,7 @@
     "scan:todos": "node scripts/scan-todos.mjs",
     "start": "node scripts/rea.mjs mcp",
     "test": "npm run test:with-build",
+    "posttest:with-build": "npm run test:pro",
     "test:with-build": "npm run test:prepare && vitest run",
     "test:run": "vitest run",
     "test:python": "python3 -m unittest bridge/native/test_rea_lldb_tracer.py bridge/mitmproxy/test_capture.py -v && python3 -m unittest discover -s experiments/analysis-efficiency -p 'test_*.py' -v",
@@ -331,6 +338,7 @@
     "cross-spawn": "7.0.6",
     "diff": "9.0.0",
     "evmole": "0.9.3",
+    "gpt-tokenizer": "3.4.0",
     "har-schema": "2.0.0",
     "ignore": "7.0.6",
     "incur": "0.6.1",

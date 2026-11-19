@@ -15,8 +15,10 @@ const metadata = (
   integrity: string,
   tags: Record<string, string>,
 ) => ({
-  name: "rea-agents",
-  versions: { [version]: { name: "rea-agents", version, dist: { integrity } } },
+  name: "@realizations/rea",
+  versions: {
+    [version]: { name: "@realizations/rea", version, dist: { integrity } },
+  },
   "dist-tags": tags,
 });
 
@@ -79,7 +81,11 @@ it("distinguishes absence from failed or malformed registry responses", async ()
   ).resolves.toEqual({ status: "absent" });
   await expect(
     readNpmRelease("6.5.0", async () =>
-      Response.json({ name: "rea-agents", versions: {}, "dist-tags": {} }),
+      Response.json({
+        name: "@realizations/rea",
+        versions: {},
+        "dist-tags": {},
+      }),
     ),
   ).resolves.toEqual({ status: "absent" });
   await expect(

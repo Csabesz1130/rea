@@ -9,7 +9,6 @@
 
 **See a feature you like. Understand how it works, down to the binary level.**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#what-you-can-analyze)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -22,15 +21,14 @@
 
 [Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [FAQ](#faq) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>node scripts/rea.mjs setup</code>
 
 </div>
 
 > [!IMPORTANT]
-> Get REA from [morluto/rea](https://github.com/morluto/rea),
-> [rea.tools](https://rea.tools/), or the [rea-agents npm package](https://www.npmjs.com/package/rea-agents).
-> Follow the installation and release links from these official sources. A similar
-> repository name or copied README does not establish that a download is official.
+> This is [Csabesz1130's REA fork](https://github.com/Csabesz1130/rea). Its public code is MIT licensed and its signed subscription plugin is distributed separately. The scoped npm release of `@realizations/rea` is pending. Build this checkout with `npm ci && npm run build:cached` and use `node scripts/rea.mjs` for the commands below. The `npx` and global-install examples apply after publication.
+>
+> The original REA project, upstream guides and upstream npm package are maintained at [morluto/rea](https://github.com/morluto/rea), [rea.tools](https://rea.tools/) and [rea-agents](https://www.npmjs.com/package/rea-agents).
 
 <div align="center">
 
@@ -66,6 +64,12 @@ Setup registers REA with your agent and installs matching workflow instructions.
 
 > **[Visit the REA website](https://rea.tools/)** for setup instructions, illustrated guides, and real case studies.
 
+## Semantic Graph Slicer
+
+Indexing is available locally. The Studio trial includes three graph queries total across CLI and MCP search, slice and stats. Exporting full Evidence uses one query. After the allowance is spent, the client returns aggregate counts and `rea pro login`. Studio checks the allowance against the signed-in account. A development checkout without a trial issuer uses a local profile counter.
+
+On November 18, 2026, a 32,637-node Electron fixture produced 21.3 million compact Evidence tokens. The signed plugin located a function and verified its neighborhood in 933–941 tokens over a warm MCP connection. The demo records that build and its earlier preview policy. [Graph commands and measurements](products/pro-loader/README.md) · [40-second demo](website/public/examples/rea-semantic-graph-demo.mp4)
+
 ## Task workflows in this fork
 
 This fork adds product prototypes on REA's existing Evidence workflows:
@@ -75,8 +79,7 @@ focus. Start with `products/README.md` for the commands and product guides.
 The `improve_application` and `investigate_device_task` MCP prompts connect
 user goals to explicit outcome checks and evidence-backed next steps.
 
-Build this checkout with `npm ci && npm run build:cached` to use its changes.
-The public `rea-agents` npm release does not contain these fork prototypes.
+Build this checkout with `npm ci && npm run build:cached` to use its changes. After publication, the scoped CLI is available with `npx -y @realizations/rea pro --help`.
 Device Tasks is exploratory and uses an already connected device plus your
 existing ADB client. Its reports distinguish launch, observed foreground focus,
 and goals such as playback that remain unverified.
@@ -93,7 +96,7 @@ checks. Recovery steps are in `docs/installation.md` under
 With Node.js and npm installed, run:
 
 ```bash
-npx rea-agents setup
+npx @realizations/rea setup
 ```
 
 Choose your agents, review the proposed changes, and approve them. Setup adds
@@ -119,7 +122,7 @@ Replace Notes with your target app and the feature you want to understand.
 Inspect an extracted JavaScript/Electron app directory or ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y @realizations/rea@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
 The result includes modules, imports, Electron boundaries and their evidence.
@@ -128,7 +131,7 @@ Replace the path with your target, such as `"D:/apps/example"` on Windows.
 To install the `rea` command for regular use:
 
 ```bash
-npm install --global rea-agents
+npm install --global @realizations/rea
 rea --help
 ```
 
@@ -156,12 +159,12 @@ by the update.
 If you use `npx`, update your agent setup with:
 
 ```bash
-npx rea-agents@latest setup
+npx @realizations/rea@latest setup
 ```
 
 Review the setup changes and restart your agent. For one-off CLI commands,
-use `npx rea-agents@latest` followed by the command. With Bun, use
-`bunx rea-agents@latest` in place of `npx rea-agents@latest`.
+use `npx @realizations/rea@latest` followed by the command. With Bun, use
+`bunx @realizations/rea@latest` in place of `npx @realizations/rea@latest`.
 
 ## How REA works
 
@@ -297,7 +300,7 @@ Hopper manually if needed. See
 <details>
 <summary><strong>What does installing the skill from skills.sh do?</strong></summary>
 
-The skill supplies investigation instructions for your agent. Use `npx rea-agents setup`
+The skill supplies investigation instructions for your agent. Use `npx @realizations/rea setup`
 to register REA's MCP server and install the matching instructions, then restart
 your agent. See [skill-only installation](docs/installation.md#skill-only-installation).
 
@@ -334,7 +337,7 @@ rea update
 For agent setup through `npx`:
 
 ```bash
-npx rea-agents@latest setup
+npx @realizations/rea@latest setup
 ```
 
 If you're using an agent, complete the [setup refresh](#update-rea) and restart
