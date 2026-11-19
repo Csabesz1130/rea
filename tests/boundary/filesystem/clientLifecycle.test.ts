@@ -1758,7 +1758,7 @@ describe("uninstall configuration preflight", () => {
       mcpServers: {
         rea: {
           command: "npx",
-          args: ["-y", "@csabesz1130/rea-pro@6.1.0", "mcp"],
+          args: ["-y", "@realizations/rea@6.1.0", "mcp"],
         },
         other: { command: "echo", args: ["hello"] },
       },

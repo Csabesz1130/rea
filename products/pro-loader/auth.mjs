@@ -9,6 +9,7 @@ export const state = () =>
   process.env.REA_PRO_HOME ??
   join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "rea-pro");
 const session = () => join(state(), "session.jwt");
+const trialSession = () => join(state(), "trial-account.jwt");
 export const features = ["graph", "runtime", "recovery"];
 function https(raw) {
   const url = new URL(raw);
@@ -16,17 +17,25 @@ function https(raw) {
     throw new Error("Expected an HTTPS issuer URL");
   return url.href;
 }
-export function config() {
-  const path = process.env.REA_PRO_CONFIG ?? join(state(), "issuer.json");
+export function config({ optional = false } = {}) {
+  const bundled = new URL("./commercial-profile.json", import.meta.url);
   let cfg;
   try {
-    cfg = JSON.parse(readLocal(path, 32768).text);
-  } catch (error) {
-    if (error.code === "ENOENT")
+    // The published commercial package pins its own trust root, even when a
+    // previous installation or a shell has configured a different issuer.
+    cfg = JSON.parse(readLocal(bundled, 32768).text);
+  } catch (bundledError) {
+    if (bundledError.code !== "ENOENT") throw bundledError;
+    const path = process.env.REA_PRO_CONFIG ?? join(state(), "issuer.json");
+    try {
+      cfg = JSON.parse(readLocal(path, 32768).text);
+    } catch (error) {
+      if (error.code !== "ENOENT" || process.env.REA_PRO_CONFIG) throw error;
+      if (optional) return null;
       throw new Error(
         "Configure an issuer and its verification key in issuer.json or REA_PRO_CONFIG",
       );
-    throw error;
+    }
   }
   https(cfg.issuer);
   const key = createPublicKey(cfg.public_key);
@@ -86,13 +95,13 @@ function verifyGrant(token, cfg, audience = "rea-pro") {
   if (!granted.length) throw new Error("No REA Pro features in entitlement");
   return { subject: c.sub, expires: c.exp, features: granted };
 }
-function save(token, cfg) {
-  const account = verifyGrant(token, cfg);
+function save(token, cfg, trial = false) {
+  const account = verifyGrant(token, cfg, trial ? "rea-account" : "rea-pro");
   mkdirSync(state(), { recursive: true, mode: 0o700 });
   const tmp = join(state(), `.${randomUUID()}.tmp`);
   try {
     writeFileSync(tmp, token, { flag: "wx", mode: 0o600 });
-    renameSync(tmp, session());
+    renameSync(tmp, trial ? trialSession() : session());
   } finally {
     rmSync(tmp, { force: true });
   }
@@ -127,7 +136,14 @@ export function status() {
 }
 export function logout() {
   rmSync(session(), { force: true });
+  rmSync(trialSession(), { force: true });
   return { signed_in: false };
+}
+
+export function trialAccountToken(cfg) {
+  const token = readLocal(trialSession(), 16384).text;
+  verifyGrant(token, cfg, "rea-account");
+  return token;
 }
 
 async function post(url, options, timeoutMs, request) {
@@ -151,7 +167,7 @@ async function post(url, options, timeoutMs, request) {
 }
 const postForm = (url, fields, timeoutMs, request) =>
   post(url, { body: new URLSearchParams(fields) }, timeoutMs, request);
-async function startDevice(cfg, { subscribe, plan, request }) {
+async function startDevice(cfg, { subscribe, plan, trial, request }) {
   if (!cfg.device_endpoint || !cfg.token_endpoint || !cfg.client_id)
     throw new Error(
       "Configure device_endpoint, token_endpoint and client_id, or use login --token-stdin",
@@ -172,11 +188,12 @@ async function startDevice(cfg, { subscribe, plan, request }) {
     cfg.device_endpoint,
     {
       client_id: cfg.client_id,
-      scope: plan
-        ? "rea:account"
-        : subscribe
-          ? "rea:subscribe"
-          : features.map((f) => `rea:${f}`).join(" "),
+      scope:
+        plan || trial
+          ? "rea:account"
+          : subscribe
+            ? "rea:subscribe"
+            : features.map((f) => `rea:${f}`).join(" "),
     },
     15000,
     request,
@@ -255,13 +272,16 @@ export async function login({
   token,
   notify,
   subscribe = false,
+  trial = false,
   plan,
   request = fetch,
   sleep = delay,
 } = {}) {
   const cfg = config();
-  if (token !== undefined) return save(token.trim(), cfg);
-  const dev = await startDevice(cfg, { subscribe, plan, request });
+  if (trial && !cfg.trial_endpoint)
+    throw new Error("This issuer does not offer account trials");
+  if (token !== undefined) return save(token.trim(), cfg, trial);
+  const dev = await startDevice(cfg, { subscribe, plan, trial, request });
   const { result, remaining } = await pollGrant(cfg, dev, {
     notify,
     request,
@@ -285,5 +305,5 @@ export async function login({
     return { checkout_url: https(checkout.checkout_url) };
   }
   if (subscribe) return { checkout_url: https(result.checkout_url) };
-  return save(result.access_token, cfg);
+  return save(result.access_token, cfg, trial);
 }

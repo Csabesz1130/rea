@@ -9,7 +9,7 @@
 # after `main` would run the installer without the caller's flags.
 set -euo pipefail
 
-PACKAGE="@csabesz1130/rea-pro"
+PACKAGE="@realizations/rea"
 numeric_identifier='(0|[1-9][0-9]*)'
 prerelease_identifier="(${numeric_identifier}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
 build_identifier='[0-9A-Za-z-]+'
@@ -125,7 +125,7 @@ main() {
   if [ "$version_requested" = true ] || [ -n "$version" ]; then
     matches "$version" "^${version_pattern}$" || fail "version must be an exact semantic version."
   else
-    release_json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 'https://registry.npmjs.org/@csabesz1130%2frea-pro/latest')" || fail "the latest REA release could not be resolved. Check network access or pass --version VERSION, then retry."
+    release_json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 'https://registry.npmjs.org/@realizations%2frea/latest')" || fail "the latest REA release could not be resolved. Check network access or pass --version VERSION, then retry."
     version="$(printf '%s' "$release_json" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const p=JSON.parse(s);if(p.name!==process.argv[1]||typeof p.version!=="string")process.exit(1);process.stdout.write(p.version)})' "$PACKAGE" 2>/dev/null)" || fail "the release response was invalid. Retry later or pass --version VERSION."
     matches "$version" "^${version_pattern}$" || fail "the latest release version was invalid. Retry later or pass --version VERSION."
   fi

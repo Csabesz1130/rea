@@ -10,7 +10,9 @@ import { tokens } from "./graph/store.mjs";
 
 const [evidence, store] = process.argv.slice(2);
 if (!evidence || !store)
-  throw new Error("Usage: node products/pro-loader/benchmark.mjs EVIDENCE STORE");
+  throw new Error(
+    "Usage: node products/pro-loader/benchmark.mjs EVIDENCE STORE",
+  );
 const raw = JSON.parse(readFileSync(evidence, "utf8")),
   g = raw.normalized_result.semantic_graph;
 const expected = g.nodes.find(
@@ -68,6 +70,7 @@ const send = (obj) => {
   proc.stdin.write(s + "\n");
 };
 let serial = 0;
+let locked;
 async function request(method, params = {}) {
   const id = ++serial;
   send({ jsonrpc: "2.0", id, method, params });
@@ -84,7 +87,14 @@ async function request(method, params = {}) {
 async function call(name, args) {
   const r = await request("tools/call", { name, arguments: args });
   if (r.isError) throw new Error(r.content[0].text);
-  return JSON.parse(r.content[0].text);
+  const value = JSON.parse(r.content[0].text);
+  if (value.status === "LICENSE_REQUIRED") {
+    locked = value;
+    throw new Error(
+      "Four full queries are required for cold and warm measurements",
+    );
+  }
+  return value;
 }
 async function locate() {
   const candidates = await call("graph_search", {
@@ -151,6 +161,11 @@ try {
       baseline_tokenization_ms: tokenizationMs,
     }),
   );
+} catch (error) {
+  if (!locked) throw error;
+  // A partial run cannot supply equivalent cold/warm measurements.
+  process.stdout.write(JSON.stringify(locked) + "\n");
+  process.exitCode = 2;
 } finally {
   clearInterval(sampler);
   proc.stdin.end();

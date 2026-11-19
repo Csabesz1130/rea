@@ -1,3 +1,5 @@
+import { referenceCounts } from "./aggregates.mjs";
+
 // Ingest normalized Evidence once so names and neighborhoods agree across editions.
 function requiredString(value, field) {
   if (typeof value !== "string" || !value.length)
@@ -10,6 +12,7 @@ export async function ingestGraph(db, evidence, readEvidence, indexNode) {
   const edge = db.prepare(
     "INSERT INTO edges(src,dst,kind,resolution,ref) VALUES(?,?,?,?,?)",
   );
+  let bounded = true;
   let nodes = 0,
     edges = 0;
   const meta = await readEvidence(
@@ -17,11 +20,23 @@ export async function ingestGraph(db, evidence, readEvidence, indexNode) {
     (item) => {
       requiredString(item.id, "node id");
       requiredString(item.kind, "node kind");
-      const { lastInsertRowid } = node.run(item.id, JSON.stringify(item));
+      const json = JSON.stringify(item);
+      if (json.length > 8192) bounded = false;
+      const { lastInsertRowid } = node.run(item.id, json);
       indexNode?.(lastInsertRowid, item);
       nodes++;
     },
     (item) => {
+      if (
+        [
+          item.source,
+          item.target,
+          item.relation,
+          item.resolution,
+          item.ref,
+        ].some((v) => typeof v === "string" && v.length > 2048)
+      )
+        bounded = false;
       edge.run(
         ...[item.source, item.target, item.relation, item.resolution].map((v) =>
           requiredString(v, "relation"),
@@ -51,6 +66,7 @@ export async function ingestGraph(db, evidence, readEvidence, indexNode) {
 
   return {
     ...meta,
+    ...referenceCounts(db, meta, bounded),
     nodes,
     source_edges: edges,
     ownership_edges: ownershipEdges,

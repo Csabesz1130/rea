@@ -183,7 +183,7 @@ describe("JSON client configuration migration and provider paths", () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const original =
-      '{"theme":"dark","mcpServers":{"rea":{"command":"npx","args":["-y","@csabesz1130/rea-pro","mcp"]},"other":{"command":"other"}}}\n';
+      '{"theme":"dark","mcpServers":{"rea":{"command":"npx","args":["-y","@realizations/rea","mcp"]},"other":{"command":"other"}}}\n';
     await writeFile(configPath, original);
 
     expect(

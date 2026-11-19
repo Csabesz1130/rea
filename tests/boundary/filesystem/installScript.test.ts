@@ -126,7 +126,7 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
       [],
       {
         FAKE_CURL_BODY:
-          '{"name":"@csabesz1130/rea-pro","version":"unrelated-1.0.0"}',
+          '{"name":"@realizations/rea","version":"unrelated-1.0.0"}',
       },
       "REA installation failed: the latest release version was invalid. Retry later or pass --version VERSION.\n",
     ],
@@ -380,7 +380,7 @@ describe("Linux user-prefix installer", { timeout: 20_000 }, () => {
       "--global",
       "--prefix",
       join(home, ".local"),
-      "@csabesz1130/rea-pro@0.3.0",
+      "@realizations/rea@0.3.0",
       "",
     ]);
     expect((await readFile(argvLog)).toString()).toBe(printed.stdout);
@@ -395,11 +395,11 @@ describe("native macOS installer", { timeout: 20_000 }, () => {
       FAKE_NPM_PREFIX: join(fixture.home, "npm global prefix"),
     });
     expect(result.stdout).toContain(
-      "  Command: npm install --global @csabesz1130/rea-pro@0.3.0\n",
+      "  Command: npm install --global @realizations/rea@0.3.0\n",
     );
     expect(result.stdout).toContain("REA 0.3.0 is installed");
     expect(await readFile(fixture.npmLog, "utf8")).toBe(
-      "prefix --global\ninstall --global @csabesz1130/rea-pro@0.3.0\n",
+      "prefix --global\ninstall --global @realizations/rea@0.3.0\n",
     );
     expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
     expect(await readdir(fixture.temporary)).toEqual([]);
@@ -482,7 +482,7 @@ describe("installer semantic version parsing", { timeout: 20_000 }, () => {
     const fixture = await createFixture();
     const failure = await runInstaller(fixture, [], {
       FAKE_CURL_BODY:
-        '{"name":"@csabesz1130/rea-pro","version":"1.2.3+build.01"}',
+        '{"name":"@realizations/rea","version":"1.2.3+build.01"}',
     }).then(
       () => undefined,
       (cause: unknown) => cause,
@@ -503,7 +503,7 @@ describe("installer semantic version parsing", { timeout: 20_000 }, () => {
     const fixture = await createFixture();
     await expect(
       runInstaller(fixture, [], {
-        FAKE_CURL_BODY: '{"name":"@csabesz1130/rea-pro","version":"1.2.3-01"}',
+        FAKE_CURL_BODY: '{"name":"@realizations/rea","version":"1.2.3-01"}',
       }),
     ).rejects.toMatchObject({
       stderr:
@@ -581,7 +581,7 @@ chmod +x "$prefix/bin/rea"
       join(bin, "curl"),
       `#!/bin/sh
 [ "\${FAKE_CURL_FAIL:-}" = "1" ] && exit 1
-if [ -n "\${FAKE_CURL_BODY:-}" ]; then printf '%s' "$FAKE_CURL_BODY"; else printf '%s' '{"name":"@csabesz1130/rea-pro","version":"0.3.0"}'; fi
+if [ -n "\${FAKE_CURL_BODY:-}" ]; then printf '%s' "$FAKE_CURL_BODY"; else printf '%s' '{"name":"@realizations/rea","version":"0.3.0"}'; fi
 `,
     ),
     executable(

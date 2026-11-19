@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "@csabesz1130/rea-pro",
+      "identifier": "@realizations/rea",
       "version": "6.5.0",
       "runtimeHint": "npx",
       "transport": {

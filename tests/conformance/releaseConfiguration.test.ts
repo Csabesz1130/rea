@@ -61,7 +61,7 @@ describe("release configuration", () => {
         )?.[0];
 
       expect(versionBlock).toContain(
-        `@csabesz1130/rea-pro@${packageJson.version}`,
+        `@realizations/rea@${packageJson.version}`,
       );
     },
   );
@@ -102,7 +102,7 @@ describe("release configuration", () => {
     };
 
     expect(packageJson).toMatchObject({
-      name: "@csabesz1130/rea-pro",
+      name: "@realizations/rea",
       mcpName: "io.github.Csabesz1130/rea",
     });
     expect(serverJson).toMatchObject({

@@ -17,7 +17,11 @@ describe("executable dispatcher", () => {
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
         workspace.write(
           "package.json",
-          JSON.stringify({ type: "module", version: "1.0.0" }),
+          JSON.stringify({
+            name: "@realizations/rea",
+            type: "module",
+            version: "1.0.0",
+          }),
         ),
         workspace.write(
           "dist/mcp/main.js",
@@ -76,7 +80,11 @@ describe("executable dispatcher", () => {
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
         workspace.write(
           "package.json",
-          JSON.stringify({ type: "module", version: "1.0.0" }),
+          JSON.stringify({
+            name: "@realizations/rea",
+            type: "module",
+            version: "1.0.0",
+          }),
         ),
       ]);
 
@@ -93,7 +101,7 @@ describe("executable dispatcher", () => {
           ),
         });
         expect(result.stderr).toContain(
-          "If this is an installed package, reinstall @csabesz1130/rea-pro.",
+          "If this is an installed package, reinstall @realizations/rea.",
         );
         expect(result).toMatchObject({
           stderr: expect.not.stringContaining("ERR_MODULE_NOT_FOUND"),

@@ -15,7 +15,7 @@ export interface NpmInstallation {
 /** Bun global installation that owns the running package and its entry point. */
 export interface BunInstallation {
   readonly manager: "bun";
-  /** Bun's global project directory, which owns `node_modules/@csabesz1130/rea-pro`. */
+  /** Bun's global project directory, which owns `node_modules/@realizations/rea`. */
   readonly globalDirectory: string;
   readonly packageRoot: string;
 }

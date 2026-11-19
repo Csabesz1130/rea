@@ -35,8 +35,11 @@ jobs:
           npm run build:windows-native
           npm run verify:windows-native:artifact
       - name: Qualify the public tarball
+        env:
+          REALIZATIONS_ISSUER_PINS: ${{ vars.REALIZATIONS_ISSUER_PINS }}
         run: |
           node --test products/pro-loader/test/*.test.mjs
+          node scripts/ci/prepare-commercial-profile.mjs
           node --input-type=module <<'JS'
           import { mkdtemp, copyFile } from 'node:fs/promises';
           import { join } from 'node:path';
@@ -45,6 +48,7 @@ jobs:
           const { tarball } = await verifyPackagePack({ root: process.cwd(), workspace });
           await copyFile(tarball, join(process.env.RUNNER_TEMP, 'package.tgz'));
           JS
+          tar -xOf "$RUNNER_TEMP/package.tgz" package/products/pro-loader/commercial-profile.json | cmp - products/pro-loader/commercial-profile.json
           node scripts/verify-release-artifact.mjs "$RUNNER_TEMP/package.tgz" "$(node -p 'require("./package.json").version')"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -75,7 +79,7 @@ jobs:
         id: registry
         run: |
           tar -xOf "$RUNNER_TEMP/qualified/package.tgz" package/package.json > "$RUNNER_TEMP/packed.json"
-          node -e 'const assert=require("node:assert/strict"), packed=require(process.argv[1]); assert.equal(packed.name, "@csabesz1130/rea-pro"); assert.equal(packed.version,require("./package.json").version);' "$RUNNER_TEMP/packed.json"
+          node -e 'const assert=require("node:assert/strict"), packed=require(process.argv[1]); assert.equal(packed.name, "@realizations/rea"); assert.equal(packed.version,require("./package.json").version);' "$RUNNER_TEMP/packed.json"
           version=$(node -p 'require("./package.json").version')
           echo "version=$version" >> "$GITHUB_OUTPUT"
           node scripts/ci/npm-release.mjs inspect "$RUNNER_TEMP/qualified/package.tgz" "$version"

@@ -1,5 +1,5 @@
 {
-  "name": "@csabesz1130/rea-pro",
+  "name": "@realizations/rea",
   "mcpName": "io.github.Csabesz1130/rea",
   "version": "6.5.0",
   "description": "Local REA analysis with indexed graph evidence, bounded MCP neighborhoods, and a signed plugin loader.",
@@ -48,6 +48,7 @@
   "files": [
     "dist",
     "products/pro-loader/*.mjs",
+    "products/pro-loader/commercial-profile.json",
     "products/pro-loader/graph/*.mjs",
     "products/pro-loader/README.md",
     "products/slicer/src/index-evidence.mjs",

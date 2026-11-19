@@ -7,14 +7,15 @@ rea pro subscribe [--plan indie|team]
 rea pro status | logout
 rea pro install [--from SIGNED_RELEASE_DIR]
 rea pro index <evidence.json> --store DIR
-rea pro index-bundle <directory-or.asar> --store DIR --evidence-out FILE
+rea pro index-bundle <directory-or.asar> --store DIR [--evidence-out FILE]
 rea pro search QUERY --store DIR [--mode auto|exact|semantic]
 rea pro slice ID --store DIR [--hops N] [--budget N]
 rea pro stats --store DIR
 rea pro mcp --store DIR
 
-Exact-name search is unlimited. Each installation includes three distinct free
-neighborhood previews per UTC day.
+Each local profile includes three full graph queries in total across search,
+slice and stats. Exporting full Evidence also uses one query. Index-only returns
+aggregate counts. Use rea pro trial to activate an issuer-managed preview.
 A paid login installs the signed Slicer plugin from the configured issuer.
 Run rea pro --help after installation for the full command list.`;
 const print = (value) => process.stdout.write(JSON.stringify(value) + "\n");
@@ -32,21 +33,24 @@ export async function runPro(argv) {
   const [command, ...args] = argv;
   try {
     if (
-      ["login", "subscribe", "status", "logout", "install"].includes(command) &&
+      ["login", "trial", "subscribe", "status", "logout", "install"].includes(
+        command,
+      ) &&
       args.includes("--help")
     ) {
       process.stdout.write(help + "\n");
       return;
     }
-    if (command === "login" || command === "subscribe") {
+    if (command === "login" || command === "trial" || command === "subscribe") {
       const { values } = parseArgs({
         args,
         options:
-          command === "login"
+          command !== "subscribe"
             ? { "token-stdin": { type: "boolean" } }
             : { plan: { type: "string" } },
       });
       const grant = await login({
+        trial: command === "trial",
         subscribe: command === "subscribe",
         plan: values.plan,
         notify: (line) => process.stderr.write(line + "\n"),

@@ -39,7 +39,7 @@ export async function verifyPackagePack({ root, workspace }) {
   if (packedManifest.mcpName !== "io.github.Csabesz1130/rea")
     throw new Error("package did not retain its MCP Registry ownership marker");
   if (
-    packedManifest.name !== "@csabesz1130/rea-pro" ||
+    packedManifest.name !== "@realizations/rea" ||
     !packedFiles.includes("package/products/pro-loader/cli.mjs") ||
     packedFiles.some((path) => path.startsWith("package/products/pro/"))
   )

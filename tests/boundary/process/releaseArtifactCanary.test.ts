@@ -44,7 +44,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       join(candidate, "package.json"),
       JSON.stringify({
-        name: "@csabesz1130/rea-pro",
+        name: "@realizations/rea",
         version,
         type: "module",
         files: ["scripts"],
@@ -93,7 +93,7 @@ if (process.argv[2] === "mcp") {
     }
     await writeFile(
       join(controller, "package.json"),
-      JSON.stringify({ name: "@csabesz1130/rea-pro", version, type: "module" }),
+      JSON.stringify({ name: "@realizations/rea", version, type: "module" }),
     );
     await symlink(
       resolve("node_modules"),
@@ -120,7 +120,7 @@ if (process.argv[2] === "mcp") {
     );
     const result = JSON.parse((await invoke()).stdout);
     expect(result).toMatchObject({
-      package: "@csabesz1130/rea-pro",
+      package: "@realizations/rea",
       version,
       source: tarball,
       mcpTools: snapshot.tools.tools.length,
@@ -146,7 +146,7 @@ if (process.argv[2] === "mcp") {
     await writeFile(
       join(candidate, "package.json"),
       JSON.stringify({
-        name: "@csabesz1130/rea-pro",
+        name: "@realizations/rea",
         version: "0.0.0",
         type: "module",
         files: ["scripts"],

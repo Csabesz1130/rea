@@ -96,6 +96,7 @@ const runSetupDryRunInTty = async (
         ...process.env,
         HOME: home,
         USERPROFILE: home,
+        CODEX_HOME: join(home, ".codex"),
         XDG_CONFIG_HOME: join(home, ".config"),
         REA_LOG_LEVEL: "silent",
         NO_COLOR: "1",
@@ -232,14 +233,14 @@ describe("interactive setup journey", () => {
           ...actions[0],
           operation: "update",
           backupPath: "/isolated/.codex/config.toml.bak",
-          commands: ["npx -y @csabesz1130/rea-pro@3.2.1 mcp"],
+          commands: ["npx -y @realizations/rea@3.2.1 mcp"],
         },
         actions[1],
       ],
     );
     expect(result.output).toContain("/isolated/.codex/config.toml.bak");
     expect(result.output).toContain(
-      "command: npx -y @csabesz1130/rea-pro@3.2.1 mcp",
+      "command: npx -y @realizations/rea@3.2.1 mcp",
     );
     expect(result.output.indexOf("command:")).toBeLessThan(
       result.output.indexOf("Apply these 2 changes?"),
@@ -328,12 +329,12 @@ describe("interactive setup completion", () => {
     {
       npmCommand: "exec",
       userAgent: "npm/10.9.0 node/v24.11.0 linux x64",
-      launcher: "npx @csabesz1130/rea-pro",
+      launcher: "npx @realizations/rea",
     },
     {
       npmCommand: "exec",
       userAgent: "bun/1.4.2 npm/? node/v26.3.0 linux x64",
-      launcher: "bunx @csabesz1130/rea-pro",
+      launcher: "bunx @realizations/rea",
     },
   ])(
     "prints an available next command for $launcher invocation",

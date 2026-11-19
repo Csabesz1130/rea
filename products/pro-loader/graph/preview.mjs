@@ -1,79 +1,133 @@
-import { createHash } from "node:crypto";
 import { mkdirSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { state } from "../auth.mjs";
-import { queryGraph, readSlice, source } from "./store.mjs";
+import { remoteTrial, upgradeCommand } from "../trial-authority.mjs";
+import { graphStats } from "./store.mjs";
+import { graphAggregates } from "./aggregates.mjs";
 
-const dailyLimit = 3;
-// Billing is enforced by the private package service. The open-source preview's
-// allowance is intentionally local and never sends graph contents to the issuer.
-export function previewSlice(dir, input, now = new Date()) {
-  return queryGraph(dir, (graph, meta) => {
-    if (
-      input.evidence_id !== undefined &&
-      input.evidence_id !== meta.evidence_id
-    ) {
-      throw new Error(
-        "Graph Evidence changed. Repeat the search against the current index",
-      );
+const limit = 3;
+
+// Open the same profile database as the previous daily preview. Transfer every
+// retained old redemption once; that client discarded rows from previous days.
+function openUsage() {
+  const home = state();
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const path = join(home, "preview-usage.sqlite");
+  try {
+    closeSync(openSync(path, "wx", 0o600));
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(
+      "PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=15000; BEGIN IMMEDIATE",
+    );
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS graph_trial(singleton INTEGER PRIMARY KEY CHECK(singleton=1), used INTEGER NOT NULL CHECK(used BETWEEN 0 AND 3))",
+    );
+    if (!db.prepare("SELECT 1 FROM graph_trial WHERE singleton=1").get()) {
+      const legacy = db
+        .prepare(
+          "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='slices'",
+        )
+        .get();
+      const used = legacy
+        ? db
+            .prepare("SELECT count(*) AS n FROM (SELECT 1 FROM slices LIMIT 3)")
+            .get().n
+        : 0;
+      db.prepare("INSERT INTO graph_trial VALUES(1,?)").run(used);
+      // Old clients that share the profile must never reset the lifetime count.
+      db.exec("COMMIT; BEGIN IMMEDIATE");
     }
-    const day = now.toISOString().slice(0, 10);
-    const resetsAt = new Date(
-      Date.parse(day + "T00:00:00Z") + 86400000,
-    ).toISOString();
-    const fingerprint = createHash("sha256")
-      .update(
-        JSON.stringify([
-          meta.input_sha256,
-          meta.evidence_id,
-          input.id,
-          input.direction,
-          input.relation ?? null,
-          input.hops,
-          input.budget,
-        ]),
-      )
-      .digest("hex");
-    const profile = state();
-    mkdirSync(profile, { recursive: true, mode: 0o700 });
-    const path = join(profile, "preview-usage.sqlite");
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
+export function licenseRequired(store) {
+  let meta = {};
+  try {
+    meta = graphStats(store);
+  } catch {}
+  const fields = graphAggregates(meta);
+  return {
+    status: "LICENSE_REQUIRED",
+    indexed_nodes: fields.indexed_nodes,
+    raw_evidence_tokens: fields.raw_evidence_tokens,
+    sliced_tokens_ready: fields.sliced_tokens_ready,
+    matched_subgraph_nodes: fields.matched_subgraph_nodes,
+    upgrade_command: upgradeCommand(),
+  };
+}
+
+function readUsed(db) {
+  return db.prepare("SELECT used FROM graph_trial WHERE singleton=1").get()
+    .used;
+}
+
+function localExhausted() {
+  let db;
+  try {
+    db = openUsage();
+    return readUsed(db) >= limit;
+  } catch {
+    return true;
+  } finally {
+    db?.close();
+  }
+}
+async function allowed(check) {
+  try {
+    return (await check()) === true;
+  } catch {
+    return false;
+  }
+}
+export async function trialExhausted() {
+  try {
+    const account = remoteTrial();
+    return account ? !(await allowed(account.available)) : localExhausted();
+  } catch {
+    return true;
+  }
+}
+
+export async function trialQuery(store, run) {
+  let account;
+  try {
+    account = remoteTrial();
+  } catch {
+    return licenseRequired(store);
+  }
+  if (account) {
+    if (!(await allowed(account.available))) return licenseRequired(store);
+    let value;
     try {
-      closeSync(openSync(path, "wx", 0o600));
+      value = run();
     } catch (error) {
-      if (error.code !== "EEXIST") throw error;
+      if (!(await allowed(account.available))) return licenseRequired(store);
+      throw error;
     }
-    const db = new DatabaseSync(path);
-    try {
-      db.exec(
-        "PRAGMA busy_timeout=15000; BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS slices(day TEXT, fingerprint TEXT, PRIMARY KEY(day,fingerprint)) WITHOUT ROWID",
-      );
-      db.prepare("DELETE FROM slices WHERE day<?").run(day);
-      const retry = db
-        .prepare("SELECT 1 FROM slices WHERE day=? AND fingerprint=?")
-        .get(day, fingerprint);
-      if (
-        !retry &&
-        db.prepare("SELECT count(*) AS n FROM slices WHERE day=?").get(day).n >=
-          dailyLimit
-      ) {
-        return {
-          ...source(meta),
-          code: "FREE_DAILY_SLICE_LIMIT",
-          indexed_nodes: meta.nodes,
-          daily_limit: dailyLimit,
-          resets_at: resetsAt,
-          message:
-            "All three free slices have been used today. Exact-name search is unlimited. Run rea pro login for a Pro subscription.",
-        };
-      }
-      const result = readSlice(graph, meta, input.id, input);
-      if (!retry)
-        db.prepare("INSERT INTO slices VALUES(?,?)").run(day, fingerprint);
-      db.exec("COMMIT");
-      return result;
-    } finally {
-      db.close();
-    }
-  });
+    return (await allowed(account.spend)) ? value : licenseRequired(store);
+  }
+  let db;
+  try {
+    db = openUsage();
+  } catch {
+    return licenseRequired(store);
+  }
+  try {
+    if (readUsed(db) >= limit) return licenseRequired(store);
+    const value = run();
+    db.prepare("UPDATE graph_trial SET used=used+1 WHERE singleton=1").run();
+    db.exec("COMMIT");
+    return value;
+  } finally {
+    db.close();
+  }
 }

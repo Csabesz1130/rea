@@ -2,6 +2,7 @@
 // result can be much larger than the semantic graph and never enter the assembler.
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
+import { evidenceTokenMeter } from "./compact-tokens.mjs";
 import { constants } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Writable } from "node:stream";
@@ -180,12 +181,19 @@ export async function visitEvidence(
     const before = await file.stat({ bigint: true });
     if (!before.isFile()) throw new Error("Expected a regular Evidence file");
     const hash = createHash("sha256");
+    const byteLength = Number(before.size);
+    const meter = evidenceTokenMeter(byteLength);
+    let received = 0;
     const source = file.createReadStream({ autoClose: false });
     await pipeline(
       source,
       async function* (chunks) {
         for await (const chunk of chunks) {
+          received += chunk.length;
+          if (received > byteLength)
+            throw new Error("Evidence changed during indexing");
           hash.update(chunk);
+          meter.bytes?.(chunk);
           yield chunk;
         }
       },
@@ -198,6 +206,7 @@ export async function visitEvidence(
         objectMode: true,
         write(token, _, done) {
           try {
+            meter.token?.(token);
             accept(token);
             done();
           } catch (error) {
@@ -207,7 +216,11 @@ export async function visitEvidence(
       }),
     );
     const after = await file.stat({ bigint: true });
-    if (before.ctimeNs !== after.ctimeNs || before.size !== after.size)
+    if (
+      received !== byteLength ||
+      before.ctimeNs !== after.ctimeNs ||
+      before.size !== after.size
+    )
       throw new Error("Evidence changed during indexing");
     if (typeof meta.evidence_id !== "string" || !meta.evidence_id.length)
       throw new Error("Missing Evidence ID");
@@ -236,6 +249,7 @@ export async function visitEvidence(
       ...(limitationCount
         ? { limitations, limitation_count: limitationCount }
         : {}),
+      raw_evidence_tokens: meter.finish(),
       input_sha256: hash.digest("hex"),
       input_bytes: Number(before.size),
     };

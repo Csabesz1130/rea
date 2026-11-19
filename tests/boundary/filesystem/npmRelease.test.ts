@@ -15,9 +15,9 @@ const metadata = (
   integrity: string,
   tags: Record<string, string>,
 ) => ({
-  name: "@csabesz1130/rea-pro",
+  name: "@realizations/rea",
   versions: {
-    [version]: { name: "@csabesz1130/rea-pro", version, dist: { integrity } },
+    [version]: { name: "@realizations/rea", version, dist: { integrity } },
   },
   "dist-tags": tags,
 });
@@ -82,7 +82,7 @@ it("distinguishes absence from failed or malformed registry responses", async ()
   await expect(
     readNpmRelease("6.5.0", async () =>
       Response.json({
-        name: "@csabesz1130/rea-pro",
+        name: "@realizations/rea",
         versions: {},
         "dist-tags": {},
       }),

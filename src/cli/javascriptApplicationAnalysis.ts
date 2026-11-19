@@ -1,5 +1,8 @@
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../application/InvestigationProviders.js";
-import { createProgressReporter } from "../application/ProgressReporter.js";
+import {
+  createProgressReporter,
+  type ProgressReporter,
+} from "../application/ProgressReporter.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -11,15 +14,18 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 export const runCliJavaScriptApplicationAnalysis = async (
   input: unknown,
   signal?: AbortSignal,
+  reporter?: ProgressReporter,
 ): Promise<JsonValue> => {
   const { analyzeJavaScriptApplication } =
     await import("../application/javascript/JavaScriptApplicationService.js");
-  const progress = createProgressReporter(
-    async (update) => {
-      process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);
-    },
-    { minimumIntervalMs: 0 },
-  );
+  const progress =
+    reporter ??
+    createProgressReporter(
+      async (update) => {
+        process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);
+      },
+      { minimumIntervalMs: 0 },
+    );
   const resources = new ArtifactResourceScope();
   const result = await analyzeJavaScriptApplication(input, resources, {
     progress,

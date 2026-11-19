@@ -201,7 +201,7 @@ describe("package-private REA launchers", () => {
     env.APPDATA,
     "npm",
     "node_modules",
-    "@csabesz1130/rea-pro",
+    "@realizations/rea",
     "scripts",
     "rea.mjs",
   );
@@ -212,7 +212,7 @@ describe("package-private REA launchers", () => {
     "Roaming",
     "npm",
     "node_modules",
-    "@csabesz1130/rea-pro",
+    "@realizations/rea",
     "scripts",
     "rea.mjs",
   );
@@ -238,7 +238,7 @@ describe("package-private REA launchers", () => {
     );
     expect(blocker).toContain(stored);
     expect(blocker).toContain(CLAUDE_DESKTOP_PACKAGE_FAMILY);
-    expect(blocker).toContain("npm install -g @csabesz1130/rea-pro");
+    expect(blocker).toContain("npm install -g @realizations/rea");
   });
 
   it("compares the launcher with the canonical package storage path", () => {
@@ -271,7 +271,7 @@ describe("package-private REA launchers", () => {
           "/c",
           "npx",
           "-y",
-          "@csabesz1130/rea-pro@6.4.0",
+          "@realizations/rea@6.4.0",
           "mcp",
         ],
         packages,

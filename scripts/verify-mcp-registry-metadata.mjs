@@ -13,7 +13,7 @@ const packageJson = await readJson("package.json");
 const serverJson = await readJson("server.json");
 const registryPackage = serverJson.packages?.[0];
 
-if (packageJson.name !== "@csabesz1130/rea-pro")
+if (packageJson.name !== "@realizations/rea")
   fail("unexpected npm package name");
 if (typeof packageJson.version !== "string")
   fail("package.json is missing a string version");
