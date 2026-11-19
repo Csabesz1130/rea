@@ -21,7 +21,9 @@ export function referenceCounts(db, meta, bounded) {
   if (
     !bounded ||
     typeof meta.evidence_id !== "string" ||
-    meta.evidence_id.length > 512
+    meta.evidence_id.length > 512 ||
+    typeof meta.coverage !== "string" ||
+    meta.coverage.length > 120
   )
     return empty;
   const row = db

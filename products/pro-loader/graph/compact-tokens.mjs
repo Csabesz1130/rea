@@ -162,7 +162,9 @@ export function evidenceTokenMeter(inputBytes) {
       finish() {
         const counter = new CompactCounter();
         counter.write(
-          JSON.stringify(JSON.parse(Buffer.concat(chunks).toString("utf8"))),
+          JSON.stringify(
+            JSON.parse(new TextDecoder().decode(Buffer.concat(chunks))),
+          ),
         );
         return counter.finish();
       },

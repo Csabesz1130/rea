@@ -103,6 +103,7 @@ test("unavailable and malformed metadata has a numeric-only allowlist", () => {
     sliced_tokens_ready: null,
   };
   assert.deepEqual(graphAggregates(), missing);
+  assert.deepEqual(graphAggregates(null), missing);
   assert.deepEqual(
     graphAggregates({
       subject: "private",

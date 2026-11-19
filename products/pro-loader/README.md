@@ -19,7 +19,7 @@ Indexing without an export returns aggregate measurements and preserves the quer
 
 For Studio, run `rea pro trial` to authorize the trial account. The issuer checks the remaining balance and records redemptions across installations. The graph, query, filenames and Evidence IDs stay on the analysis machine. A development checkout without a Studio profile or trial endpoint uses its local profile database. Upgrades carry forward up to three redemptions still present in the previous local daily ledger. The current lifetime allowance has no scheduled reset.
 
-After exhaustion the tool returns `LICENSE_REQUIRED`, the command `rea pro login`, and four numeric-or-null fields. `indexed_nodes` counts the graph. `raw_evidence_tokens` measures the complete compact source Evidence JSON using `cl100k_base`. At build time the index measures a fixed reference slice from the first node in SQLite binary ID order, one hop in both directions, under a 750-token budget. `matched_subgraph_nodes` counts its returned nodes and `sliced_tokens_ready` counts the complete serialized slice. Those two counts stay the same for every blocked query against that build. A missing measurement, a resource limit, or a legacy index yields `null`. Reindex the Evidence to populate available measurements.
+After exhaustion the tool returns `LICENSE_REQUIRED`, the upgrade command (`npx @realizations/rea login` for Studio or `rea pro login` for a self-hosted client), and four numeric-or-null fields. `indexed_nodes` counts the graph. `raw_evidence_tokens` measures the complete compact source Evidence JSON using `cl100k_base`. At build time the index measures a fixed reference slice from the first node in SQLite binary ID order, one hop in both directions, under a 750-token budget. `matched_subgraph_nodes` counts its returned nodes and `sliced_tokens_ready` counts the complete serialized slice. Those two counts stay the same for every blocked query against that build. A missing measurement, a resource limit, or a legacy index yields `null`. Reindex the Evidence to populate available measurements. The raw counter reads at most 512 MiB of input for this metric, tokenizes in bounded blocks, and can return `null` for large unordered objects or long unbroken strings. Indexing still completes.
 
 `--mode auto` probes exact labels and node IDs first. The trial can rank unmatched queries using terms and graph neighbors. The signed plugin builds a vector index for ranked retrieval. Use `--mode exact` for exact matches or `--mode semantic` to select ranked retrieval. Reindex existing Evidence after installing Pro. Running the paid `index-bundle` command also indexes archive members and folded JavaScript expressions.
 
@@ -29,7 +29,7 @@ Set the stdio server command to `rea` with arguments `["pro","mcp","--store","/a
 
 ## Subscribe and install
 
-The commercial npm release workflow embeds a pinned Studio issuer profile. A source checkout or a self-hosted installation can use an explicitly trusted profile from its operator. The issuer serves its public keys and endpoints at `/.well-known/rea-pro.json`. Set `REA_PRO_CONFIG` when supplying that profile yourself.
+The commercial npm release workflow embeds a pinned Studio issuer profile. A source checkout or a self-hosted installation can use an explicitly trusted profile from its operator. The issuer serves its public keys and endpoints at `/.well-known/rea-pro.json`. Set `REA_PRO_CONFIG` in a source checkout when supplying that profile yourself. The branded package uses its embedded pins across profiles and sessions.
 
 ```sh
 # Source checkout or self-hosted issuer
@@ -39,7 +39,7 @@ rea pro login
 rea pro status
 ```
 
-Subscription setup opens GitHub device authorization and returns the selected plan's Stripe Checkout URL. After checkout, login verifies the entitlement, fetches the private compiled package from the configured issuer and verifies the release signature and digest before loading it. A local grant allows offline operation until its expiration. Use `rea pro login` to renew or `rea pro logout` to clear the local session. Run `rea pro --help` for installed commands.
+Subscription setup opens GitHub device authorization and returns the selected plan’s hosted checkout URL. The Studio issuer uses Polar. After checkout, login verifies the entitlement, fetches the private compiled package from the configured issuer and verifies the release signature and digest before loading it. A local grant allows offline operation until its expiration. Use `rea pro login` to renew or `rea pro logout` to clear the local session. Run `rea pro --help` for installed commands.
 
 ## Electron fixture measured November 18, 2026
 
@@ -63,3 +63,5 @@ The benchmark checks the source location and a returned ownership edge against t
 The intended public package is `@realizations/rea`. Publication is pending. The fork’s release workflow targets the `@realizations` npm scope from the actual GitHub repository, `Csabesz1130/rea`. A maintainer must configure that trusted publisher and the Studio issuer pins. Qualification runs the graph tests, prepares the Windows runtime, verifies the live issuer identity and its independent release and entitlement verification keys, and packages the public client. The publish job verifies the tarball’s registry integrity before MCP registration. [Release workflow](../../.github/workflows/fork-release.yml)
 
 For local package inventory, use `npm ci`, `npm run build:cached` and `npm pack --dry-run`. The archive includes the public loader, graph reader, CLI and inherited notices. The private plugin and issuer credentials are distributed separately. After publication, verify a specific version with `npx -y @realizations/rea@VERSION pro --help`.
+
+Before the first branded publication, set the public repository variable `REALIZATIONS_ISSUER_PINS` to a JSON object containing the approved `client_id` and two independent Ed25519 public PEMs, `public_key` and `release_public_key`. Obtain their fingerprints through the operator. The release job compares them and each endpoint with production discovery, embeds the matched profile, and confirms the tarball contains the exact bytes.
