@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
-import { inspectFile } from "./inspect.mjs";
+import { LIMITS } from "./errors.mjs";
+import { inspectFile, inspectRemote } from "./inspect.mjs";
 
 export const help = `rea weights inspect FILE [--limit N] [--offset N] [--sha256] [--strict-metadata]
 
@@ -7,6 +8,11 @@ Read the tensor inventory of a local .safetensors, .gguf, .onnx or
 model.safetensors.index.json file without loading weights. FILE may be a
 sharded index; its shards must be regular files beside it. ONNX external
 data files are reported, never opened.
+
+FILE may also be a revision-pinned Hugging Face URL,
+https://huggingface.co/OWNER/REPO/resolve/COMMIT/PATH, read with bounded byte
+ranges: 64 KiB per request, 256 requests, 16 MiB and 60 s in total. HF_TOKEN,
+when set, is sent to huggingface.co only, never to a redirect target.
 
   --limit N    tensors to list (default 100, 0 lists none; max 65536)
   --offset N   first tensor to list (default 0)
@@ -96,10 +102,22 @@ export async function runWeights(
       values.offset === undefined
         ? 0
         : integer(values.offset, "offset", Number.MAX_SAFE_INTEGER);
-    const report = await inspectFile(positionals[0], {
-      hash: !!values.sha256,
-      strict: !!values["strict-metadata"],
-    });
+    const remote = /^https?:\/\//i.test(positionals[0]);
+    if (remote && values.sha256)
+      throw new Error(
+        "--sha256 needs a full local read; download the file and inspect it locally",
+      );
+    const report = remote
+      ? await inspectRemote(positionals[0], {
+          remote: { token: process.env.HF_TOKEN || undefined },
+          ...(values["strict-metadata"]
+            ? { limits: { ...LIMITS, onnx: { strict: true } } }
+            : {}),
+        })
+      : await inspectFile(positionals[0], {
+          hash: !!values.sha256,
+          strict: !!values["strict-metadata"],
+        });
     stdout.write(JSON.stringify(page(report, offset, limit)) + "\n");
     return exitCode(report);
   } catch (error) {

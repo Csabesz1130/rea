@@ -15,6 +15,7 @@ import { LocalSource } from "./source.mjs";
 import { looksLikeSafetensors, readSafetensors } from "./safetensors.mjs";
 import { looksLikeGguf, readGguf } from "./gguf.mjs";
 import { looksLikeOnnx, readOnnx } from "./onnx.mjs";
+import { RemoteError, RemoteSession, RemoteSource } from "./remote.mjs";
 
 export const SCHEMA = "rea.weights.inventory/v1";
 
@@ -95,7 +96,11 @@ export async function inspectSource(
     if (hash) report.file.sha256 = await fullHash(source);
     await source.verify();
   } catch (error) {
-    if (error instanceof BudgetError || error instanceof UnsupportedError) {
+    if (
+      error instanceof BudgetError ||
+      error instanceof UnsupportedError ||
+      error instanceof RemoteError
+    ) {
       report.complete = false;
       report.incomplete = {
         reason: error.code,
@@ -170,12 +175,28 @@ async function fullHash(source) {
 const shardName = /^[^/\\\0]+$/;
 
 /** A model.safetensors.index.json maps tensor names to sibling shard files. */
-export async function inspectShardIndex(
+export function inspectShardIndex(
   path,
   { signal, limits = LIMITS, hash = false } = {},
 ) {
+  return inspectShardSet(
+    {
+      openIndex: () => LocalSource.open(path, { signal }),
+      inspectShard: (file) =>
+        inspectFile(join(dirname(path), file), { signal, limits, hash }),
+      missing: (error) => ["ENOENT", "EISDIR", "ENOTFILE"].includes(error.code),
+    },
+    { limits },
+  );
+}
+
+/**
+ * Check an index against its shards. `io` opens the index, inspects a shard
+ * named relative to it and recognizes a missing shard, for local or remote files.
+ */
+export async function inspectShardSet(io, { limits = LIMITS } = {}) {
   const issues = new Issues();
-  const index = await LocalSource.open(path, { signal });
+  const index = await io.openIndex();
   const report = {
     schema: SCHEMA,
     format: "safetensors-sharded",
@@ -227,6 +248,7 @@ export async function inspectShardIndex(
     }
     throw error;
   }
+  const indexReads = index.usage();
   await index.close();
   const files = [...new Set(Object.values(map))].sort();
   if (files.length > limits.shards) {
@@ -242,7 +264,11 @@ export async function inspectShardIndex(
   const tensors = [];
   let complete = true;
   let bytes = 0n;
-  const reads = { requests: 1, bytes_read: index.size, payload_bytes_read: 0 };
+  const reads = {
+    requests: indexReads.requests,
+    bytes_read: indexReads.bytes_read,
+    payload_bytes_read: 0,
+  };
   for (const file of files) {
     if (!shardName.test(file) || file === "." || file === "..") {
       issues.error(
@@ -254,26 +280,17 @@ export async function inspectShardIndex(
     }
     let shard;
     try {
-      shard = await inspectFile(join(dirname(path), file), {
-        signal,
-        limits,
-        hash,
-      });
+      shard = await io.inspectShard(file);
     } catch (error) {
-      if (
-        error.code !== "ENOENT" &&
-        error.code !== "EISDIR" &&
-        error.code !== "ENOTFILE"
-      )
-        throw error;
+      if (!io.missing(error)) throw error;
       issues.error(
         "MISSING_SHARD",
-        `Shard ${file} is not a regular file next to the index (${error.code})`,
+        `Shard ${file} is not available next to the index (${error.code})`,
       );
       complete = false;
       continue;
     }
-    if (shard.format !== "safetensors")
+    if (shard.format && shard.format !== "safetensors")
       issues.error(
         "SHARD_FORMAT",
         `Shard ${file} is ${shard.format}, not safetensors`,
@@ -352,4 +369,67 @@ export async function inspectShardIndex(
       last_verified: null,
     };
   return issues.attach(report);
+}
+
+/** A report for a remote file that could not be opened at all. */
+const unopened = (name, error) => ({
+  schema: SCHEMA,
+  format: null,
+  file: { name, size: null },
+  complete: false,
+  valid: true,
+  incomplete: {
+    reason: error.code,
+    message: error.message,
+    last_verified: null,
+  },
+  issues: [],
+  reads: { requests: 0, bytes_read: 0, payload_bytes_read: 0 },
+});
+
+/**
+ * Inspect a revision-pinned remote file, or a sharded index and its siblings
+ * under the same commit, within one set of request, byte and time budgets.
+ */
+export async function inspectRemote(
+  url,
+  { signal, limits = LIMITS, remote = {} } = {},
+) {
+  const session = new RemoteSession({ ...remote, signal });
+  const name = decodeURIComponent(new URL(url).pathname.split("/").at(-1));
+  const open = (target) => RemoteSource.open(session, target);
+  let report;
+  let first;
+  try {
+    if (/\.index\.json$/i.test(name)) {
+      report = await inspectShardSet(
+        {
+          openIndex: async () => (first = await open(url)),
+          inspectShard: async (file) => {
+            let source;
+            try {
+              source = await open(first.sibling(file));
+            } catch (error) {
+              if (!(error instanceof RemoteError) || error.code === "NOT_FOUND")
+                throw error;
+              return unopened(file, error);
+            }
+            return inspectSource(source, { limits });
+          },
+          missing: (error) => error.code === "NOT_FOUND",
+        },
+        { limits },
+      );
+    } else {
+      first = await open(url);
+      report = await inspectSource(first, { limits });
+    }
+  } catch (error) {
+    if (!(error instanceof RemoteError || error instanceof BudgetError))
+      throw error;
+    report = unopened(name, error);
+  }
+  if (first) report.source = first.provenance();
+  report.remote = session.usage();
+  return report;
 }

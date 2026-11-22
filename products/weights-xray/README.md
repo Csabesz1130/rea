@@ -10,6 +10,7 @@ rea weights inspect ./model.safetensors
 rea weights inspect ./model.safetensors.index.json --limit 0
 rea weights inspect ./model-Q4_K_M.gguf --offset 100 --limit 50
 rea weights inspect ./encoder.onnx --strict-metadata
+rea weights inspect https://huggingface.co/OWNER/REPO/resolve/COMMIT/model.safetensors.index.json
 ```
 
 It runs nothing from the file, renders no template and loads no framework.
@@ -58,6 +59,54 @@ such as a small `Constant` value inside a node, are counted in
 hold a tensor and reads operator nodes field by field: no payload byte is
 transferred, at the cost of many more reads.
 
+## Remote files
+
+A Hugging Face resolve URL pinned to a 40-character commit is read with HTTPS
+byte ranges. A branch or tag name is rejected, so every range names the same
+files. A sharded index reads its siblings under the same commit. One session
+bounds all of them: 64 KiB per request, 256 requests, 16 MiB received, 10 s per
+request and 60 s in total, with up to three redirects.
+
+Each response must be a 206 whose `Content-Range` and length match the request
+exactly, with `Content-Encoding` absent or `identity`. The first strong ETag is
+the file's validator. Later ranges go to the URL that served the first one and
+carry it in `If-Match`. A 200 (an ignored range), 412, 416, a missing or weak
+ETag, or a changed validator or length stops the read before the body is
+consumed. A reached budget or transport failure is reported as
+`incomplete.reason`, with the last verified descriptor where there is one.
+
+Redirect targets must use HTTPS on `huggingface.co`, `hf.co` or their
+subdomains. Every address a connection uses must be public: loopback,
+private, link-local, shared, documentation, multicast and NAT64 ranges are
+refused at connection time. `HF_TOKEN`, when set, is sent to the original
+origin only, never to a redirect target. The report cites the pinned URL, the
+commit and the validator, never the signed CDN URL or a token. `remote` lists
+requests, redirects, bytes received, wall time and each exchange as
+`[requested start, requested end, returned start, returned end]`.
+
+Safetensors needs the 9-byte prefix and then the exact header. GGUF fields are
+read in windows that never pass the smallest encoding of the remaining
+descriptors. ONNX exact reads are usually more than the request budget allows,
+so a remote ONNX file is normally reported as incomplete; inspect it locally.
+A digest of a remote file requires a full local read.
+
+### Live acceptance, 2026-11-22T22:06Z
+
+`node products/weights-xray/acceptance.mjs URL...` from the Hetzner VM, Node
+24.18.0. All three were complete and valid, with 0 payload bytes in total
+against the Studio limit of 262,144.
+
+| Model, commit, license                                      | Format                                   |  Declared size | Requests (redirects) | Bytes received | Wall time |
+| ----------------------------------------------------------- | ---------------------------------------- | -------------: | -------------------: | -------------: | --------: |
+| `Qwen/Qwen2.5-7B-Instruct` `a09a354…`, Apache-2.0           | safetensors index, 4 shards, 339 tensors | 15,231,233,024 |               15 (5) |         66,629 |    864 ms |
+| `Qwen/Qwen2.5-1.5B` `8faed76…`, Apache-2.0                  | safetensors, 338 tensors                 |  3,087,467,144 |                3 (1) |         38,537 |    383 ms |
+| `bartowski/Qwen2.5-7B-Instruct-GGUF` `8911e8a…`, Apache-2.0 | GGUF Q4_K_M, 339 tensors                 |  4,683,074,240 |              123 (1) |      5,958,066 |  3,918 ms |
+
+The GGUF reads are mostly the embedded tokenizer arrays. The validators were
+the hub's strong ETags: `"14d037fd…"` for the git-stored index, and
+content-addressed hashes for the shards and single files. A later run can
+differ in timing, CDN host and redirect count.
+
 ## What the output does and does not establish
 
 `valid` means no format violation was found in the descriptors that were read.
@@ -99,7 +148,9 @@ node --test products/weights-xray/test/*.test.mjs
 ```
 
 `test/fixtures/` was written by the reference `safetensors` 0.8.0, `gguf`
-0.19.0 and `onnx` 1.23.2 Python writers. `reference.json` and
+0.19.0 and `onnx` 1.23.2 Python writers. `test/remote.test.mjs` serves them
+from a loopback server that can ignore ranges, change or weaken its ETag,
+misreport ranges, stall, or redirect in a loop, off-host or across origins. `reference.json` and
 `reference-onnx.json` record what the reference readers report about those
 files; the tests compare against them without Python. See
 `test/fixtures/generate.py` and `generate_onnx.py` to regenerate. Malformed,
