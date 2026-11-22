@@ -9,9 +9,10 @@ Use the smallest workflow that answers the question.
 | Find opportunities in a product category             | [Landscape](landscape/README.md)                    | Category map, openings, and a clean-room brief                                 |
 | Inspect an Android device or verify an app launch    | [Device Tasks](device-tasks/README.md)              | Step outcomes, exact-device Evidence, and a focus-verification report          |
 | Improve an application for a user task               | [`improve_application`](../docs/mcp-prompts.md)     | Prioritized changes, coding handoff, and acceptance checks                     |
-| Query indexed builds and app-emitted traces          | [REA Pro](pro-loader/README.md)                            | SQLite graph slices, live span pages and source locations through CLI and MCP  |
+| Query indexed builds and app-emitted traces          | [REA Pro](pro-loader/README.md)                     | SQLite graph slices, live span pages and source locations through CLI and MCP  |
 | Analyze a large bundle without overflowing context   | [Semantic Graph Slicer](slicer/README.md)           | A local index of REA's Evidence and minimal, provenance-linked slices          |
 | See how a file is packed or minified before analysis | [Obfuscation detection](obfuscation/README.md)      | Read-only shape of a file: bundler, minification, packer markers, archive kind |
+| Inventory a model checkpoint without loading weights | [Weights X-Ray](weights-xray/README.md)             | Tensor names, shapes, storage types and byte extents with descriptor offsets   |
 | Investigate a connected-device goal                  | [`investigate_device_task`](../docs/mcp-prompts.md) | Targeted observations and explicit verified/unresolved outcomes                |
 
 Build this checkout first:

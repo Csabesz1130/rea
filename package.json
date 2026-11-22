@@ -52,6 +52,8 @@
     "products/pro-loader/graph/*.mjs",
     "products/pro-loader/README.md",
     "products/slicer/src/index-evidence.mjs",
+    "products/weights-xray/src/*.mjs",
+    "products/weights-xray/README.md",
     "install.sh",
     "bridge/hopper_bridge.py",
     "bridge/cutter/rea_bridge.py",
