@@ -3,6 +3,8 @@
 // code can later run over bounded HTTP ranges.
 import { basename } from "node:path";
 import { createHash } from "node:crypto";
+import { readSync } from "node:fs";
+import { setImmediate } from "node:timers/promises";
 import { BudgetError, FormatError } from "./errors.mjs";
 
 let regularFile;
@@ -32,6 +34,7 @@ export class LocalSource {
     this.size = Number(initial.size);
     this.signal = signal;
     this.requests = 0;
+    this.calls = 0;
     this.bytes = 0;
     this.ranges = [];
   }
@@ -45,10 +48,18 @@ export class LocalSource {
         `Read of ${length} bytes at ${position} passes the end of the file`,
         position,
       );
+    // Descriptor grammars issue many small reads. A synchronous positional
+    // read on the admitted descriptor avoids a thread-pool round trip each;
+    // yielding periodically keeps cancellation and other I/O responsive.
+    if (++this.calls % 4096 === 0) {
+      await setImmediate();
+      this.signal?.throwIfAborted();
+    }
     const buffer = Buffer.allocUnsafe(length);
     let done = 0;
     while (done < length) {
-      const { bytesRead } = await this.handle.read(
+      const bytesRead = readSync(
+        this.handle.fd,
         buffer,
         done,
         length - done,
@@ -119,8 +130,13 @@ export class Cursor {
       window = 1 << 20,
       limit = Infinity,
       limitCode = "METADATA_BUDGET",
+      budget,
     } = {},
   ) {
+    // `budget` bounds bytes parsed (not skipped), for formats whose
+    // descriptors interleave with payload fields.
+    this.budget = budget;
+    this.parsed = 0;
     this.source = source;
     this.pos = start;
     this.start = start;
@@ -154,9 +170,15 @@ export class Cursor {
     if (offset >= 0 && offset + n <= this.buffer.length) return;
     // `reserve()` is a lower bound on the encoded size of structure still to
     // be parsed. Reading ahead no further than that never enters the payload.
+    // `horizon()` is the end of the enclosing message; reading past it would
+    // buffer bytes the grammar has not reached.
     const ahead = this.reserve ? this.reserve() : Infinity;
+    const ceiling = this.horizon
+      ? Math.max(this.pos + n, this.horizon())
+      : this.end;
     const length = Math.min(
       Math.max(n, Math.min(this.window, n + ahead)),
+      ceiling - this.pos,
       this.end - this.pos,
     );
     this.buffer = await this.source.read(this.pos, length);
@@ -164,18 +186,36 @@ export class Cursor {
   }
 
   async bytes(n) {
+    this.check(n);
+    let offset = this.pos - this.bufferAt;
     let out;
-    if (n > this.window) {
-      this.check(n);
+    if (offset >= 0 && offset + n <= this.buffer.length) {
+      out = this.buffer.subarray(offset, offset + n);
+    } else if (n > this.window) {
       out = await this.source.read(this.pos, n);
     } else {
       await this.need(n);
-      const offset = this.pos - this.bufferAt;
+      offset = this.pos - this.bufferAt;
       out = this.buffer.subarray(offset, offset + n);
     }
+    if (this.budget !== undefined && (this.parsed += n) > this.budget)
+      throw new BudgetError(
+        this.limitCode,
+        "Descriptor budget reached",
+        this.pos,
+      );
     this.pos += n;
     for (const tap of this.taps) tap.update(out);
     return out;
+  }
+
+  /** Buffer exactly the next `n` bytes in one read, for a message proven to fit. */
+  async prefetch(n) {
+    this.check(n);
+    const offset = this.pos - this.bufferAt;
+    if (offset >= 0 && offset + n <= this.buffer.length) return;
+    this.buffer = await this.source.read(this.pos, n);
+    this.bufferAt = this.pos;
   }
 
   /** Advance without reading. Bytes already buffered are not reread. */

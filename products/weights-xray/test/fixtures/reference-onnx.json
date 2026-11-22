@@ -1,0 +1,197 @@
+{
+  "generator": {
+    "numpy": "2.5.5",
+    "onnx": "1.23.2"
+  },
+  "tiny-vision.onnx": {
+    "functions": [
+      {
+        "domain": "com.example",
+        "name": "FastGelu",
+        "nodes": 1
+      }
+    ],
+    "graphs": {
+      "g0": {
+        "inputs": {
+          "pixels": {
+            "elem_type": "FLOAT",
+            "shape": [
+              {
+                "param": "batch"
+              },
+              3,
+              8,
+              8
+            ]
+          },
+          "use_gelu": {
+            "elem_type": "BOOL",
+            "shape": []
+          }
+        },
+        "name": "tiny-vision",
+        "outputs": {
+          "logits": {
+            "elem_type": "FLOAT",
+            "shape": [
+              {
+                "param": "rows"
+              },
+              16
+            ]
+          }
+        }
+      },
+      "g0/n6/else_branch": {
+        "inputs": {},
+        "name": "else",
+        "outputs": {
+          "same": {
+            "elem_type": "FLOAT",
+            "shape": null
+          }
+        }
+      },
+      "g0/n6/then_branch": {
+        "inputs": {},
+        "name": "then",
+        "outputs": {
+          "gelu": {
+            "elem_type": "FLOAT",
+            "shape": null
+          }
+        }
+      }
+    },
+    "initializers": {
+      "conv.bias": {
+        "data_location": "DEFAULT",
+        "data_type": "FLOAT",
+        "dims": [4],
+        "external_data": {},
+        "graph": "g0",
+        "raw_bytes": 16
+      },
+      "conv.weight": {
+        "data_location": "DEFAULT",
+        "data_type": "FLOAT",
+        "dims": [4, 3, 3, 3],
+        "external_data": {},
+        "graph": "g0",
+        "raw_bytes": 432
+      },
+      "proj.weight": {
+        "data_location": "EXTERNAL",
+        "data_type": "FLOAT",
+        "dims": [4, 16],
+        "external_data": {
+          "length": "256",
+          "location": "weights.bin",
+          "offset": "0"
+        },
+        "graph": "g0",
+        "raw_bytes": 0
+      }
+    },
+    "ir_version": 10,
+    "metadata_props": {
+      "fixture": "tiny-vision",
+      "license": "MIT"
+    },
+    "nodes": {
+      "g0/n0": {
+        "attributes": {
+          "pads": "INTS"
+        },
+        "domain": "",
+        "inputs": ["pixels", "conv.weight", "conv.bias"],
+        "name": "conv",
+        "op_type": "Conv",
+        "outputs": ["conv"]
+      },
+      "g0/n1": {
+        "attributes": {},
+        "domain": "",
+        "inputs": ["conv"],
+        "name": "relu",
+        "op_type": "Relu",
+        "outputs": ["relu"]
+      },
+      "g0/n2": {
+        "attributes": {
+          "perm": "INTS"
+        },
+        "domain": "",
+        "inputs": ["relu"],
+        "name": "to_nhwc",
+        "op_type": "Transpose",
+        "outputs": ["nhwc"]
+      },
+      "g0/n3": {
+        "attributes": {
+          "value": "TENSOR"
+        },
+        "domain": "",
+        "inputs": [],
+        "name": "shape_const",
+        "op_type": "Constant",
+        "outputs": ["shape"]
+      },
+      "g0/n4": {
+        "attributes": {},
+        "domain": "",
+        "inputs": ["nhwc", "shape"],
+        "name": "flatten",
+        "op_type": "Reshape",
+        "outputs": ["flat"]
+      },
+      "g0/n5": {
+        "attributes": {},
+        "domain": "",
+        "inputs": ["flat", "proj.weight"],
+        "name": "project",
+        "op_type": "MatMul",
+        "outputs": ["projected"]
+      },
+      "g0/n6": {
+        "attributes": {
+          "else_branch": "GRAPH",
+          "then_branch": "GRAPH"
+        },
+        "domain": "",
+        "inputs": ["use_gelu"],
+        "name": "choose",
+        "op_type": "If",
+        "outputs": ["logits"]
+      },
+      "g0/n6/else_branch/n0": {
+        "attributes": {},
+        "domain": "",
+        "inputs": ["projected"],
+        "name": "identity",
+        "op_type": "Identity",
+        "outputs": ["same"]
+      },
+      "g0/n6/then_branch/n0": {
+        "attributes": {},
+        "domain": "com.example",
+        "inputs": ["projected"],
+        "name": "gelu",
+        "op_type": "FastGelu",
+        "outputs": ["gelu"]
+      }
+    },
+    "opset_import": [
+      {
+        "domain": "",
+        "version": 20
+      },
+      {
+        "domain": "com.example",
+        "version": 1
+      }
+    ],
+    "producer_name": "weights-xray-fixture"
+  }
+}

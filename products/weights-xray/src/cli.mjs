@@ -1,15 +1,19 @@
 import { parseArgs } from "node:util";
 import { inspectFile } from "./inspect.mjs";
 
-export const help = `rea weights inspect FILE [--limit N] [--offset N] [--sha256]
+export const help = `rea weights inspect FILE [--limit N] [--offset N] [--sha256] [--strict-metadata]
 
-Read the tensor inventory of a local .safetensors, .gguf or
+Read the tensor inventory of a local .safetensors, .gguf, .onnx or
 model.safetensors.index.json file without loading weights. FILE may be a
-sharded index; its shards must be regular files beside it.
+sharded index; its shards must be regular files beside it. ONNX external
+data files are reported, never opened.
 
   --limit N    tensors to list (default 100, 0 lists none; max 65536)
   --offset N   first tensor to list (default 0)
   --sha256     also hash the whole file (reads every byte; counted separately)
+  --strict-metadata
+               ONNX: read operator nodes field by field so no tensor payload
+               is transferred, at the cost of more reads
 
 Exit status: 0 complete and valid, 2 format violations, 3 incomplete
 (a limit was reached or the layout is unsupported), 1 usage or I/O error.`;
@@ -39,6 +43,17 @@ export function page(report, offset, limit) {
       total: all.length,
       more: offset + limit < all.length,
     },
+    ...(report.nodes
+      ? {
+          nodes: report.nodes.slice(offset, offset + limit),
+          nodes_page: {
+            offset,
+            limit,
+            total: report.nodes.length,
+            more: offset + limit < report.nodes.length,
+          },
+        }
+      : {}),
   };
 }
 
@@ -70,6 +85,7 @@ export async function runWeights(
         limit: { type: "string" },
         offset: { type: "string" },
         sha256: { type: "boolean" },
+        "strict-metadata": { type: "boolean" },
       },
     });
     if (positionals.length !== 1)
@@ -80,7 +96,10 @@ export async function runWeights(
       values.offset === undefined
         ? 0
         : integer(values.offset, "offset", Number.MAX_SAFE_INTEGER);
-    const report = await inspectFile(positionals[0], { hash: !!values.sha256 });
+    const report = await inspectFile(positionals[0], {
+      hash: !!values.sha256,
+      strict: !!values["strict-metadata"],
+    });
     stdout.write(JSON.stringify(page(report, offset, limit)) + "\n");
     return exitCode(report);
   } catch (error) {

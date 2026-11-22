@@ -14,6 +14,7 @@ import { Issues } from "./report.mjs";
 import { LocalSource } from "./source.mjs";
 import { looksLikeSafetensors, readSafetensors } from "./safetensors.mjs";
 import { looksLikeGguf, readGguf } from "./gguf.mjs";
+import { looksLikeOnnx, readOnnx } from "./onnx.mjs";
 
 export const SCHEMA = "rea.weights.inventory/v1";
 
@@ -30,6 +31,13 @@ const readers = [
     extension: /\.safetensors$/i,
     read: readSafetensors,
   },
+  // Protobuf has no magic number; an .onnx name selects this reader.
+  {
+    format: "onnx",
+    detect: looksLikeOnnx,
+    extension: /\.onnx$/i,
+    read: readOnnx,
+  },
 ];
 
 /** Register another format reader (used by optional format modules). */
@@ -40,8 +48,9 @@ export function registerReader(reader) {
 /** Inspect one local file, or a sharded safetensors index and its siblings. */
 export async function inspectFile(
   path,
-  { signal, limits = LIMITS, hash = false } = {},
+  { signal, limits: base = LIMITS, hash = false, strict = false } = {},
 ) {
+  const limits = strict ? { ...base, onnx: { ...base.onnx, strict } } : base;
   if (/\.index\.json$/i.test(path))
     return inspectShardIndex(path, { signal, limits, hash });
   const source = await LocalSource.open(path, { signal });
@@ -78,10 +87,11 @@ export async function inspectSource(
     if (!reader)
       throw new UnsupportedError(
         "UNRECOGNIZED_FORMAT",
-        "File is not a recognized safetensors, GGUF or registered model file",
+        "File is not a recognized safetensors, GGUF or ONNX model file",
         0,
       );
     await reader.read(source, ctx);
+    ctx.descriptorReads = source.ranges.length;
     if (hash) report.file.sha256 = await fullHash(source);
     await source.verify();
   } catch (error) {
@@ -100,24 +110,52 @@ export async function inspectSource(
     } else throw error;
   }
   issues.attach(report);
-  report.reads = usage(source, report);
+  report.reads = usage(source, report, ctx);
   return report;
 }
 
-function usage(source, report) {
-  const u = source.usage();
-  const dataStart =
-    report.header?.data_start ?? report.data?.data_start ?? report.data_start;
-  let payload = 0;
-  if (dataStart !== undefined)
-    for (const [s, e] of source.ranges)
-      payload += Math.max(0, e - Math.max(s, dataStart));
+/**
+ * Bytes read inside the payload: the data region of safetensors and GGUF, or
+ * the payload fields an ONNX reader skipped. A hashing pass is reported apart.
+ */
+function usage(source, report, ctx) {
+  const dataStart = report.header?.data_start ?? report.data?.data_start;
+  const payload =
+    ctx.payloadRanges ??
+    (dataStart !== undefined ? [[dataStart, source.size]] : []);
+  const reads = source.ranges.slice(
+    0,
+    ctx.descriptorReads ?? source.ranges.length,
+  );
   return {
-    ...u,
-    payload_bytes_read:
-      payload - (report.file.sha256 ? Math.max(0, source.size - dataStart) : 0),
+    ...source.usage(),
+    payload_bytes_read: overlap(reads, payload),
     ...(report.file.sha256 ? { hashing_pass_bytes: source.size } : {}),
   };
+}
+
+function overlap(a, b) {
+  const merge = (ranges) => {
+    const out = [];
+    for (const [s, e] of [...ranges].sort((x, y) => x[0] - y[0])) {
+      const last = out.at(-1);
+      if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+      else out.push([s, e]);
+    }
+    return out;
+  };
+  const x = merge(a);
+  const y = merge(b);
+  let total = 0;
+  for (let i = 0, j = 0; i < x.length && j < y.length;) {
+    total += Math.max(
+      0,
+      Math.min(x[i][1], y[j][1]) - Math.max(x[i][0], y[j][0]),
+    );
+    if (x[i][1] < y[j][1]) i++;
+    else j++;
+  }
+  return total;
 }
 
 /** A full read establishes the file digest; header inspection never does. */

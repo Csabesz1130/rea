@@ -157,3 +157,98 @@ export function writeGguf(
   }
   return { dataStart, descriptorEnd: meta.length };
 }
+
+// Protobuf wire encoding for ONNX fixtures the reference writer cannot make.
+const varint = (value) => {
+  let v = BigInt(value);
+  if (v < 0n) v = BigInt.asUintN(64, v);
+  const out = [];
+  do {
+    let b = Number(v & 0x7fn);
+    v >>= 7n;
+    if (v) b |= 0x80;
+    out.push(b);
+  } while (v);
+  return Buffer.from(out);
+};
+const tag = (field, wire) => varint((field << 3) | wire);
+export const pb = {
+  varint,
+  int: (field, value) => Buffer.concat([tag(field, 0), varint(value)]),
+  bytes: (field, payload) =>
+    Buffer.concat([tag(field, 2), varint(payload.length), payload]),
+  str: (field, text) => pb.bytes(field, Buffer.from(text, "utf8")),
+  msg: (field, ...parts) => pb.bytes(field, Buffer.concat(parts)),
+  raw: (...parts) => Buffer.concat(parts),
+};
+
+const attribute = (a) => {
+  const parts = [pb.str(1, a.name)];
+  if (a.type === "ints")
+    parts.push(pb.int(20, 7), ...a.value.map((v) => pb.int(8, v)));
+  else if (a.type === "int") parts.push(pb.int(20, 2), pb.int(3, a.value));
+  else if (a.type === "graph")
+    parts.push(pb.int(20, 5), pb.msg(6, onnxGraph(a.value)));
+  return pb.msg(5, ...parts);
+};
+const onnxNode = (n) =>
+  pb.msg(
+    1,
+    ...(n.inputs ?? []).map((i) => pb.str(1, i)),
+    ...(n.outputs ?? []).map((o) => pb.str(2, o)),
+    ...(n.name ? [pb.str(3, n.name)] : []),
+    pb.str(4, n.op),
+    ...(n.domain ? [pb.str(7, n.domain)] : []),
+    ...(n.attributes ?? []).map(attribute),
+  );
+const valueInfo = (field, v) =>
+  pb.msg(
+    field,
+    pb.str(1, v.name),
+    pb.msg(
+      2,
+      pb.msg(
+        1,
+        pb.int(1, v.type ?? 1),
+        pb.msg(
+          2,
+          ...(v.shape ?? []).map((d) =>
+            pb.msg(1, typeof d === "string" ? pb.str(2, d) : pb.int(1, d)),
+          ),
+        ),
+      ),
+    ),
+  );
+const initializer = (t) =>
+  pb.msg(
+    5,
+    ...t.dims.map((d) => pb.int(1, d)),
+    pb.int(2, t.dataType ?? 1),
+    pb.str(8, t.name),
+    pb.bytes(9, t.raw ?? Buffer.alloc(t.rawLength ?? 0)),
+  );
+
+/** Encode a GraphProto from {name, nodes, initializers, inputs, outputs}. */
+export function onnxGraph(g) {
+  return Buffer.concat([
+    ...(g.nodes ?? []).map(onnxNode),
+    pb.str(2, g.name ?? "graph"),
+    ...(g.initializers ?? []).map(initializer),
+    ...(g.inputs ?? []).map((v) => valueInfo(11, v)),
+    ...(g.outputs ?? []).map((v) => valueInfo(12, v)),
+  ]);
+}
+
+/** Encode a ModelProto around one graph. */
+export function onnxModel(
+  graph,
+  { irVersion = 9, opset = 17, extra = [] } = {},
+) {
+  return Buffer.concat([
+    pb.int(1, irVersion),
+    pb.str(2, "writers.mjs"),
+    pb.msg(7, onnxGraph(graph)),
+    pb.msg(8, pb.str(1, ""), pb.int(2, opset)),
+    ...extra,
+  ]);
+}
