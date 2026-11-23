@@ -46,8 +46,9 @@ const runtimeFiles = isMcpMode
         "dist/cli-runtime/cliResultOutput.js",
       ];
 
-if (args[0] === "pro" || args[0] === "login") {
+if (args[0] === "pro" || args[0] === "login" || args[0] === "swarm") {
   const { runPro } = await import("../products/pro-loader/cli.mjs");
+  // `rea swarm` runs the signed plugin's architecture investigation.
   await runPro(args[0] === "pro" ? args.slice(1) : args);
 } else if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(

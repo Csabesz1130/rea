@@ -12,6 +12,7 @@ rea pro search QUERY --store DIR [--mode auto|exact|semantic]
 rea pro slice ID --store DIR [--hops N] [--budget N]
 rea pro stats --store DIR
 rea pro mcp --store DIR
+rea swarm --store DIR --seed NAME [--depth N] [--workers N] [--total-budget N]
 
 Each local profile includes three full graph queries in total across search,
 slice and stats. Exporting full Evidence also uses one query. Index-only returns
