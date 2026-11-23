@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { LIMITS } from "./errors.mjs";
 import { inspectFile, inspectRemote } from "./inspect.mjs";
+import { parseResolveUrl } from "./remote.mjs";
 
 export const help = `rea weights inspect FILE [--limit N] [--offset N] [--sha256] [--strict-metadata]
 
@@ -103,6 +104,22 @@ export async function runWeights(
         ? 0
         : integer(values.offset, "offset", Number.MAX_SAFE_INTEGER);
     const remote = /^https?:\/\//i.test(positionals[0]);
+    // A malformed or unpinned URL is a usage error, not an incomplete read.
+    if (remote) {
+      try {
+        parseResolveUrl(positionals[0]);
+      } catch (error) {
+        const m =
+          /^https:\/\/huggingface\.co\/((?:datasets\/)?[\w.-]+\/[\w.-]+)\//.exec(
+            positionals[0],
+          );
+        const hint =
+          error.code === "REVISION_NOT_PINNED" && m
+            ? `. The current commit is the "sha" field of https://huggingface.co/api/${m[1].startsWith("datasets/") ? m[1] : "models/" + m[1]}`
+            : "";
+        throw new Error(error.message + hint);
+      }
+    }
     if (remote && values.sha256)
       throw new Error(
         "--sha256 needs a full local read; download the file and inspect it locally",

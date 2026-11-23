@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -318,6 +319,43 @@ test("request and byte budgets return partial coverage with the last verified de
     remote: { limits: { requests: 3 } },
   });
   assert.equal(index.complete, false);
+});
+
+test("the CLI treats an unpinned or malformed URL as a usage error with a way to pin it", () => {
+  const rea = fileURLToPath(
+    new URL("../../../scripts/rea.mjs", import.meta.url),
+  );
+  const r = spawnSync(
+    process.execPath,
+    [
+      rea,
+      "weights",
+      "inspect",
+      "https://huggingface.co/Qwen/Qwen2.5-0.5B/resolve/main/model.safetensors",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(r.status, 1);
+  assert.equal(r.stdout, "");
+  assert.match(
+    r.stderr,
+    /not a 40-character commit.*"sha" field of https:\/\/huggingface\.co\/api\/models\/Qwen\/Qwen2\.5-0\.5B/,
+  );
+  const bad = spawnSync(
+    process.execPath,
+    [
+      rea,
+      "weights",
+      "inspect",
+      "https://huggingface.co/Qwen/Qwen2.5-0.5B/blob/x/y",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(bad.status, 1);
+  assert.match(
+    bad.stderr,
+    /Expected https:\/\/huggingface\.co\/OWNER\/REPO\/resolve\/COMMIT\/PATH/,
+  );
 });
 
 test("only pinned Hugging Face resolve URLs over public addresses are accepted", () => {
