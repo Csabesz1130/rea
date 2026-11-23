@@ -431,6 +431,8 @@ export class RemoteSource {
     this.session = session;
     this.target = target;
     this.name = target.path.split("/").at(-1);
+    // Each read is a request; format readers trade a few bytes for fewer reads.
+    this.costModel = "request";
     this.ranges = [];
     this.requests = 0;
     this.bytes = 0;

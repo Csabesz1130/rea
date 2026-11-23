@@ -70,7 +70,18 @@ const PREVIEW = 16;
 const PREFETCH = 64 * 1024;
 // Read-ahead within the operator run. It bounds the payload bytes an ordinary
 // buffered read can transfer where the operator run meets the initializers.
-const NODE_WINDOW = 16 * 1024;
+// Read profiles. Locally a read is a syscall, so tensor fields are read
+// exactly. Remotely a read is an HTTP request, so each initializer header is
+// read in one small window that may carry a few payload bytes, which are counted.
+const PROFILES = {
+  local: { nodes: 16 * 1024, tensors: 0, between: 0 },
+  remote: {
+    nodes: 64 * 1024,
+    tensors: 1024,
+    between: 1024,
+    maxBetween: 64 * 1024,
+  },
+};
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 export const ONNX_LIMITS = Object.freeze({
@@ -263,7 +274,14 @@ export async function readOnnx(source, ctx) {
   // value), are prefetched unless strict metadata-only mode is selected.
   const cur = new Cursor(source, { window: 0, budget: limits.metadataBytes });
   const nodePrefetch = !onnxLimits.strict;
-  report.read_mode = onnxLimits.strict ? "strict-metadata" : "buffered-nodes";
+  const profile = onnxLimits.strict
+    ? { nodes: 0, tensors: 0, between: 0 }
+    : PROFILES[source.costModel === "request" ? "remote" : "local"];
+  report.read_mode = onnxLimits.strict
+    ? "strict-metadata"
+    : source.costModel === "request"
+      ? "buffered-remote"
+      : "buffered-nodes";
   const w = new Wire(cur, payload);
   const model = { opset_import: [] };
   const graphs = [];
@@ -346,7 +364,7 @@ export async function readOnnx(source, ctx) {
   // TensorProto fields are read exactly; any read-ahead could enter raw_data.
   const tensorProto = async (wire, graph, role) => {
     const saved = cur.window;
-    cur.window = 0;
+    cur.window = Math.max(saved, profile.tensors);
     try {
       return await tensorFields(wire, graph, role);
     } finally {
@@ -648,12 +666,13 @@ export async function readOnnx(source, ctx) {
     };
     graphs.push(graph);
     let ordinal = 0;
+    let between = profile.between;
     const saved = cur.window;
     graph.descriptor = await w.sub(wire, async (f, wt) => {
       // Serializers emit fields in number order: the operator list, then
       // initializers. Buffer ahead within the operator run; read exactly once
       // an initializer appears, so read-ahead cannot enter the next payload.
-      cur.window = nodePrefetch && f === 1 ? NODE_WINDOW : 0;
+      cur.window = nodePrefetch && f === 1 ? profile.nodes : between;
       if (f === 1 && wt === 2) {
         await nodeProto(wt, id, ordinal++, depth);
         graph.node_count++;
@@ -666,6 +685,12 @@ export async function readOnnx(source, ctx) {
             cur.pos,
           );
         tensors.push(await tensorProto(wt, id, "initializer"));
+        // Grow the read-ahead while initializers carry little inline payload
+        // (external or small tensors); a large payload resets it.
+        between =
+          tensors.at(-1).payload_bytes >= between
+            ? profile.between
+            : Math.min(between * 2, profile.maxBetween ?? profile.between);
         graph.initializers++;
         ctx.lastVerified = { tensor: tensors.at(-1).name, end: cur.pos };
       } else if (f === 15 && wt === 2) {

@@ -86,9 +86,14 @@ requests, redirects, bytes received, wall time and each exchange as
 
 Safetensors needs the 9-byte prefix and then the exact header. GGUF fields are
 read in windows that never pass the smallest encoding of the remaining
-descriptors. ONNX exact reads are usually more than the request budget allows,
-so a remote ONNX file is normally reported as incomplete; inspect it locally.
-A digest of a remote file requires a full local read.
+descriptors. Remote ONNX uses `read_mode: "buffered-remote"`: 64 KiB windows in
+the operator list and one 1 KiB read per initializer header. That window
+doubles, up to 64 KiB, while initializers carry little or no inline payload,
+and drops back after a large one. The payload bytes those windows carry are
+counted. Skipping a payload ends a request, so a graph needs about one request
+per inline initializer. A model with more inline initializers than the request
+budget is reported incomplete at `REMOTE_REQUEST_BUDGET`; inspect a local copy to
+complete it. A digest of a remote file requires a full local read.
 
 ### Live acceptance, 2026-11-22T22:06Z
 
@@ -101,6 +106,17 @@ against the Studio limit of 262,144.
 | `Qwen/Qwen2.5-7B-Instruct` `a09a354…`, Apache-2.0           | safetensors index, 4 shards, 339 tensors | 15,231,233,024 |               15 (5) |         66,629 |    864 ms |
 | `Qwen/Qwen2.5-1.5B` `8faed76…`, Apache-2.0                  | safetensors, 338 tensors                 |  3,087,467,144 |                3 (1) |         38,537 |    383 ms |
 | `bartowski/Qwen2.5-7B-Instruct-GGUF` `8911e8a…`, Apache-2.0 | GGUF Q4_K_M, 339 tensors                 |  4,683,074,240 |              123 (1) |      5,958,066 |  3,918 ms |
+
+ONNX, same day, same VM:
+
+| Model, commit, license                                                          | Operators, initializers | Requests | Bytes received | Payload bytes | Wall time |
+| ------------------------------------------------------------------------------- | ----------------------: | -------: | -------------: | ------------: | --------: |
+| `Xenova/all-MiniLM-L6-v2` `751bff3…` `onnx/model.onnx` (90 MB), Apache-2.0      |                637, 102 |      119 |        234,072 |       112,705 |  2,388 ms |
+| same, `onnx/model_quantized.onnx` (23 MB)                                       |                772, 180 |      178 |        403,400 |       197,974 |  4,127 ms |
+| `microsoft/Phi-3-mini-4k-instruct-onnx` `5f5f794…` CPU int4 graph (231 KB), MIT |       363, 390 external |       23 |        231,449 |            16 |  1,028 ms |
+
+The Phi-3 graph names 390 tensors in its 2.7 GB `.onnx.data` file, which was
+not requested.
 
 The GGUF reads are mostly the embedded tokenizer arrays. The validators were
 the hub's strong ETags: `"14d037fd…"` for the git-stored index, and

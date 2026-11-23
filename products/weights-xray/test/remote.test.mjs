@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import {
   isPublicAddress,
   parseResolveUrl,
 } from "../src/remote.mjs";
+import { onnxModel } from "./writers.mjs";
 
 // A loopback server whose behavior is chosen by the repository owner in the
 // path: http://127.0.0.1:PORT/MODE/repo/resolve/COMMIT/FILE.
@@ -62,7 +64,11 @@ function serve(req, res) {
   }
   let bytes;
   try {
-    bytes = readFileSync(join(fixtures, file));
+    bytes = readFileSync(
+      file.startsWith("generated/")
+        ? join(generated, file.slice(10))
+        : join(fixtures, file),
+    );
   } catch {
     res.writeHead(404);
     return res.end();
@@ -105,12 +111,16 @@ function serve(req, res) {
   send();
 }
 
+const generated = mkdtempSync(join(tmpdir(), "weights-xray-remote-"));
 before(async () => {
   server = createServer(serve);
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
-after(() => server.close());
+after(() => {
+  server.close();
+  rmSync(generated, { recursive: true, force: true });
+});
 
 const loopback = {
   protocols: ["http:"],
@@ -235,6 +245,58 @@ test("missing, weak or changing validators and malformed ranges stop the inspect
     }),
     "REMOTE_TIMEOUT",
   );
+});
+
+test("a remote ONNX graph costs one request per inline initializer and stops at the cap", async () => {
+  // Skipping a payload ends a request, so N inline initializers need about N
+  // requests. 200 fit in the 256-request budget; 300 report partial coverage.
+  const write = (count) => {
+    const nodes = Array.from({ length: 2000 }, (_, i) => ({
+      op: "Add",
+      name: `n${i}`,
+      inputs: [i ? `t${i - 1}` : "x", `w${i % count}`],
+      outputs: [`t${i}`],
+    }));
+    const initializers = Array.from({ length: count }, (_, i) => ({
+      name: `w${i}`,
+      dims: [2048],
+      rawLength: 8192,
+    }));
+    writeFileSync(
+      join(generated, `inline-${count}.onnx`),
+      onnxModel({
+        nodes,
+        initializers,
+        inputs: [{ name: "x", shape: [2048] }],
+      }),
+    );
+  };
+  write(200);
+  write(300);
+  const local = await inspectFile(join(generated, "inline-200.onnx"));
+  const r = await remote("ok", "generated/inline-200.onnx");
+  assert.ok(r.complete && r.valid, JSON.stringify(r.incomplete ?? r.issues));
+  assert.equal(r.read_mode, "buffered-remote");
+  assert.deepEqual([r.node_count, r.tensor_count], [2000, 200]);
+  assert.deepEqual(
+    r.tensors.map((t) => [t.name, t.shape, t.payload_bytes]),
+    local.tensors.map((t) => [t.name, t.shape, t.payload_bytes]),
+  );
+  assert.equal(r.connectivity.unresolved_inputs, 0);
+  assert.ok(r.remote.requests <= 256, String(r.remote.requests));
+  // Each initializer header costs at most one small window of payload.
+  assert.ok(
+    r.reads.payload_bytes_read <= 200 * 1024,
+    String(r.reads.payload_bytes_read),
+  );
+
+  const capped = await remote("ok", "generated/inline-300.onnx");
+  assert.deepEqual(
+    [capped.complete, capped.incomplete.reason],
+    [false, "REMOTE_REQUEST_BUDGET"],
+  );
+  assert.match(capped.incomplete.last_verified.tensor, /^w\d+$/);
+  assert.equal(capped.remote.requests, 256);
 });
 
 test("request and byte budgets return partial coverage with the last verified descriptor", async () => {
